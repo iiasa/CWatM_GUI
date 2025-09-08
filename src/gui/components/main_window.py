@@ -28,11 +28,11 @@ from src.gui.components.config_parser import ConfigParser
 from src.gui.managers.date_manager import DateManager
 from src.gui.managers.file_manager import FileManager
 from src.gui.managers.text_display import TextDisplayManager
-from src.gui.widgets.progress_clock import ProgressClock
+from src.gui.utils.progress_clock import ProgressClock
 from src.gui.widgets.options_window import OptionsWindow
 from src.gui.widgets.check_data_window import CheckDataWindow
 from src.gui.utils.cwatm_worker import CWatMWorker
-from src.gui.utils.basin_viewer import BasinViewer
+from src.gui.widgets.basin_viewer import BasinViewer
 
 import cwatm.run_cwatm as run_cwatm
 import cwatm.version as version
@@ -142,16 +142,16 @@ class CWatMMainWindow(QMainWindow):
         # Right panel with text display
         self.create_right_panel(content_layout)
         
-        # Set responsive sizing for panels based on screen size (20% more space for left panel)
+        # Set responsive sizing for panels based on screen size (right panel 20% smaller)
         screen_width = QApplication.primaryScreen().availableGeometry().width()
         if screen_width < 1024:  # Smaller screens
-            # On small screens, give slightly more space to left panel
-            content_layout.setStretch(0, 5)  # Left panel gets 5 parts (was 2)
-            content_layout.setStretch(1, 7)  # Right panel gets 7 parts (was 3) 
+            # On small screens, give more space to left panel, right panel 20% smaller
+            content_layout.setStretch(0, 6)  # Left panel gets 6 parts 
+            content_layout.setStretch(1, 6)  # Right panel gets 6 parts (was 7, reduced by ~20%)
         else:
-            # On larger screens, increase left panel proportion
-            content_layout.setStretch(0, 3)  # Left panel gets 3 parts (was 1, 20% increase from 1:2 to 3:5 ratio)
-            content_layout.setStretch(1, 5)  # Right panel gets 5 parts (was 2)
+            # On larger screens, right panel 20% smaller than before
+            content_layout.setStretch(0, 4)  # Left panel gets 4 parts (increased to compensate)
+            content_layout.setStretch(1, 4)  # Right panel gets 4 parts (was 5, reduced by 20%)
         
         main_layout.addLayout(content_layout)
         
@@ -1574,7 +1574,7 @@ class CWatMMainWindow(QMainWindow):
         """Show basin visualization window"""
         try:
             if self.file_manager.current_file_path:
-                from src.gui.utils.basin_viewer import BasinViewer
+                from src.gui.widgets.basin_viewer import BasinViewer
                 basin_viewer = BasinViewer(self.file_manager.current_file_content)
                 basin_viewer.show_basin(self.file_manager.current_file_path, parent=self)
             else:

@@ -83,6 +83,11 @@ This is a graphical user interface for the Community Water Model (CWatM) develop
 - **Error Detection**: Identifies configuration issues, missing files, and data inconsistencies
 - **Streamlined Interface**: Simple workflow without checkbox complications - output file always enabled
 - **NetCDF Integration**: Automatically passes NetCDF filename to CWatM when comparison file is selected
+- **Modal Dialog Behavior**: 
+  - Opens as modal dialog using `exec()` method
+  - Does not show separate taskbar icon
+  - Includes minimize/maximize/close buttons
+  - Properly tied to parent window
 - **Settings Restoration**: Extract and restore configuration settings from NetCDF discharge files
   - **Restore Settings Button**: "Restore settings from discharge map" button located below NetCDF file selection
   - **Conditional Activation**: Button only enabled when a discharge NetCDF file is selected
@@ -130,10 +135,10 @@ The application is now structured with a modular architecture for better maintai
 - **`src/gui/managers/file_manager.py`**: File I/O operations and management
 - **`src/gui/managers/text_display.py`**: Text area operations and cursor management
 - **`src/gui/widgets/options_window.py`**: Options management window for boolean configurations
-- **`src/gui/widgets/progress_clock.py`**: Circular progress indicator for CWatM execution
-- **`src/gui/utils/cwatm_worker.py`**: Threaded CWatM execution worker
-- **`src/gui/utils/basin_viewer.py`**: Basin data visualization with NetCDF support
 - **`src/gui/widgets/check_data_window.py`**: Data validation window for CWatM configuration checking
+- **`src/gui/widgets/basin_viewer.py`**: Basin data visualization with NetCDF support
+- **`src/gui/utils/progress_clock.py`**: Circular progress indicator for CWatM execution
+- **`src/gui/utils/cwatm_worker.py`**: Threaded CWatM execution worker
 
 ### Module Dependencies
 ```
@@ -144,10 +149,10 @@ cwatm_gui.py
             ├── src/gui/managers/file_manager.py
             ├── src/gui/managers/text_display.py
             ├── src/gui/widgets/options_window.py
-            ├── src/gui/widgets/progress_clock.py
             ├── src/gui/widgets/check_data_window.py
-            ├── src/gui/utils/cwatm_worker.py
-            └── src/gui/utils/basin_viewer.py
+            ├── src/gui/widgets/basin_viewer.py
+            ├── src/gui/utils/progress_clock.py
+            └── src/gui/utils/cwatm_worker.py
 ```
 
 ### Benefits of New Structure
@@ -233,7 +238,7 @@ The application starts in maximized window mode for optimal viewing of configura
 - **RUN CWatM** button (becomes blue after successful parsing) for model execution
 - **CWatM Output Area**: Scrollable display (225-450px height, 1080px max width) showing real-time execution output
 
-### Display Panel (Right Side)
+### Display Panel (Right Side - 20% Smaller Width)
 Button toolbar (left to right):
 - **Save**: Save current file with clean content
 - **Save As**: Save to new file with clean content  
@@ -247,6 +252,7 @@ Button toolbar (left to right):
 - Interactive section headers with [-]/[+] controls
 - Click-to-toggle expand/collapse functionality
 - Preserved whitespace and formatting
+- **Optimized Width**: Right panel reduced by 20% to provide more space for control panel
 
 ## Workflow Guidance System
 
@@ -351,6 +357,11 @@ The GUI provides intelligent visual guidance through the workflow with color-cod
 - **Coordinate System**: Real-world coordinate display on click with lat/lon values
 - **Performance**: Native Qt painting (no matplotlib dependency) for fast rendering
 - **Data Integration**: Automatic coordinate calculations and basin value extraction
+- **Modal Dialog Behavior**: 
+  - Opens as modal dialog using `exec()` method
+  - Does not show separate taskbar icon
+  - Includes minimize/maximize/close buttons
+  - Properly tied to parent window
 
 ## User Interface Layout Updates
 

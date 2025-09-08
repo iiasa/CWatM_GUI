@@ -470,7 +470,7 @@ class BasinWindow(QDialog):
         self.settings_file = settings_file
         
         self.setWindowTitle(f"🗺️ {title}")
-        self.setModal(False)
+        self.setModal(True)
         self.resize(950, 650)  # Slightly larger for buttons
         
         # Set window flags to NOT show in taskbar but have min/max/close buttons
@@ -951,7 +951,7 @@ class BasinViewer:
             # Create and show window
             title = f"Basin: {os.path.basename(resolved_path)}"
             self.basin_window = BasinWindow(basin_data, lats, lons, title, mask_data, settings_file, parent)
-            self.basin_window.show()
+            self.basin_window.exec()
             
         except Exception as e:
             print(f"Error loading basin data: {e}", file=sys.stderr)
