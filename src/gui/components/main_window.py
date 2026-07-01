@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QTextEdit, QStatusBar, QFrame,
     QLineEdit, QProgressBar, QApplication, QScrollArea, QCheckBox,
-    QSizePolicy, QMenuBar, QMessageBox, QDialog
+    QSizePolicy, QMenuBar, QMessageBox, QDialog, QMenu, QInputDialog, QFileDialog
 )
 from PySide6.QtCore import Qt, QEvent, QTimer, QThread, Signal
 from PySide6.QtGui import (
@@ -23,6 +23,7 @@ import sys
 import gc
 import os
 import time
+import re
 
 from src.gui.components.config_parser import ConfigParser
 from src.gui.managers.date_manager import DateManager
@@ -32,7 +33,10 @@ from src.gui.utils.progress_clock import ProgressClock
 from src.gui.widgets.options_window import OptionsWindow
 from src.gui.widgets.check_data_window import CheckDataWindow
 from src.gui.utils.cwatm_worker import CWatMWorker
-from src.gui.widgets.basin_viewer import BasinViewer
+from src.gui.widgets.basin_viewer import (
+    BasinViewer, build_mask_context, gauges_inside, pathout_exists,
+    find_largest_ups_gauge
+)
 
 import cwatm.run_cwatm as run_cwatm
 import cwatm.version as version
@@ -76,9 +80,14 @@ class CWatMMainWindow(QMainWindow):
             y = (screen.height() - self.height()) // 2
             self.move(x, y)
         
-        # Set window icon
+        # Set window icon (prefer the small multi-size icon for the taskbar; only if it
+        # loads, so a missing file does not override the app icon set in cwatm_gui.py)
         try:
-            self.setWindowIcon(QIcon("assets/cwatm.ico"))
+            _icon = QIcon("assets/cwatm_small.ico")
+            if _icon.isNull():
+                _icon = QIcon("assets/cwatm.ico")
+            if not _icon.isNull():
+                self.setWindowIcon(_icon)
         except Exception:
             pass  # Icon file not found, continue without icon
         
@@ -101,12 +110,25 @@ class CWatMMainWindow(QMainWindow):
         self.original_content = ""
         self.file_parsed = False
         self.cwatm_output_buffer = []
+        self._last_was_progress = False  # last output line was a '\r' progress update
+        self._suppress_dirty = False  # ignore dirty signals during programmatic updates
+        self._is_dirty = False  # there are unsaved changes to the settings file
+        # Debounce timer: auto-apply field changes (dates / PathOut / MaskMap) into the
+        # in-memory settings content shortly after the user stops changing them.
+        self._field_update_timer = QTimer(self)
+        self._field_update_timer.setSingleShot(True)
+        self._field_update_timer.setInterval(500)
+        self._field_update_timer.timeout.connect(self._apply_field_changes)
         self.temp_content_storage = {}  # Store content before compression
         self.cwatm_running = False
         self.cwatm_worker = None
         self.compress_expand_scroll_position = None
         self.manual_changes_buffer = ""  # Store manual changes made to text
         self.output_file_path = None  # Path to the output file when checkbox is checked
+        self._output_file_override = None  # custom output-box file set via Configure menu
+        self._pathout_warning = ""  # PathOut-missing warning (checked only on load/save)
+        self._mask_context = None   # in-memory mask for gauge checks (built on load/save)
+        self._mask_context_key = None  # MaskMap value the cached mask was built from
         
         # Keep reference to basin viewer to prevent garbage collection
         self.basin_viewer = None
@@ -122,26 +144,28 @@ class CWatMMainWindow(QMainWindow):
         Creates the central widget, main layout, header, and splits
         the interface into left control panel and right display panel.
         """
-        # Create menu bar
-        self.create_menu_bar()
-        
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
+
         main_layout = QVBoxLayout(central_widget)
-        
-        # Header with title and logo
+
+        # Banner (title + logos) at the very top
         self.create_header(main_layout)
-        
-        # Main content layout (left and right panels)
+
+        # Main content layout (left and right panels). Built before the menu bar
+        # because the menu references widgets the panels create (the write-output
+        # checkbox).
         content_layout = QHBoxLayout()
-        
+
         # Left panel with controls
         self.create_left_panel(content_layout)
-        
+
         # Right panel with text display
         self.create_right_panel(content_layout)
-        
+
+        # Menu bar directly below the banner (inserted just under the header)
+        self.create_menu_bar(main_layout)
+
         # Set responsive sizing for panels based on screen size (right panel 20% smaller)
         screen_width = QApplication.primaryScreen().availableGeometry().width()
         if screen_width < 1024:  # Smaller screens
@@ -183,9 +207,21 @@ class CWatMMainWindow(QMainWindow):
         title_label.setFont(QFont("Arial", title_font_size, QFont.Bold))
         title_label.setStyleSheet("color: #0066CC;")
         header_layout.addWidget(title_label)
-        
+
         header_layout.addStretch()
-        
+
+        # Interface description, centred in the middle of the banner
+        interface_label = QLabel("The Community Water Model User Interface")
+        interface_label.setAlignment(Qt.AlignCenter)
+        interface_label.setStyleSheet("color: #333333;")
+        self.interface_label = interface_label
+        # No word wrap; instead the font is sized to the current window width and
+        # shrinks as the window shrinks (see _update_interface_font / resizeEvent).
+        self._update_interface_font()
+        header_layout.addWidget(interface_label)
+
+        header_layout.addStretch()
+
         # IIASA logo
         try:
             iiasa_label = QLabel()
@@ -204,7 +240,61 @@ class CWatMMainWindow(QMainWindow):
             header_layout.addWidget(iiasa_label)
         
         parent_layout.addLayout(header_layout)
-        
+
+    def _update_interface_font(self):
+        """Size the banner interface text to the current window width so it shrinks
+        as the window shrinks. Smaller than the rest of the header; no word wrap."""
+        if getattr(self, "interface_label", None) is None:
+            return
+        size = max(7, min(13, self.width() // 95))  # scale with window width
+        self.interface_label.setFont(QFont("Arial", size))
+
+    def resizeEvent(self, event):
+        """Keep the banner interface font and output-box width responsive."""
+        super().resizeEvent(event)
+        self._update_interface_font()
+        self._cap_output_box_width()
+
+    def _cap_output_box_width(self):
+        """Cap the output box width at the right edge of the End Date field, so the
+        box ends where the calendar fields end."""
+        sa = getattr(self, "scroll_area", None)
+        end = getattr(self.date_manager, "end_date_edit", None) if self.date_manager else None
+        if sa is None or end is None:
+            return
+        right = end.geometry().right()
+        if right > 150:  # only once the date row has actually been laid out
+            # Fixed width (not just a maximum) so the box keeps this width and the
+            # trailing stretch in its container pins it to the left instead of centring.
+            sa.setFixedWidth(right)
+
+    def find_text(self):
+        """Prompt for a search string and find it in the settings (.ini) editor."""
+        if getattr(self, "text_area", None) is None:
+            return
+        text, ok = QInputDialog.getText(self, "Find", "Find text:")
+        if ok and text:
+            self._last_search = text
+            self._find_in_editor(text)
+
+    def find_next(self):
+        """Find the next occurrence of the last searched text (re-runs Find if none)."""
+        text = getattr(self, "_last_search", "")
+        if text:
+            self._find_in_editor(text)
+        else:
+            self.find_text()
+
+    def _find_in_editor(self, text):
+        """Search forward from the cursor; wrap to the top if not found. Returns bool."""
+        if self.text_area.find(text):
+            return True
+        # Wrap around: jump to the top and search again
+        cursor = self.text_area.textCursor()
+        cursor.movePosition(QTextCursor.Start)
+        self.text_area.setTextCursor(cursor)
+        return self.text_area.find(text)
+
     def create_left_panel(self, parent_layout):
         """Create left control panel with all input controls.
         
@@ -249,21 +339,9 @@ class CWatMMainWindow(QMainWindow):
         # Set size policy to allow expansion but prefer minimum size
         left_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         
-        # Add 10px space before interface description
-        left_layout.addSpacing(20)
-        
-        # Interface description with minimal spacing
-        interface_label = QLabel("The Community Water Model User Interface")
-        interface_label.setAlignment(Qt.AlignLeft)
-        # Make interface description font responsive
-        screen_width = QApplication.primaryScreen().availableGeometry().width()
-        interface_font_size = max(12, min(16, screen_width // 75))  # Scale with screen width
-        interface_label.setFont(QFont("Arial", interface_font_size))
-        interface_label.setContentsMargins(0, 0, 0, 1)  # Minimal bottom margin
-        left_layout.addWidget(interface_label)
-        
-        # Add 10px space after interface description
-        left_layout.addSpacing(10)
+        # Small space before the first control group (interface title now lives in
+        # the banner header, see create_header)
+        left_layout.addSpacing(5)
 
         # Separator with ultra-minimal spacing
         separator1 = QFrame()
@@ -297,6 +375,9 @@ class CWatMMainWindow(QMainWindow):
         
         # MaskMap controls
         self.create_maskmap_controls(left_layout)
+
+        # Gauges controls (under MaskMap)
+        self.create_gauges_controls(left_layout)
         
         # Separator with ultra-minimal spacing
         separator3 = QFrame()
@@ -354,10 +435,16 @@ class CWatMMainWindow(QMainWindow):
             }
         """)
         load_button.clicked.connect(self.load_file)
-        load_layout.addWidget(load_button)
+        load_button.setVisible(False)  # "Load Text" removed from UI; use File > Load .ini
 
         self.filename_label = QLabel("No file loaded")
         self.filename_label.setStyleSheet("color: gray; font-style: italic;")
+        # 2pt larger font, kept via QFont so the later setStyleSheet calls (which set
+        # only colour/weight) do not reset the size.
+        _fl_font = self.filename_label.font()
+        if _fl_font.pointSize() > 0:
+            _fl_font.setPointSize(_fl_font.pointSize() + 2)
+            self.filename_label.setFont(_fl_font)
         load_layout.addWidget(self.filename_label)
 
         load_layout.addStretch()
@@ -403,7 +490,7 @@ class CWatMMainWindow(QMainWindow):
             }
         """)
         self.actualize_button.clicked.connect(self.run_configuration)
-        actualize_layout.addWidget(self.actualize_button)
+        self.actualize_button.setVisible(False)  # use RUN CWATM > Actualize instead
         
         
         actualize_layout.addStretch()
@@ -462,34 +549,18 @@ class CWatMMainWindow(QMainWindow):
         """)
         self.run_cwatm_button.clicked.connect(self.run_cwatm)
         run_cwatm_layout.addWidget(self.run_cwatm_button)
-        
-        # Add checkbox for writing output to file
-        self.write_output_checkbox = QCheckBox("Write output to cwatm_out.txt")
-        self.write_output_checkbox.setStyleSheet("""
-            QCheckBox {
-                font-size: 12px;
-                color: #2c3e50;
-                padding: 5px;
-            }
-            QCheckBox::indicator {
-                width: 16px;
-                height: 16px;
-                border: 2px solid #e1e5e9;
-                border-radius: 3px;
-                background-color: white;
-            }
-            QCheckBox::indicator:checked {
-                background-color: #0066CC;
-                border-color: #0066CC;
-            }
-            QCheckBox::indicator:checked:hover {
-                background-color: #0055AA;
-                border-color: #0055AA;
-            }
-        """)
-        run_cwatm_layout.addWidget(self.write_output_checkbox)
-        
-        # Check Data button
+
+        # Warning label to the right of RUN CWatM - shows problems (e.g. gauges not in
+        # the mask) in red. Empty when everything is fine.
+        self.warning_label = QLabel("")
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setStyleSheet("QLabel { color: red; font-weight: bold; }")
+        run_cwatm_layout.addWidget(self.warning_label, 1)
+
+        # ("Write output to cwatm_out.txt" checkbox removed — now controlled by the
+        # Settings > "Write output" menu tick box.)
+
+        # Check Data button (hidden; available via the Tools > Check Data menu)
         self.check_data_button = QPushButton("Check Data")
         self.check_data_button.setMinimumHeight(button_height)
         self.check_data_button.setMinimumWidth(120)
@@ -518,33 +589,30 @@ class CWatMMainWindow(QMainWindow):
             }
         """)
         self.check_data_button.clicked.connect(self.open_check_data_window)
-        run_cwatm_layout.addWidget(self.check_data_button)
+        self.check_data_button.setVisible(False)  # use Tools > Check Data instead
         
         run_cwatm_layout.addStretch()
         parent_layout.addLayout(run_cwatm_layout)
         parent_layout.addSpacing(2)  # Minimal spacing after run button
         
-        # CWatM info area and progress clock layout
-        # Use vertical layout on very small screens
+        # CWatM info area and progress clock layout.
+        # Always stack vertically so the progress clock sits *under* the output box.
         screen_width = QApplication.primaryScreen().availableGeometry().width()
-        if screen_width < 1024:  # Small screen - stack vertically
-            info_progress_layout = QVBoxLayout()
-            info_progress_layout.setSpacing(1)  # Ultra-minimal vertical spacing
-        else:  # Large screen - side by side
-            info_progress_layout = QHBoxLayout()
-            info_progress_layout.setSpacing(3)  # Ultra-minimal horizontal spacing
+        info_progress_layout = QVBoxLayout()
+        info_progress_layout.setSpacing(3)  # Ultra-minimal vertical spacing
         info_progress_layout.setContentsMargins(0, 1, 0, 1)  # Ultra-minimal margins
         
         # CWatM info area for DOS screen output (scrollable) - left side
         self.scroll_area = QScrollArea()
         # Make height responsive to screen size (30px taller)
         screen_height = QApplication.primaryScreen().availableGeometry().height()
-        min_height = max(150, screen_height // 8 + 30)  # At least 150px (120+30) or 1/8 screen height + 30px
-        max_height = min(330, screen_height // 4 + 30)  # At most 330px (300+30) or 1/4 screen height + 30px
+        min_height = int(max(150, screen_height // 8 + 30) * 1.5)  # 50% more height
+        max_height = int(min(330, screen_height // 4 + 30) * 1.5)  # 50% more height
         self.scroll_area.setMinimumHeight(min_height)
         self.scroll_area.setMaximumHeight(max_height)
-        # Make width responsive (20% wider for larger left panel + 40px wider)
-        self.scroll_area.setMinimumWidth(400)
+        # Output box: modest minimum width; the maximum is capped at the right edge of
+        # the End Date field in resizeEvent, so the box ends where the calendar fields end.
+        self.scroll_area.setMinimumWidth(350)
         # Remove maximum width constraint for flexibility
         self.scroll_area.setSizePolicy(self.scroll_area.sizePolicy().horizontalPolicy(), self.scroll_area.sizePolicy().verticalPolicy())
         self.scroll_area.setWidgetResizable(True)
@@ -567,14 +635,26 @@ class CWatMMainWindow(QMainWindow):
                 color: #333333;
             }}
         """)
-        
+
+        # Let the user select and copy the CWatM output text. Selection enables the
+        # native Ctrl+C / right-click "Copy"; the custom context menu adds a
+        # "Copy all output" action that works even while the run is still updating
+        # (each update resets any active selection).
+        self.cwatminfo_label.setTextInteractionFlags(
+            Qt.TextSelectableByMouse | Qt.TextSelectableByKeyboard
+        )
+        self.cwatminfo_label.setCursor(Qt.IBeamCursor)
+        self.cwatminfo_label.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.cwatminfo_label.customContextMenuRequested.connect(self._show_cwatminfo_menu)
+
         self.scroll_area.setWidget(self.cwatminfo_label)
         cwatminfo_container = QWidget()
         cwatminfo_container_layout = QHBoxLayout(cwatminfo_container)
         cwatminfo_container_layout.setContentsMargins(0, 0, 0, 0)  # Shift 90px to the left (80+10)
         cwatminfo_container_layout.setSpacing(0)
         cwatminfo_container_layout.addWidget(self.scroll_area)
-        
+        cwatminfo_container_layout.addStretch()  # keep the box pinned to the left
+
         info_progress_layout.addWidget(cwatminfo_container)
         
         # Add extra space before progress clock (reduced by 30 pixels to shift cwatminfo left)
@@ -594,8 +674,9 @@ class CWatMMainWindow(QMainWindow):
         self.progress_clock.setFixedSize(clock_size, clock_size)
         
         progress_container_layout.addWidget(self.progress_clock)
-        info_progress_layout.addWidget(progress_container)
-        
+        # Clock left-aligned under the output box
+        info_progress_layout.addWidget(progress_container, 0, Qt.AlignLeft)
+
         info_progress_layout.addStretch()
         parent_layout.addLayout(info_progress_layout)
         parent_layout.addSpacing(1)  # Ultra-minimal spacing at bottom
@@ -703,7 +784,7 @@ class CWatMMainWindow(QMainWindow):
             }
         """)
         self.show_basin_button.clicked.connect(self.show_basin)
-        maskmap_layout.addWidget(self.show_basin_button)
+        self.show_basin_button.setVisible(False)  # use Tools > Show Basin instead
         
         # Add spacing between Show Basin and Options buttons
         maskmap_layout.addSpacing(5)
@@ -738,13 +819,256 @@ class CWatMMainWindow(QMainWindow):
             }
         """)
         self.options_button.clicked.connect(self.open_options_window)
-        maskmap_layout.addWidget(self.options_button)
+        self.options_button.setVisible(False)  # use Tools > Change Options instead
         
         # Add stretch to match date field layout
         maskmap_layout.addStretch()
-        
+
         parent_layout.addLayout(maskmap_layout)
         parent_layout.addSpacing(1)  # Minimal spacing after maskmap controls
+
+    def create_gauges_controls(self, parent_layout):
+        """Create Gauges display controls (label + field), aligned like MaskMap."""
+        gauges_layout = QHBoxLayout()
+        gauges_layout.setSpacing(2)
+        gauges_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Gauges label (same fixed width as the MaskMap label for alignment)
+        gauges_label = QLabel("Gauges:")
+        gauges_label.setFixedWidth(100)
+        gauges_layout.addWidget(gauges_label)
+
+        # Gauges field (editable, styled like the MaskMap field), linked to the
+        # settings-file "Gauges" entry.
+        self.gauges_field = QLineEdit()
+        self.gauges_field.setPlaceholderText("Enter or edit gauges here...")
+        screen_height = QApplication.primaryScreen().availableGeometry().height()
+        input_height = max(30, min(35, screen_height // 25))
+        self.gauges_field.setMinimumHeight(input_height)
+        self.gauges_field.setMinimumWidth(120)
+        self.gauges_field.setStyleSheet("QLineEdit { background-color: #f5f5f5; }")
+        self.gauges_field.textChanged.connect(self.on_field_changed)
+        gauges_layout.addWidget(self.gauges_field)
+
+        gauges_layout.addStretch()
+        parent_layout.addLayout(gauges_layout)
+        parent_layout.addSpacing(1)
+
+    def _rebuild_mask_cache(self, force=False):
+        """(Re)build the in-memory mask used for gauge checks. This is potentially
+        expensive for a coordinate-based MaskMap (a basin is generated with CWatM),
+        so it is only done when a settings file is loaded (force=True) or the MaskMap
+        entry has changed since the last build (on save)."""
+        try:
+            content = self.original_content or self.text_display.get_content()
+        except Exception:
+            content = ""
+        maskmap = self.maskmap_field.text().strip() if getattr(self, "maskmap_field", None) else ""
+        if not force and self._mask_context is not None and maskmap == self._mask_context_key:
+            return  # MaskMap unchanged - keep the cached mask
+        settings_file = self.file_manager.get_current_file_path()
+        self._mask_context = build_mask_context(settings_file, content)
+        self._mask_context_key = maskmap
+        # Small hint when a MaskMap is defined but its mask could not be built
+        # (e.g. coordinate MaskMap without a resolvable ups.nc, or missing mask file),
+        # so the gauge check is silently skipped.
+        if maskmap and self._mask_context is None:
+            self.status_bar.showMessage(
+                "Note: could not build the basin mask for the gauge check "
+                "(check MaskMap / ups.nc).")
+
+    def _update_warnings(self, check_pathout=True):
+        """Colour the Gauges field and show problems in red next to the RUN CWatM
+        button. The gauges-in-mask check runs on every call (also after field
+        changes); the PathOut-exists check runs only when check_pathout is True
+        (i.e. on load and save)."""
+        if getattr(self, "gauges_field", None) is None:
+            return
+        try:
+            settings_file = self.file_manager.get_current_file_path()
+            content = self.original_content or self.text_display.get_content()
+        except Exception:
+            settings_file, content = None, ""
+
+        # --- Gauges inside the mask map (uses the cached in-memory mask) ---
+        try:
+            gres = gauges_inside(self._mask_context, content)
+        except Exception:
+            gres = None
+        base = "QLineEdit { background-color: #f5f5f5;"
+        gauge_warning = ""
+        if gres is True:
+            self.gauges_field.setStyleSheet(base + " color: blue; }")
+        elif gres is False:
+            self.gauges_field.setStyleSheet(base + " color: red; }")
+            gauge_warning = "Gauge is not inside the basin! Change manually or use Tools/Set Gauge."
+        else:
+            self.gauges_field.setStyleSheet(base + " }")
+
+        # --- PathOut folder exists (only on load/save) ---
+        if check_pathout:
+            try:
+                pres, _ = pathout_exists(content)
+            except Exception:
+                pres = None
+            self._pathout_warning = (
+                "PathOut does not exists! You can use Tools/Create PathOut Folder."
+                if pres is False else "")
+
+        # Show / clear the warnings next to the RUN CWatM button
+        warnings = [w for w in (gauge_warning, self._pathout_warning) if w]
+        if getattr(self, "warning_label", None) is not None:
+            self.warning_label.setText("\n".join(warnings))
+
+    def create_pathout_folder(self):
+        """Create the PathOut folder (placeholders resolved) if it does not exist."""
+        if not self.file_manager.has_file_loaded():
+            self.status_bar.showMessage("No file loaded")
+            return
+        try:
+            content = self.original_content or self.text_display.get_content()
+        except Exception:
+            content = ""
+
+        exists, resolved = pathout_exists(content)
+        if not resolved:
+            self.status_bar.showMessage("No PathOut defined in the settings file")
+            return
+        if exists:
+            self.status_bar.showMessage(f"PathOut already exists: {resolved}")
+            self._update_warnings()
+            return
+        try:
+            os.makedirs(resolved, exist_ok=True)
+            self.status_bar.showMessage(f"Created PathOut folder: {resolved}")
+        except Exception as e:
+            self.status_bar.showMessage(f"Could not create PathOut folder: {e}")
+            print(f"Error creating PathOut folder: {e}", file=sys.stderr)
+            return
+        # Refresh warnings so the "PathOut does not exists" message clears
+        self._update_warnings()
+
+    def set_gauge(self):
+        """Set the Gauges field to the cell centre with the largest upstream area
+        (ups.nc) that lies inside the mask map."""
+        if not self.file_manager.has_file_loaded():
+            self.status_bar.showMessage("No file loaded")
+            return
+        # Make sure the in-memory mask is available
+        self._rebuild_mask_cache()
+        try:
+            content = self.original_content or self.text_display.get_content()
+        except Exception:
+            content = ""
+        settings_file = self.file_manager.get_current_file_path()
+        result = find_largest_ups_gauge(settings_file, content, self._mask_context)
+        if result is None:
+            self.status_bar.showMessage(
+                "Set Gauge: could not determine a gauge location (check MaskMap / ups.nc)")
+            return
+        lon, lat = result
+        # Format the coordinates to 4 decimal places
+        coords = f"{lon:.4f} {lat:.4f}"
+        # Setting the field triggers the auto-apply + colour re-check
+        self.gauges_field.setText(coords)
+        self.status_bar.showMessage(
+            f"Gauge set to {coords} (largest upstream area in mask)")
+
+    def add_output_watercycle(self):
+        """Append 'OUT_TSS_AreaSum_Daily = WaterCycle' as the last line of the settings
+        file (in memory, not saved), unless a WaterCycle entry already exists."""
+        if not self.file_manager.has_file_loaded():
+            self.status_bar.showMessage("No file loaded")
+            return
+        line_to_add = "OUT_TSS_AreaSum_Daily = WaterCycle"
+        try:
+            content = self.original_content or self.text_display.get_content()
+        except Exception:
+            content = ""
+
+        # Skip if a WaterCycle value already exists for that key
+        for line in content.split('\n'):
+            s = line.strip()
+            if s.startswith('#') or s.startswith(';') or '=' not in s:
+                continue
+            key, value = s.split('=', 1)
+            if key.strip().lower() == 'out_tss_areasum_daily' and \
+               'watercycle' in [v.lower() for v in value.split()]:
+                self.status_bar.showMessage("WaterCycle output already present")
+                return
+
+        # Insert the line under the [OUTPUT] section (in memory only)
+        lines = content.split('\n')
+        out_start = None
+        for i, line in enumerate(lines):
+            if line.strip().lower() == '[output]':
+                out_start = i
+                break
+
+        if out_start is None:
+            # No [OUTPUT] section - create one at the end
+            updated = content.rstrip('\n') + '\n\n[OUTPUT]\n' + line_to_add + '\n'
+        else:
+            # Find the end of the [OUTPUT] section (next section header or EOF)
+            insert_at = len(lines)
+            for j in range(out_start + 1, len(lines)):
+                s = lines[j].strip()
+                if s.startswith('[') and s.endswith(']'):
+                    insert_at = j
+                    break
+            # Place it right after the last non-blank entry of the section
+            while insert_at - 1 > out_start and lines[insert_at - 1].strip() == '':
+                insert_at -= 1
+            lines.insert(insert_at, line_to_add)
+            updated = '\n'.join(lines)
+
+        self.original_content = updated
+        self.text_display.set_original_content(updated)
+        self.parse_file(content=updated, load=False, expand_all=False)
+        self._set_save_dirty(True)
+        self.status_bar.showMessage("Added WaterCycle output under [OUTPUT] (not saved)")
+
+    def _default_output_file(self):
+        """Default output-box file: <PathOut>/cwatm_out.txt (placeholders resolved).
+        Falls back to the settings-file directory if PathOut cannot be resolved."""
+        try:
+            content = self.original_content or self.text_display.get_content()
+        except Exception:
+            content = ""
+        _, resolved = pathout_exists(content)
+        if resolved:
+            return os.path.join(resolved, "cwatm_out.txt")
+        file_path = self.file_manager.get_current_file_path()
+        if file_path:
+            return os.path.join(os.path.dirname(file_path), "cwatm_out.txt")
+        return "cwatm_out.txt"
+
+    def _output_file(self):
+        """Effective output-box file: the custom one set via Configure, else the
+        default (<PathOut>/cwatm_out.txt)."""
+        return self._output_file_override or self._default_output_file()
+
+    def _update_output_tooltip(self):
+        """Set the 'Write output' menu item tooltip to the current effective output
+        file path (custom or default <PathOut>/cwatm_out.txt)."""
+        try:
+            path = self._output_file()
+        except Exception:
+            path = ""
+        tip = f"Output box file: {path}"
+        if self._output_file_override:
+            tip += "  (custom)"
+        self.write_output_action.setToolTip(tip)
+
+    def set_output_box_file(self):
+        """Let the user pick a custom output-box file (location + name), kept in
+        memory. The default shown is <PathOut>/cwatm_out.txt."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Set output box file", self._output_file(),
+            "Text files (*.txt);;All files (*)")
+        if path:
+            self._output_file_override = path
+            self.status_bar.showMessage(f"Output box file set to: {path}")
         
     def create_right_panel(self, parent_layout):
         """Create right panel with text display"""
@@ -792,22 +1116,41 @@ class CWatMMainWindow(QMainWindow):
             }
         """
         
+        # Style applied to Save / Save As when there are unsaved changes (blue)
+        self._modern_button_style = modern_button_style
+        self._save_dirty_style = """
+            QPushButton {
+                background-color: #add8e6;
+                border: 2px solid #87ceeb;
+                border-radius: 8px;
+                color: #2c3e50;
+                font-weight: 600;
+                font-size: 13px;
+                padding: 8px 16px;
+                min-height: 32px;
+            }
+            QPushButton:hover { background-color: #87ceeb; border-color: #6bb6ff; }
+            QPushButton:pressed { background-color: #6bb6ff; border-color: #4fa8e8; }
+        """
+
         save_button = QPushButton("Save")
         save_button.setStyleSheet(modern_button_style)
         save_button.clicked.connect(self.save_file)
         save_controls.addWidget(save_button)
-        
+        self.save_button = save_button
+
         save_as_button = QPushButton("Save As")
         save_as_button.setStyleSheet(modern_button_style)
         save_as_button.clicked.connect(self.save_as_file)
         save_controls.addWidget(save_as_button)
+        self.save_as_button = save_as_button
         
-        compress_all_button = QPushButton("Compress All")
+        compress_all_button = QPushButton("Fold All")
         compress_all_button.setStyleSheet(modern_button_style)
         compress_all_button.clicked.connect(self.compress_all_sections)
         save_controls.addWidget(compress_all_button)
         
-        expand_all_button = QPushButton("Expand All")
+        expand_all_button = QPushButton("Unfold All")
         expand_all_button.setStyleSheet(modern_button_style)
         expand_all_button.clicked.connect(self.expand_all_sections)
         save_controls.addWidget(expand_all_button)
@@ -830,6 +1173,8 @@ class CWatMMainWindow(QMainWindow):
         self.text_area = QTextEdit()
         self.text_area.setPlaceholderText("Configuration content will appear here...")
         self.text_area.setReadOnly(False)
+        # Colour Save / Save As blue when the document has unsaved edits
+        self.text_area.document().modificationChanged.connect(self._on_doc_modified)
         self.text_area.setStyleSheet("""
             QTextEdit {
                 background-color: #ffffff;
@@ -906,17 +1251,112 @@ class CWatMMainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
     
-    def create_menu_bar(self):
-        """Create menu bar with Info menu"""
-        menu_bar = self.menuBar()
-        
+    def create_menu_bar(self, parent_layout):
+        """Create menu bar with Info menu, placed below the banner.
+
+        Built as a QMenuBar *widget* added to the layout (rather than the native
+        QMainWindow menu bar, which is always pinned to the very top of the window).
+        """
+        menu_bar = QMenuBar()
+        menu_bar.setNativeMenuBar(False)  # keep it in the layout (incl. macOS)
+
+        # File menu (left of Info) — same actions as the Load/Save/Save As buttons.
+        # Wrapped in lambdas so the QAction.triggered "checked" bool is not passed
+        # as an argument (save_file takes an optional 'new' flag).
+        file_menu = menu_bar.addMenu("File")
+        load_action = file_menu.addAction("Load .ini")
+        load_action.setShortcut("Ctrl+O")
+        load_action.triggered.connect(lambda: self.load_file())
+        reload_action = file_menu.addAction("Reload")
+        reload_action.setShortcut("Ctrl+L")
+        reload_action.triggered.connect(lambda: self.reload_file())
+        save_action = file_menu.addAction("Save .ini")
+        save_action.setShortcut("Ctrl+S")
+        save_action.triggered.connect(lambda: self.save_file())
+        save_as_action = file_menu.addAction("Save As")
+        save_as_action.setShortcut("Ctrl+Alt+S")
+        save_as_action.triggered.connect(lambda: self.save_as_file())
+        file_menu.addSeparator()
+        exit_action = file_menu.addAction("Exit")
+        exit_action.triggered.connect(lambda: self.close())
+
+        # Settings menu (right of File) — same actions as the editor toolbar buttons
+        settings_menu = menu_bar.addMenu("Settings")
+        compress_action = settings_menu.addAction("Fold All")
+        compress_action.setShortcut("Alt+0")
+        compress_action.triggered.connect(lambda: self.compress_all_sections())
+        expand_action = settings_menu.addAction("Unfold All")
+        expand_action.setShortcut("Alt+Shift+0")
+        # Pass False so it actually unfolds (the no-arg default notexpand=True does not)
+        expand_action.triggered.connect(lambda: self.expand_all_sections(False))
+        top_action = settings_menu.addAction("Top")
+        top_action.setShortcut("Alt+T")
+        top_action.triggered.connect(lambda: self.jump_to_top())
+        down_action = settings_menu.addAction("Down")
+        down_action.setShortcut("Alt+D")
+        down_action.triggered.connect(lambda: self.jump_to_bottom())
+        settings_menu.addSeparator()
+        find_action = settings_menu.addAction("Find")
+        find_action.setShortcut("F5")
+        find_action.triggered.connect(lambda: self.find_text())
+        find_next_action = settings_menu.addAction("Find next")
+        find_next_action.setShortcut("Ctrl+F")
+        find_next_action.triggered.connect(lambda: self.find_next())
+        settings_menu.addSeparator()
+        undo_action = settings_menu.addAction("Undo")
+        undo_action.setShortcut("Ctrl+Z")
+        undo_action.triggered.connect(lambda: self.text_area.undo())
+        redo_action = settings_menu.addAction("Redo")
+        redo_action.setShortcut("Ctrl+Y")
+        redo_action.triggered.connect(lambda: self.text_area.redo())
+
+        # Tools menu (right of File) — same actions as the side buttons
+        tools_menu = menu_bar.addMenu("Tools")
+        tools_menu.setToolTipsVisible(True)
+        options_action = tools_menu.addAction("Change Options")
+        options_action.setToolTip("Display a popup with the settingsfile [Options]")
+        options_action.triggered.connect(lambda: self.open_options_window())
+        basin_action = tools_menu.addAction("Show Basin")
+        basin_action.triggered.connect(lambda: self.show_basin())
+        set_gauge_action = tools_menu.addAction("Set Gauge")
+        set_gauge_action.setToolTip("Find the point with the largest upstream area in Mask Map")
+        set_gauge_action.triggered.connect(lambda: self.set_gauge())
+        tools_menu.addSeparator()
+        watercycle_action = tools_menu.addAction("Add output Watercycle")
+        watercycle_action.setToolTip("Adds an additional output for creating watercycles")
+        watercycle_action.triggered.connect(lambda: self.add_output_watercycle())
+        check_action = tools_menu.addAction("Check Data")
+        check_action.triggered.connect(lambda: self.open_check_data_window())
+        tools_menu.addSeparator()
+        create_pathout_action = tools_menu.addAction("Create PathOut Folder")
+        create_pathout_action.triggered.connect(lambda: self.create_pathout_folder())
+
+        # RUN CWATM menu (right of Tools). Actualize was removed: field changes are
+        # auto-applied to the content, and Save/Run flush any pending change first.
+        run_menu = menu_bar.addMenu("RUN CWATM")
+        run_action = run_menu.addAction("Run CWATM")
+        run_action.setShortcut("Ctrl+R")
+        run_action.triggered.connect(lambda: self.run_cwatm())
+
+        # Configure menu (right of RUN CWATM). "Write output to cwatm_out.txt" is a
+        # checkable tick box; run_cwatm reads self.write_output_action.isChecked().
+        configure_menu = menu_bar.addMenu("Configure")
+        configure_menu.setToolTipsVisible(True)  # show action tooltips in the menu
+        set_output_action = configure_menu.addAction("Set output box file")
+        set_output_action.triggered.connect(lambda: self.set_output_box_file())
+        self.write_output_action = configure_menu.addAction("Write output box")
+        self.write_output_action.setCheckable(True)
+        self.write_output_action.setChecked(False)
+        # Refresh the tooltip with the current effective output path when opened
+        configure_menu.aboutToShow.connect(self._update_output_tooltip)
+
         # Create Info menu and place it on the right side
         info_menu = menu_bar.addMenu("Info")
-        
+
         # Add action for showing info dialog
         info_action = info_menu.addAction("About CWatM")
         info_action.triggered.connect(self.show_info_dialog)
-        
+
         # Style the menu bar to align Info to the right
         menu_bar.setStyleSheet("""
             QMenuBar {
@@ -934,7 +1374,11 @@ class CWatMMainWindow(QMainWindow):
                 color: white;
             }
         """)
-    
+
+        # Insert just below the banner (index 0 = header) regardless of when this
+        # is called relative to the content layout.
+        parent_layout.insertWidget(1, menu_bar)
+
     def show_info_dialog(self):
         """Show information dialog about CWatM"""
         dialog = QDialog(self)
@@ -1113,6 +1557,33 @@ class CWatMMainWindow(QMainWindow):
         dialog.exec()
         
     # Event handlers
+    def reload_file(self):
+        """Reload the current settings file from disk, discarding unsaved changes."""
+        if not self.file_manager.has_file_loaded() or not self.file_manager.get_current_file_path():
+            self.status_bar.showMessage("No file to reload")
+            return
+
+        # Confirm before discarding unsaved changes
+        if getattr(self, "_is_dirty", False):
+            reply = QMessageBox.question(
+                self,
+                "Reload file",
+                "Discard unsaved changes and reload the file from disk?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        # Drop any pending auto-apply so it cannot re-introduce discarded changes
+        self._field_update_timer.stop()
+        self.file_parsed = False
+        self.collapsed_sections.clear()
+        # parse_file(load=True) re-reads the current file path from disk and re-renders
+        self.parse_file(load=True, show_status=True)
+        self._mark_clean()
+        self.status_bar.showMessage(f"Reloaded: {self.file_manager.get_current_file_path()}")
+
     def load_file(self):
         """Handle file loading"""
         content, filename = self.file_manager.load_file()
@@ -1131,7 +1602,14 @@ class CWatMMainWindow(QMainWindow):
                 
                 # Automatically parse the file after loading
                 self.parse_file(load = True, show_status=True)
-                
+
+                # Freshly loaded file has no unsaved changes
+                self._mark_clean()
+
+                # Build the in-memory mask, then check gauges / PathOut
+                self._rebuild_mask_cache(force=True)
+                self._update_warnings()
+
                 # Color buttons after successful file load
                 # Options button - #add8e6 color
                 self.options_button.setStyleSheet("""
@@ -1242,6 +1720,9 @@ class CWatMMainWindow(QMainWindow):
             self.text_display.set_plain_content("Please load a configuration file first before parsing.")
             return
             
+        # Programmatic re-render: don't let the resulting text/field changes flip the
+        # unsaved-changes (Save button) state.
+        self._suppress_dirty = True
         try:
             # Store current scroll position if no target specified
             position_data = self.save_scroll_position() if target_line is None else None
@@ -1312,6 +1793,12 @@ class CWatMMainWindow(QMainWindow):
                 self.maskmap_field.setText(settings_values['maskmap'])
             else:
                 self.maskmap_field.setText("")
+
+            # Update Gauges field
+            if 'gauges' in settings_values:
+                self.gauges_field.setText(settings_values['gauges'])
+            else:
+                self.gauges_field.setText("")
             
             # Restore position
             if target_line is not None:
@@ -1361,9 +1848,41 @@ class CWatMMainWindow(QMainWindow):
             print(f"Error parsing file: {str(e)}", file=sys.stderr)
             self.status_bar.showMessage(f"Error parsing file: {str(e)}")
             self.file_parsed = False
-    
+        finally:
+            # A fresh programmatic render is not an unsaved user edit
+            self.text_area.document().setModified(False)
+            self._suppress_dirty = False
+
+    def _set_save_dirty(self, dirty):
+        """Colour the Save / Save As buttons blue when there are unsaved changes."""
+        self._is_dirty = bool(dirty)
+        if getattr(self, "save_button", None) is None:
+            return
+        style = self._save_dirty_style if dirty else self._modern_button_style
+        self.save_button.setStyleSheet(style)
+        self.save_as_button.setStyleSheet(style)
+
+    def _on_doc_modified(self, changed):
+        """Editor document modification state changed (ignored during programmatic
+        re-renders, which set self._suppress_dirty)."""
+        if self._suppress_dirty:
+            return
+        self._set_save_dirty(changed)
+
+    def _mark_clean(self):
+        """Mark the document/state as saved (no unsaved changes)."""
+        if getattr(self, "text_area", None) is not None:
+            self.text_area.document().setModified(False)
+        self._set_save_dirty(False)
+
     def on_field_changed(self):
         """Handle when dates, pathout, or maskmap fields change"""
+        if self._suppress_dirty:
+            return  # programmatic update during parse/load, not a user change
+        # Mark unsaved changes on the Save / Save As buttons
+        self._set_save_dirty(True)
+        # Auto-apply the change into the in-memory settings content (debounced)
+        self._field_update_timer.start()
         if hasattr(self, 'actualize_button') and self.actualize_button:
             # Color actualize button with #add8e6 when fields change
             self.actualize_button.setStyleSheet("""
@@ -1411,10 +1930,12 @@ class CWatMMainWindow(QMainWindow):
             current_config_settings = self.config_parser.get_current_settings_values(content)
             current_pathout = self.pathout_field.text().strip()
             current_maskmap = self.maskmap_field.text().strip()
-            
+            current_gauges = self.gauges_field.text().strip()
+
             dates_changed = self.date_manager.dates_changed_from_config(current_config_dates)
-            settings_changed = (current_config_settings.get('pathout', '') != current_pathout or 
-                              current_config_settings.get('maskmap', '') != current_maskmap)
+            settings_changed = (current_config_settings.get('pathout', '') != current_pathout or
+                              current_config_settings.get('maskmap', '') != current_maskmap or
+                              current_config_settings.get('gauges', '') != current_gauges)
             
             if dates_changed or settings_changed:
                 # Expand everything before saving
@@ -1434,6 +1955,8 @@ class CWatMMainWindow(QMainWindow):
                         settings_dict['pathout'] = current_pathout
                     if current_config_settings.get('maskmap', '') != current_maskmap:
                         settings_dict['maskmap'] = current_maskmap
+                    if current_config_settings.get('gauges', '') != current_gauges:
+                        settings_dict['gauges'] = current_gauges
                     updated_content = self.config_parser.update_settings(updated_content, settings_dict)
                 
                 # Save file with clean content
@@ -1496,6 +2019,65 @@ class CWatMMainWindow(QMainWindow):
             import sys
             print(f"Error updating configuration: {str(e)}", file=sys.stderr)
             self.status_bar.showMessage(f"Error updating configuration: {str(e)}")
+
+    def _apply_field_changes(self):
+        """Apply changed Start/Spin/End dates, PathOut and MaskMap into the in-memory
+        settings content and refresh the view. Does NOT save to disk (unlike Actualize)."""
+        if not self.file_manager.has_file_loaded():
+            return
+        try:
+            start_date, spin_date, end_date = self.date_manager.get_current_dates()
+            if not all([start_date, spin_date, end_date]):
+                return
+
+            content = self.text_display.get_content()
+            current_config_dates = self.config_parser.get_current_date_values(content)
+            current_config_settings = self.config_parser.get_current_settings_values(content)
+            current_pathout = self.pathout_field.text().strip()
+            current_maskmap = self.maskmap_field.text().strip()
+            current_gauges = self.gauges_field.text().strip()
+
+            dates_changed = self.date_manager.dates_changed_from_config(current_config_dates)
+            settings_changed = (current_config_settings.get('pathout', '') != current_pathout or
+                                current_config_settings.get('maskmap', '') != current_maskmap or
+                                current_config_settings.get('gauges', '') != current_gauges)
+            if not (dates_changed or settings_changed):
+                return
+
+            updated_content = self.original_content
+            if dates_changed:
+                updated_content = self.config_parser.update_dates(
+                    updated_content, start_date, spin_date, end_date)
+            if settings_changed:
+                settings_dict = {}
+                if current_config_settings.get('pathout', '') != current_pathout:
+                    settings_dict['pathout'] = current_pathout
+                if current_config_settings.get('maskmap', '') != current_maskmap:
+                    settings_dict['maskmap'] = current_maskmap
+                if current_config_settings.get('gauges', '') != current_gauges:
+                    settings_dict['gauges'] = current_gauges
+                updated_content = self.config_parser.update_settings(updated_content, settings_dict)
+
+            # Update the in-memory content and refresh the view WITHOUT saving to disk.
+            self.original_content = updated_content
+            self.text_display.set_original_content(updated_content)
+            self.parse_file(content=updated_content, load=False, expand_all=False)
+
+            # These are unsaved changes
+            self._set_save_dirty(True)
+            # Re-check gauges-in-mask only (PathOut is checked on load/save)
+            self._update_warnings(check_pathout=False)
+            self.status_bar.showMessage("Settings updated (not saved)")
+        except Exception as e:
+            import sys
+            print(f"Error applying field changes: {str(e)}", file=sys.stderr)
+
+    def _flush_pending_field_changes(self):
+        """If a debounced field update is still pending, apply it now so that Save and
+        Run use the latest date / PathOut / MaskMap values."""
+        if self._field_update_timer.isActive():
+            self._field_update_timer.stop()
+            self._apply_field_changes()
     
     def run_cwatm(self):
         """Handle CWatM button click - run or stop CWatM model"""
@@ -1511,7 +2093,10 @@ class CWatMMainWindow(QMainWindow):
         if not self.file_manager.has_file_loaded():
             self.status_bar.showMessage("No settings file loaded")
             return
-            
+
+        # Apply any pending (debounced) field changes before running
+        self._flush_pending_field_changes()
+
         # Get current file path and name
         file_path = self.file_manager.get_current_file_path()
         
@@ -1524,16 +2109,23 @@ class CWatMMainWindow(QMainWindow):
         self.cwatm_output_buffer.clear()
         self.cwatminfo_label.setText("CWatM output will appear here...")
         
-        # Setup output file if checkbox is checked
-        if self.write_output_checkbox.isChecked():
-            file_dir = os.path.dirname(file_path)
-            self.output_file_path = os.path.join(file_dir, "cwatm_out.txt")
-            # Clear/create the output file
+        # Setup output file if the Configure > "Write output" menu item is ticked.
+        # Location is the custom file (Configure > Set output box file) or the default
+        # <PathOut>/cwatm_out.txt.
+        if self.write_output_action.isChecked():
+            self.output_file_path = self._output_file()
+            # Make sure the target folder exists
             try:
-                with open(self.output_file_path, 'w', encoding='utf-8') as f:
-                    f.write(f"CWatM Output Log - Started at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-                    f.write(f"Settings file: {file_path}\n")
-                    f.write("-" * 50 + "\n")
+                os.makedirs(os.path.dirname(self.output_file_path), exist_ok=True)
+            except Exception:
+                pass
+            # Append a header block to the output file (do not overwrite previous runs
+            # and do not show these lines in the output box).
+            try:
+                with open(self.output_file_path, 'a', encoding='utf-8') as f:
+                    f.write("=================================\n")
+                    f.write(time.strftime('%Y-%m-%d %H:%M:%S') + "\n")
+                    f.write("---------------------------------\n")
                 print(f"Writing output to file: {self.output_file_path}")
             except Exception as e:
                 print(f"Error creating output file: {e}")
@@ -1594,6 +2186,16 @@ class CWatMMainWindow(QMainWindow):
         except Exception as e:
             print(f"Error opening check data window: {str(e)}", file=sys.stderr)
     
+    def _finalize_output_file(self):
+        """Append a trailing blank line to the output-box file after a run's content.
+        Not shown in the output box."""
+        if self.output_file_path:
+            try:
+                with open(self.output_file_path, 'a', encoding='utf-8') as f:
+                    f.write("\n")
+            except Exception:
+                pass
+
     def on_cwatm_finished(self, success, last_dis):
         """Handle CWatM execution completion"""
         if success:
@@ -1602,13 +2204,16 @@ class CWatMMainWindow(QMainWindow):
                 last_dis_formatted = f"{float(last_dis):.2f}" if last_dis is not None else "N/A"
             except (ValueError, TypeError):
                 last_dis_formatted = str(last_dis) if last_dis is not None else "N/A"
-            
+
             print(f"CWatM completed successfully.")
             self.status_bar.showMessage(f"CWatM success: {success}  last discharge: {last_dis_formatted}")
         else:
             print("CWatM execution failed")
             self.status_bar.showMessage("CWatM execution failed")
-            
+
+        # Trailing blank line in the output file after the run's content
+        self._finalize_output_file()
+
         # Reset state but keep progress clock value
         self.cwatm_running = False
         self.cwatm_worker = None
@@ -1622,7 +2227,10 @@ class CWatMMainWindow(QMainWindow):
         """Handle CWatM execution error"""
         print(f"CWatM execution error: {error_message}", file=sys.stderr)
         self.status_bar.showMessage(f"CWatM execution error: {error_message}")
-        
+
+        # Trailing blank line in the output file after the run's content
+        self._finalize_output_file()
+
         # Clean up file operations after error
         self.cleanup_file_operations()
         
@@ -1971,7 +2579,10 @@ class CWatMMainWindow(QMainWindow):
         if not self.file_manager.has_file_loaded():
             self.status_bar.showMessage("No file loaded - use Save As instead")
             return
-            
+
+        # Apply any pending (debounced) field changes so the save captures them
+        self._flush_pending_field_changes()
+
         # Store current scroll and cursor position before saving
         position_data = self.save_scroll_position()
 
@@ -2009,6 +2620,11 @@ class CWatMMainWindow(QMainWindow):
             self.text_display.set_original_content(content)
             # Re-parse the file to restore formatting with the saved changes
             self.parse_file(expand_all=False,load=True)
+            # Saved: clear the unsaved-changes indicator
+            self._mark_clean()
+            # Rebuild the mask only if MaskMap changed, then re-check gauges / PathOut
+            self._rebuild_mask_cache()
+            self._update_warnings()
             # Restore scroll and cursor position after parsing
             self.collapsed_sections = save_collapse
             self.compress_sections(all=False, compress_sections=self.collapsed_sections)
@@ -2335,14 +2951,35 @@ class CWatMMainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle application close event"""
+        # Prompt to save if there are unsaved changes to the settings file
+        if getattr(self, "_is_dirty", False):
+            reply = QMessageBox.question(
+                self,
+                "Unsaved changes",
+                "The settings file has unsaved changes.\nSave before exiting?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save,
+            )
+            if reply == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if reply == QMessageBox.Save:
+                self.save_file()
+                # If the save did not clear the dirty state (e.g. no file path),
+                # abort the close so the user does not lose changes.
+                if self._is_dirty:
+                    self.status_bar.showMessage("Save failed - exit cancelled")
+                    event.ignore()
+                    return
+
         if self.cwatm_running and self.cwatm_worker:
             # Stop CWatM execution before closing
             print("Application closing - stopping CWatM execution...", file=sys.stderr)
             self.stop_cwatm_execution()
-        
+
         # Final cleanup of any remaining file operations
         self.cleanup_file_operations()
-        
+
         # Accept the close event
         event.accept()
     
@@ -2386,14 +3023,37 @@ class CWatMMainWindow(QMainWindow):
             # Other lines - explicitly set to black to prevent color bleeding
             return f'<span style="color: black;">{line}</span>'
     
+    def _show_cwatminfo_menu(self, pos):
+        """Right-click menu for the CWatM output: copy selection or all output."""
+        menu = QMenu(self.cwatminfo_label)
+        copy_sel = menu.addAction("Copy")
+        copy_sel.setEnabled(self.cwatminfo_label.hasSelectedText())
+        copy_sel.triggered.connect(
+            lambda: QApplication.clipboard().setText(self.cwatminfo_label.selectedText())
+        )
+        copy_all = menu.addAction("Copy all output")
+        copy_all.triggered.connect(self.copy_cwatminfo_to_clipboard)
+        menu.exec(self.cwatminfo_label.mapToGlobal(pos))
+
+    def copy_cwatminfo_to_clipboard(self):
+        """Copy the full CWatM output buffer to the clipboard as plain text."""
+        plain_lines = [re.sub(r'<[^>]+>', '', line) for line in self.cwatm_output_buffer]
+        QApplication.clipboard().setText('\n'.join(plain_lines))
+
     def append_to_cwatminfo(self, text, is_error=False):
         """Append text to cwatminfo output buffer and update display immediately"""
         if text.strip():  # Only add non-empty text
+            # CWatM prints per-timestep progress (date + discharge) with a leading
+            # carriage return and end='' (see output.py), so a console overwrites a
+            # single line in place. Mirror that: a '\r' line replaces the previous
+            # progress line instead of accumulating a new line each timestep.
+            is_progress = text.lstrip(' \t').startswith('\r')
+
             # Filter out "Worker:" messages
             text_stripped = text.strip()
             if text_stripped.startswith("Worker:"):
                 return  # Skip this message
-            
+
             # Write to file if output file is configured
             if self.output_file_path:
                 try:
@@ -2403,18 +3063,24 @@ class CWatMMainWindow(QMainWindow):
                 except Exception as e:
                     print(f"Error writing to output file: {e}")
                     self.output_file_path = None  # Disable file writing if there's an error
-                
+
             # Format text with color if it's an error
             if is_error:
                 formatted_text = f'<span style="color: darkred;">{text_stripped}</span>'
             else:
                 formatted_text = text_stripped
-            
-            self.cwatm_output_buffer.append(formatted_text)
+
+            # Overwrite the previous progress line in place; otherwise append.
+            if is_progress and self._last_was_progress and self.cwatm_output_buffer:
+                self.cwatm_output_buffer[-1] = formatted_text
+            else:
+                self.cwatm_output_buffer.append(formatted_text)
+            self._last_was_progress = is_progress
+
             # Keep only last 100 lines to prevent memory issues
             if len(self.cwatm_output_buffer) > 100:
                 self.cwatm_output_buffer = self.cwatm_output_buffer[-100:]
-            
+
             # Update display immediately after each print
             self.update_cwatminfo_display()
     

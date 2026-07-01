@@ -1045,8 +1045,13 @@ class BasinViewer:
             data_vars = [var for var in ds.data_vars.keys()]
             coord_vars = [var for var in ds.coords.keys()]
             
-            if data_vars:
-                basin_data = ds[data_vars[0]]
+            # Pick the first data variable that is at least 2D. GDAL-written NetCDFs
+            # often expose a 0-dim grid-mapping variable (e.g. 'crs') as the first
+            # data_var; using it blindly makes basin_data 0-dimensional and later
+            # crashes mask loading with "too many indices ... array is 0-dim".
+            basin_var = next((v for v in data_vars if ds[v].ndim >= 2), None)
+            if basin_var is not None:
+                basin_data = ds[basin_var]
             else:
                 # Fallback to first suitable variable
                 suitable_var = None
@@ -1093,12 +1098,21 @@ class BasinViewer:
             
             # Handle extra dimensions
             if basin_data.ndim > 2:
-                basin_data = basin_data.isel({dim: 0 for dim in basin_data.dims 
-                                           if dim not in [lat_var, lon_var]})
-                                           
+                # Reduce non-spatial dims (everything except the last two, which are
+                # the spatial axes) to their first index. Using positions avoids
+                # over-reducing to 0-dim when dim names differ from the coord names.
+                spatial_dims = basin_data.dims[-2:]
+                basin_data = basin_data.isel({dim: 0 for dim in basin_data.dims
+                                              if dim not in spatial_dims})
+
             basin_array = basin_data.values
             ds.close()
-            
+
+            if basin_array.ndim != 2:
+                print(f"Basin data is not 2D (shape {basin_array.shape}); cannot display",
+                      file=sys.stderr)
+                return None, None, None
+
             return basin_array, lats, lons
             
         except Exception as e:
@@ -1145,5 +1159,263 @@ class BasinViewer:
             return None
 
 
+def _parse_gauges(config_content: str):
+    """Extract gauge (lon, lat) pairs from the 'Gauges' setting.
+
+    CWatM gives Gauges as whitespace-separated "lon lat" pairs. Returns a list of
+    (lon, lat) tuples, or an empty list if none can be parsed.
+    """
+    try:
+        config = configparser.ConfigParser(interpolation=None)
+        config.read_string(config_content)
+        value = None
+        for section in config.sections():
+            for key, val in config.items(section):
+                if key.lower() == 'gauges':
+                    value = val
+                    break
+            if value is not None:
+                break
+        if not value:
+            return []
+        nums = [float(x) for x in re.split(r'[\s,]+', value.strip()) if x]
+        return [(nums[i], nums[i + 1]) for i in range(0, len(nums) - 1, 2)]
+    except Exception:
+        return []
+
+
+def build_mask_context(settings_file: str, config_content: str):
+    """Build an in-memory mask for gauge-in-basin checks.
+
+    Handles both a file-based MaskMap (a raster path) and a coordinate-based
+    MaskMap (a "lon lat" pair), for which a basin is generated with CWatM's mask
+    routine (BasinViewer._load_mask_data / mainwarm). The result is a small binary
+    mask kept in memory so the gauge check can run repeatedly without regenerating
+    it. Rebuild this only when a settings file is loaded or the MaskMap changes.
+
+    Returns a context dict, or None if it cannot be built:
+      - {'type': 'raster', 'mask': uint8[H,W] (1=inside), 'transform', 'nrows', 'ncols'}
+      - {'type': 'grid',   'mask': uint8[H,W] (1=inside), 'lats': 1D, 'lons': 1D}
+    """
+    try:
+        viewer = BasinViewer(config_content)
+        mask_path = viewer._find_mask_path()
+        if not mask_path:
+            return None
+
+        if len(mask_path.split()) < 2:
+            # --- File-based raster mask ---
+            resolved = viewer._resolve_placeholders(mask_path)
+            if not resolved or not os.path.exists(resolved):
+                return None
+            with rasterio.open(resolved) as src:
+                band = src.read(1, masked=True)
+                filled = np.ma.filled(band, 0)
+                inside = (~np.ma.getmaskarray(band)) & (filled != 0)
+                if src.nodata is not None:
+                    inside &= (np.ma.filled(band, src.nodata) != src.nodata)
+                return {
+                    'type': 'raster',
+                    'mask': inside.astype(np.uint8),
+                    'transform': src.transform,
+                    'nrows': band.shape[0],
+                    'ncols': band.shape[1],
+                }
+        else:
+            # --- Coordinate-based mask: generate a basin and align to the ups grid ---
+            ups_path = viewer._find_ups_path()
+            if not ups_path:
+                return None
+            resolved_ups = viewer._resolve_placeholders(ups_path)
+            if not resolved_ups or not os.path.exists(resolved_ups):
+                return None
+            basin_data, lats, lons = viewer._load_netcdf_data(resolved_ups)
+            if basin_data is None:
+                return None
+            lats = np.asarray(lats)
+            lons = np.asarray(lons)
+            if lats.ndim != 1 or lons.ndim != 1:
+                return None
+            mask = viewer._load_mask_data(settings_file, basin_data.shape)
+            if mask is None:
+                return None
+            return {
+                'type': 'grid',
+                'mask': (np.asarray(mask) == 1).astype(np.uint8),
+                'lats': lats,
+                'lons': lons,
+            }
+    except Exception as e:
+        print(f"Error building mask context: {e}", file=sys.stderr)
+        return None
+
+
+def _point_in_mask(context, lon, lat):
+    """Return True if (lon, lat) falls on an inside (==1) cell of the mask context."""
+    if context is None:
+        return False
+    if context['type'] == 'raster':
+        from rasterio.transform import rowcol
+        try:
+            row, col = rowcol(context['transform'], lon, lat)
+        except Exception:
+            return False
+        if 0 <= row < context['nrows'] and 0 <= col < context['ncols']:
+            return context['mask'][row, col] == 1
+        return False
+    else:  # grid
+        lats, lons, mask = context['lats'], context['lons'], context['mask']
+        # Point must be within the grid extent
+        if lat < lats.min() or lat > lats.max() or lon < lons.min() or lon > lons.max():
+            return False
+        row = int(np.abs(lats - lat).argmin())
+        col = int(np.abs(lons - lon).argmin())
+        if 0 <= row < mask.shape[0] and 0 <= col < mask.shape[1]:
+            return mask[row, col] == 1
+        return False
+
+
+def gauges_inside(context, config_content):
+    """Check the Gauges from config against a prebuilt mask context.
+
+    Returns True if all gauges are inside, False if any is outside, or None if the
+    check cannot be performed (no context or no gauges).
+    """
+    if context is None:
+        return None
+    gauges = _parse_gauges(config_content)
+    if not gauges:
+        return None
+    for lon, lat in gauges:
+        if not _point_in_mask(context, lon, lat):
+            return False
+    return True
+
+
+def gauges_in_maskmap(settings_file: str, config_content: str):
+    """Convenience: build the mask context and check the gauges in one call.
+    (main_window caches the context and calls gauges_inside directly.)"""
+    return gauges_inside(build_mask_context(settings_file, config_content), config_content)
+
+
+def find_largest_ups_gauge(settings_file: str, config_content: str, context=None):
+    """Find the cell centre (lon, lat) with the largest upstream area (from ups.nc)
+    that lies inside the mask map. Returns (lon, lat) or None.
+
+    Works for both a file-based and a coordinate-based MaskMap: candidate cells are
+    the ups grid cells, tested for membership against the (prebuilt) mask context.
+    """
+    try:
+        viewer = BasinViewer(config_content)
+        ups_path = viewer._find_ups_path()
+        if not ups_path:
+            return None
+        resolved_ups = viewer._resolve_placeholders(ups_path)
+        if not resolved_ups or not os.path.exists(resolved_ups):
+            return None
+        ups, lats, lons = viewer._load_netcdf_data(resolved_ups)
+        if ups is None:
+            return None
+        ups = np.asarray(ups, dtype=float)
+        lats = np.asarray(lats)
+        lons = np.asarray(lons)
+        if ups.ndim != 2 or lats.ndim != 1 or lons.ndim != 1:
+            return None
+
+        if context is None:
+            context = build_mask_context(settings_file, config_content)
+        if context is None:
+            return None
+
+        # Fast path: a grid mask already aligned to the ups grid
+        if context.get('type') == 'grid' and context['mask'].shape == ups.shape:
+            inside = context['mask'] == 1
+            u = np.where(inside & ~np.isnan(ups), ups, -np.inf)
+            if not np.isfinite(u).any():
+                return None
+            r, c = np.unravel_index(int(np.argmax(u)), u.shape)
+            return float(lons[c]), float(lats[r])
+
+        # General path: walk ups cells from largest to smallest, return the first
+        # one that falls inside the mask.
+        flat = ups.ravel()
+        ncols = ups.shape[1]
+        order = np.argsort(np.where(np.isnan(flat), -np.inf, flat))[::-1]
+        for fi in order:
+            val = flat[fi]
+            if not np.isfinite(val):
+                break
+            r, c = divmod(int(fi), ncols)
+            if _point_in_mask(context, float(lons[c]), float(lats[r])):
+                return float(lons[c]), float(lats[r])
+        return None
+    except Exception as e:
+        print(f"Error finding largest-ups gauge: {e}", file=sys.stderr)
+        return None
+
+
+def _find_setting_value(config, key_wanted):
+    """Return the value of a key from any section (case-insensitive), or None."""
+    for section in config.sections():
+        for key, val in config.items(section):
+            if key.lower() == key_wanted.lower():
+                return val
+    return None
+
+
+def _resolve_settings_placeholders(value, config):
+    """Resolve $(section:key) and $(key) placeholders in a settings value using the
+    other entries of the settings file. Unresolvable placeholders are left as-is."""
+    for _ in range(10):
+        placeholders = re.findall(r'\$\(([^)]+)\)', value)
+        if not placeholders:
+            break
+        replaced_any = False
+        for ph in placeholders:
+            parts = ph.split(':')
+            repl = None
+            if len(parts) >= 2:
+                sec, k = parts[0], parts[1]
+                if config.has_section(sec) and config.has_option(sec, k):
+                    repl = config.get(sec, k)
+            else:
+                repl = _find_setting_value(config, parts[0])
+            if repl is not None:
+                value = value.replace(f'$({ph})', repl)
+                replaced_any = True
+        if not replaced_any:
+            break
+    return value
+
+
+def pathout_exists(config_content):
+    """Check whether the PathOut folder from the settings exists.
+
+    Placeholders such as $(PathRoot) / $(FILE_PATHS:PathRoot) are resolved from the
+    other settings entries first.
+
+    Returns
+    -------
+    (True,  resolved_path) - PathOut exists
+    (False, resolved_path) - PathOut does not exist
+    (None,  None)          - PathOut not found / could not be checked
+    """
+    try:
+        config = configparser.ConfigParser(interpolation=None)
+        config.read_string(config_content)
+        pathout = _find_setting_value(config, 'pathout')
+        if pathout is None:
+            return None, None
+        resolved = _resolve_settings_placeholders(pathout.strip(), config)
+        if not resolved:
+            return None, None
+        return os.path.exists(resolved), resolved
+    except Exception as e:
+        print(f"Error checking PathOut: {e}", file=sys.stderr)
+        return None, None
+
+
 # === Module Exports ===
-__all__ = ['BasinViewer', 'BasinWindow', 'BasinCanvas']
+__all__ = ['BasinViewer', 'BasinWindow', 'BasinCanvas', 'gauges_in_maskmap',
+           'build_mask_context', 'gauges_inside', 'pathout_exists',
+           'find_largest_ups_gauge']

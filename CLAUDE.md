@@ -3,18 +3,103 @@
 ## Overview
 This is a graphical user interface for the Community Water Model (CWatM) developed by IIASA. The application allows users to load, parse, edit, and manage CWatM configuration files with an intuitive GUI.
 
+## Menu Bar & Keyboard Shortcuts (current UI)
+
+The GUI is now **menu-driven**. A banner (CWatM icon, title, the centered text
+"The Community Water Model User Interface", and the IIASA logo) sits at the very
+top, with the menu bar directly **below the banner**. Most former side buttons were
+removed from view and their actions live in menus.
+
+Menu bar (left → right): **File · Settings · Tools · RUN CWATM · Configure · Info**
+
+| Menu | Item | Shortcut | Action |
+|------|------|----------|--------|
+| File | Load .ini | Ctrl+O | Load a settings file (was the "Load Text" button) |
+| File | Reload | Ctrl+L | Reload the current file from disk (prompts if there are unsaved changes) |
+| File | Save .ini | Ctrl+S | Save to current file |
+| File | Save As | Ctrl+Alt+S | Save to a new file |
+| File | Exit | — | Quit (prompts Save/Discard/Cancel if there are unsaved changes) |
+| Settings | Fold All | Alt+0 | Collapse all sections (was "Compress All") |
+| Settings | Unfold All | Alt+Shift+0 | Expand all sections (was "Expand All") |
+| Settings | Top | Alt+T | Jump to start of file |
+| Settings | Down | Alt+D | Jump to end of file |
+| Settings | Find | F5 | Prompt for text and find it in the editor |
+| Settings | Find next | Ctrl+F | Repeat the last Find (wraps around) |
+| Settings | Undo | Ctrl+Z | Undo editor change |
+| Settings | Redo | Ctrl+Y | Redo editor change |
+| Tools | Change Options | — | Open the Options window (tooltip: "Display a popup with the settingsfile [Options]") |
+| Tools | Show Basin | — | Open the basin viewer |
+| Tools | Set Gauge | — | Set Gauges to the largest-upstream point inside the mask (tooltip: "Find the point with the largest upstream area in Mask Map") |
+| Tools | Add output Watercycle | — | Insert `OUT_TSS_AreaSum_Daily = WaterCycle` under `[OUTPUT]` if absent (tooltip: "Adds an additional output for creating watercycles") |
+| Tools | Check Data | — | Open the Check Data window |
+| Tools | Create PathOut Folder | — | Create the resolved PathOut directory if missing |
+| RUN CWATM | Run CWATM | Ctrl+R | Run / stop the CWatM model |
+| Configure | Set output box file | — | Choose a custom output-box log file (kept in memory) |
+| Configure | Write output box | — | Checkable; writes the run log (tooltip shows the current output path) |
+| Info | About CWatM | — | About dialog |
+
+### Behavioral notes
+- **Auto-apply of field changes**: changing Start/Spin/End Date, PathOut, or MaskMap
+  updates the in-memory settings content (and the editor view) automatically after a
+  ~500 ms debounce — **without saving to disk**. Save / Run flush any pending change
+  first. The old **Actualize** action was removed (it had also saved to disk).
+- **Unsaved-changes indicator**: the **Save** and **Save As** buttons turn light blue
+  when there are unsaved edits (editor text or field changes) and return to normal
+  after a save or load. The same dirty state drives the Exit prompt.
+- **Output box**: the CWatM output area is left-aligned with the progress clock
+  centred/left **below** it (no longer beside it). Its text is selectable and
+  copyable (Ctrl+C, or right-click → "Copy all output").
+- **Live progress line**: per-timestep "date + discharge" output (printed by CWatM
+  with a leading `\r`) overwrites a single line in place instead of accumulating,
+  mirroring the console.
+- **Taskbar icon**: the app sets a Windows AppUserModelID and `assets/cwatm.ico` so
+  the taskbar shows the CWatM icon (see `cwatm_gui.py`).
+- The former side buttons (Load Text, Actualize, Options, Show Basin, Check Data) and
+  the "Write output" checkbox are hidden/removed; their objects may remain in code
+  for state styling, but the actions are reached through the menus above.
+
+### Gauges, mask and PathOut checks
+- **Gauges field**: under MaskMap (see `create_gauges_controls`), linked to the
+  settings `Gauges` entry; auto-applies like the other fields.
+- **Gauge-in-mask check** (`basin_viewer.py`: `build_mask_context`, `gauges_inside`):
+  works for a **file-based** MaskMap (raster) *and* a **coordinate-based** MaskMap (a
+  basin is generated via CWatM's mask routine / `mainwarm -vgm`). The built mask is
+  cached in memory (`self._mask_context`) and only rebuilt on **load** or when the
+  **MaskMap changes and is saved** (`_rebuild_mask_cache`). The Gauges field text is
+  coloured **blue** if all gauges are inside the basin, **red** if any is outside.
+- **Warning label** to the right of RUN CWATM shows problems in red:
+  - "Gauge is not inside the basin! Change manually or use Tools/Set Gauge."
+  - "PathOut does not exists! You can use Tools/Create PathOut Folder."
+  The gauge check runs on load/save and after gauge edits; the **PathOut** check
+  (`basin_viewer.pathout_exists`, placeholders resolved) runs only on load/save.
+- **Set Gauge** (`find_largest_ups_gauge`): sets Gauges to the cell centre with the
+  largest upstream area (from ups.nc) that is inside the mask, formatted to 4 decimals.
+- **Create PathOut Folder**: `os.makedirs` of the resolved PathOut, then clears the
+  warning.
+
+### Output-box log file (Configure menu)
+- Default location is `<PathOut>/cwatm_out.txt` (placeholders resolved); **Set output
+  box file** overrides it with a custom path kept in memory. The **Write output box**
+  tooltip shows the current effective path.
+- The file is **appended**, not overwritten. Each run is delimited by a header written
+  straight to the file (not shown in the box): a `====` line, the date/time, a `----`
+  line; and a blank line is written after the run's content
+  (`_finalize_output_file`).
+
 ## Features
 
 ### File Management
 - **Load Configuration Files**: Load INI files with preselected .ini file filter
 - **Save Files**: Save changes to the same file or save as a new file - automatically expands all sections and saves without [-] or [+] indicators
-- **Auto-save**: Automatic saving when running configuration updates
-- **Section Management**: 
-  - **Compress All**: Button to collapse all sections in the display for easier navigation
-  - **Expand All**: Button to expand all sections for full content view
-- **Navigation Controls**:
-  - **Top**: Jump to the beginning of the file
-  - **Down**: Jump to the bottom of the file
+- **Auto-apply (no save)**: changing Start/Spin/End Date, PathOut, or MaskMap updates the settings content in memory automatically (debounced ~500 ms); writing to disk only happens on Save / Save As
+- **Section Management** (Settings menu):
+  - **Fold All** (Alt+0): collapse all sections in the display for easier navigation
+  - **Unfold All** (Alt+Shift+0): expand all sections for full content view
+- **Navigation Controls** (Settings menu):
+  - **Top** (Alt+T): Jump to the beginning of the file
+  - **Down** (Alt+D): Jump to the bottom of the file
+  - **Find** (F5) / **Find next** (Ctrl+F): search text in the editor
+  - **Undo** (Ctrl+Z) / **Redo** (Ctrl+Y)
 
 ### Configuration Parsing
 - **Automatic Parsing**: Parse INI configuration files automatically upon loading with syntax highlighting and interactive expand/collapse functionality
@@ -36,6 +121,9 @@ This is a graphical user interface for the Community Water Model (CWatM) develop
   - End Date (StepEnd)
 - **Automatic Validation**: Ensures chronological order (start ≤ spin ≤ end)
 - **Flexible Date Formats**: Supports multiple date formats including single-digit days/months
+- **Integer SpinUp/StepEnd**: if SpinUp or StepEnd is given as an integer N (a timestep
+  count) instead of a date, the field is computed as StepStart + (N-1) days, matching
+  CWatM's `datetoInt` convention (StepStart = timestep 1). See `date_manager.py`.
 - **Auto-population**: Dates automatically extracted from configuration files when parsing
 
 ### Smart Run Functionality
@@ -51,7 +139,7 @@ This is a graphical user interface for the Community Water Model (CWatM) develop
 - **Options Window**: Dedicated window for managing boolean configuration settings
 - **Automatic Detection**: Automatically finds and parses all boolean options from the [Options] section
 - **Visual Interface**: Clean, modern interface with styled checkboxes and organized layout
-- **Real-time Updates**: Changes to checkboxes immediately update the configuration content and color the Actualize button light blue
+- **Real-time Updates**: Changes to checkboxes immediately update the configuration content and mark the document as having unsaved changes (Save / Save As turn light blue)
 - **Immediate Configuration Updates**: No Apply/Cancel buttons - changes take effect instantly
 - **Professional Styling**: CWatM-branded blue color scheme with hover effects and modern UI elements
 - **Smart Parsing**: Recognizes True/False values (case insensitive) and presents them as checkboxes
@@ -98,15 +186,16 @@ This is a graphical user interface for the Community Water Model (CWatM) develop
 ## Usage
 
 ### Basic Workflow
-1. **Load a Configuration File**: Click "Load Text" (light blue) to select a .ini configuration file - automatic parsing begins immediately
-2. **Navigate and Edit**: Use expand/collapse controls and navigation buttons to browse the parsed file with syntax highlighting
-3. **Adjust Dates/Settings**: Modify the Start Date, Spin Date, End Date, PathOut, or MaskMap as needed
-4. **Manage Options**: Click "Options" button to configure boolean settings from the [Options] section
-5. **Actualize Changes**: Click "Actualize" (becomes light blue when changes are detected) to update and save the file
-6. **Run CWatM Model**: Click "RUN CWatM" (becomes blue after successful parsing) to execute the CWatM model
-7. **Monitor Progress**: Watch the progress clock and real-time output in the cwatminfo area
-8. **Stop if Needed**: Click "STOP CWatM" (button turns light red during execution) to interrupt the model run
-9. **Check Data (Optional)**: Use "Check Data" functionality to validate configuration files before running
+1. **Load a Configuration File**: **File ▸ Load .ini** (Ctrl+O) - automatic parsing begins immediately
+2. **Navigate and Edit**: Use Settings ▸ Fold/Unfold/Top/Down/Find and the [-]/[+] controls to browse the parsed file
+3. **Adjust Dates/Settings**: Modify Start Date, Spin Date, End Date, PathOut, or MaskMap - changes auto-apply to the content (in memory, not saved); Save / Save As turn blue
+4. **Manage Options**: **Tools ▸ Change Options** to configure boolean settings from the [Options] section
+5. **Save**: **File ▸ Save .ini** (Ctrl+S) or **Save As** (Ctrl+Alt+S) to write changes to disk
+6. **Run CWatM Model**: **RUN CWATM ▸ Run CWATM** (Ctrl+R) to execute the model (note: it runs the file on disk, so Save first)
+7. **Monitor Progress**: Watch the progress clock (below the output box) and real-time output in the cwatminfo area
+8. **Stop if Needed**: Run CWATM (Ctrl+R) again to interrupt the model run
+9. **Check Data (Optional)**: **Tools ▸ Check Data** to validate configuration files before running
+10. **Exit**: **File ▸ Exit** prompts to save if there are unsaved changes
 
 ### Data Validation Workflow
 1. **Open Check Data Window**: Access data validation functionality from the main interface
@@ -210,6 +299,12 @@ python cwatm_gui.py
 
 The application starts in maximized window mode for optimal viewing of configuration files.
 
+### Virtual environment & building the executable
+- The project venv is **`venv/`** (run with `venv\Scripts\python.exe`; activate via `venv\Scripts\Activate.ps1`). An older `build_env/` was a copied venv and is deprecated.
+- PyInstaller specs: **`cwatm_gui_dir.spec`** (one-folder, recommended) and **`cwatm_gui.spec`**. They collect rasterio + xarray submodules/data and `copy_metadata('xarray')`, bundle `cwatm`/`src`/`assets`, and set `console=False`.
+- Build: `python -m PyInstaller cwatm_gui_dir.spec --noconfirm` (UPX disabled for faster builds).
+- Reference docs in this folder: **`cwtmexe.md`** (rasterio/xarray/GDAL packaging fixes), **`makeitfaster.md`** (PyInstaller speed), **`nuitka_plan.md`** (optional Nuitka build for faster runtime).
+
 ## Development Notes
 - Built with PySide6 for cross-platform compatibility
 - Uses HTML formatting in QTextEdit for syntax highlighting and interactive controls
@@ -228,24 +323,25 @@ The application starts in maximized window mode for optimal viewing of configura
 
 ## User Interface Layout
 
-### Control Panel (Left Side)
-- Interface description
-- **Load Text** button (light blue) for file loading with filename display and automatic parsing
-- Date input fields with validation (Start Date, Spin Date, End Date)
-- PathOut and MaskMap input fields
-- **Actualize** button (becomes light blue when changes detected) for saving updates
-- **Options** button (150x50px) for managing boolean configuration options
-- **RUN CWatM** button (becomes blue after successful parsing) for model execution
-- **CWatM Output Area**: Scrollable display (225-450px height, 1080px max width) showing real-time execution output
+### Top
+- **Banner**: CWatM icon + "CWatM GUI" title, centered "The Community Water Model User Interface", IIASA logo
+- **Menu bar** (below the banner): File · Settings · Tools · RUN CWATM · Configure · Info (see the Menu Bar section above)
 
-### Display Panel (Right Side - 20% Smaller Width)
+### Control Panel (Left Side)
+- "Loaded: …" filename label (left-aligned, slightly larger font)
+- Date input fields with validation (Start Date, Spin Date, End Date)
+- PathOut and MaskMap input fields (changes auto-apply to content in memory)
+- **CWatM Output Area**: left-aligned scrollable display (taller box; max width capped at the End Date field), text selectable/copyable
+- **Progress Clock**: centred/left **below** the output box
+
+### Display Panel (Right Side)
 Button toolbar (left to right):
-- **Save**: Save current file with clean content
-- **Save As**: Save to new file with clean content  
-- **Compress All**: Collapse all sections
-- **Expand All**: Expand all sections
-- **Top**: Jump to file beginning
-- **Down**: Jump to file end
+- **Save** / **Save As**: save clean content (turn light blue when there are unsaved changes)
+- **Fold All** / **Unfold All**: collapse / expand all sections
+- **Top** / **Down**: jump to file beginning / end
+
+(Removed from view: Load Text, Actualize, Options, Show Basin, Check Data buttons and the
+"Write output" checkbox — their actions are in the menus.)
 
 ### Text Display Area
 - Syntax-highlighted configuration content
@@ -257,13 +353,10 @@ Button toolbar (left to right):
 ## Workflow Guidance System
 
 ### Dynamic Button Coloring
-The GUI provides intelligent visual guidance through the workflow with color-coded buttons:
+The GUI provides visual guidance through color-coded buttons:
 
-1. **Load Text**: Always displayed in light blue to indicate the starting point - automatically parses upon successful load
-2. **Actualize**: Becomes light blue only when changes are detected in dates, PathOut, or MaskMap fields
-3. **Options**: Standard button styling for accessing configuration options window
-4. **RUN CWatM**: Becomes blue after successful parsing, indicating the model is ready to execute
-5. **STOP CWatM**: Button turns light red during execution, indicating it can be clicked to stop the model
+1. **Save / Save As**: turn light blue whenever there are unsaved changes (editor edits or field changes); return to normal after a save or load
+2. **RUN CWATM ▸ Run CWATM**: runs the model; selecting it again while running stops it
 
 ### Change Detection
 - **Date Fields**: Monitors Start Date, Spin Date, and End Date for changes

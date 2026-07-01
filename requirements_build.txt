@@ -1,0 +1,19 @@
+# Requirements for building CWatM GUI executable
+# Core GUI framework
+PySide6>=6.0.0
+
+# Scientific computing
+numpy>=1.20.0
+pandas>=1.3.0
+scipy>=1.7.0
+
+# Geospatial and data formats
+netCDF4>=1.5.0
+GDAL>=3.0.0
+rasterio>=1.2.0
+
+# Build tools
+pyinstaller>=5.0.0
+
+# Optional: UPX for compression (download separately)
+# UPX can reduce executable size significantly

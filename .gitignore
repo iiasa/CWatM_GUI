@@ -1,0 +1,6 @@
+/venv
+/dist
+/build
+/cwatm/__pycache__
+/cwatm/hydrological_modules/__pycache__
+/cwatm/management_modules/__pycache__

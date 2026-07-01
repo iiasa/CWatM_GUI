@@ -14,11 +14,48 @@ Requirements:
     - PySide6
 """
 
+import os
 import sys
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QObject, Signal
+from PySide6.QtGui import QIcon
 
 from src.gui.components.main_window import CWatMMainWindow
+
+
+def asset_path(*parts):
+    """Absolute path to a bundled asset, working from source and when frozen.
+
+    Handles both PyInstaller one-file (assets unpacked under sys._MEIPASS) and
+    one-folder builds (assets in _internal/ AND/or next to the .exe).
+    """
+    bases = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            bases.append(meipass)                      # one-file temp / one-folder _internal
+        bases.append(os.path.dirname(sys.executable))  # one-folder: folder with the .exe
+    else:
+        bases.append(os.path.dirname(os.path.abspath(__file__)))
+    for base in bases:
+        candidate = os.path.join(base, "assets", *parts)
+        if os.path.exists(candidate):
+            return candidate
+    return os.path.join(bases[0], "assets", *parts)
+
+
+def _set_windows_app_id():
+    """Give the app its own AppUserModelID on Windows so the taskbar shows the
+    CWatM icon instead of the python.exe icon. Must run before any window is
+    created. No-op on other platforms or on failure."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                u"IIASA.CWatM.GUI"
+            )
+        except Exception:
+            pass
 
 # for closing the splash scfreen of the GUI
 try:
@@ -75,8 +112,19 @@ def handle_exception(exc_type, exc_value, exc_traceback):
 def main():
     """Main application entry point"""
     try:
+        # Set the Windows taskbar identity before any window exists
+        _set_windows_app_id()
+
         app = QApplication(sys.argv)
-        
+        # Application-wide icon (taskbar + all windows). Use the small multi-size icon
+        # (16/32/48 px) so the taskbar renders it; fall back to cwatm.ico. Only set it
+        # if it loads, so a missing file does not blank the icon embedded in the .exe.
+        _app_icon = QIcon(asset_path("cwatm_small.ico"))
+        if _app_icon.isNull():
+            _app_icon = QIcon(asset_path("cwatm.ico"))
+        if not _app_icon.isNull():
+            app.setWindowIcon(_app_icon)
+
         # Set global exception handler
         sys.excepthook = handle_exception
         

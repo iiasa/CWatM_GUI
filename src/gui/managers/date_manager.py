@@ -108,33 +108,63 @@ class DateManager:
         if end_date < spin_date:
             self.end_date_edit.setDate(spin_date)
     
+    def _resolve_date_value(self, value, config_parser, start_date_obj):
+        """Resolve a StepStart/SpinUp/StepEnd value to a QDate.
+
+        In CWatM settings, SpinUp and StepEnd may be given either as a date or as a
+        plain integer. The integer is a timestep number counted from StepStart, which
+        is timestep 1 (see datetoInt in cwatm/management_modules/timestep.py). So an
+        integer N corresponds to the date StepStart + (N - 1) days. Returns None if
+        the value is neither a date nor an integer (or no start date is available to
+        offset from).
+        """
+        if not value:
+            return None
+
+        # First try a real date string (dd/mm/yyyy, yyyy-mm-dd, ...)
+        date_obj = config_parser.parse_date_value(value)
+        if date_obj:
+            return date_obj
+
+        # Otherwise treat it as an integer offset of timesteps from StepStart
+        try:
+            n = int(float(str(value).strip()))
+        except (ValueError, TypeError):
+            return None
+        if start_date_obj is None:
+            return None
+        return start_date_obj.addDays(n - 1)
+
     def set_dates_from_config(self, date_values, config_parser):
         """Update date fields from parsed configuration values"""
         if not all([self.start_date_edit, self.spin_date_edit, self.end_date_edit]):
             return
-            
+
         step_start = date_values.get('stepstart')
         spin_up = date_values.get('spinup')
         step_end = date_values.get('stepend')
-        
+
         start_date_obj = None
         if step_start:
             start_date_obj = config_parser.parse_date_value(step_start)
             if start_date_obj:
                 self.start_date_edit.setDate(start_date_obj)
-        
+
         if spin_up:
-            spin_date_obj = config_parser.parse_date_value(spin_up)
+            spin_date_obj = self._resolve_date_value(spin_up, config_parser, start_date_obj)
             if spin_date_obj:
                 self.spin_date_edit.setDate(spin_date_obj)
             elif start_date_obj:
-                # If SpinUp is not a valid date, use StepStart date
+                # If SpinUp is neither a valid date nor an integer, use StepStart date
                 self.spin_date_edit.setDate(start_date_obj)
-        
+
         if step_end:
-            end_date_obj = config_parser.parse_date_value(step_end)
+            end_date_obj = self._resolve_date_value(step_end, config_parser, start_date_obj)
             if end_date_obj:
                 self.end_date_edit.setDate(end_date_obj)
+            elif start_date_obj:
+                # If StepEnd is neither a valid date nor an integer, fall back to StepStart
+                self.end_date_edit.setDate(start_date_obj)
     
     def get_current_dates(self):
         """Get current date values from widgets"""

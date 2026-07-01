@@ -70,7 +70,9 @@ class ConfigParser:
                     self.settings_values['pathout'] = value_clean
                 elif key_clean == 'maskmap':
                     self.settings_values['maskmap'] = value_clean
-                    
+                elif key_clean == 'gauges':
+                    self.settings_values['gauges'] = value_clean
+
         return self.date_values, self.settings_values
     
     def format_content_for_display(self, content):
@@ -217,7 +219,7 @@ class ConfigParser:
                 key_clean = key.strip().lower()
                 value_clean = value.strip()
                 
-                if key_clean in ['pathout', 'maskmap']:
+                if key_clean in ['pathout', 'maskmap', 'gauges']:
                     current_values[key_clean] = value_clean
                     
         return current_values

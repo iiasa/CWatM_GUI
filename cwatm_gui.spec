@@ -2,15 +2,23 @@
 
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
-import pkgutil
-import rasterio
+# rasterio imports several submodules dynamically (rasterio.sample, rasterio._shim,
+# rasterio.vrt, ...) which PyInstaller's static analysis cannot see. Collect them all,
+# plus rasterio's bundled GDAL/PROJ data (gdal_data/proj_data) so the frozen GUI does
+# not fail with "ModuleNotFoundError: rasterio.sample" or
+# "Cannot find gdalvrt.xsd (GDAL_DATA is not defined)". rasterio ships its own GDAL,
+# so the osgeo/GDAL wheel is not needed (see cwtmexe.md).
+rasterio_hiddenimports = collect_submodules('rasterio')
+rasterio_datas = collect_data_files('rasterio')
 
-# list all rasterio and fiona submodules, to include them in the package
-additional_packages = list()
-for package in pkgutil.iter_modules(rasterio.__path__, prefix="rasterio."):
-    additional_packages.append(package.name)
+# xarray loads its backends (netCDF4, scipy, ...) dynamically via entry points and
+# reads its own version from package metadata. Collect its submodules and data, and
+# copy its dist metadata so the backend plugins are discoverable in the frozen app,
+# otherwise the GUI fails with "No module named 'xarray'" / backend errors.
+xarray_hiddenimports = collect_submodules('xarray')
+xarray_datas = collect_data_files('xarray') + copy_metadata('xarray')
 
 # Get the directory of this spec file
 spec_root = os.path.dirname(os.path.abspath(SPEC))
@@ -19,19 +27,15 @@ spec_root = os.path.dirname(os.path.abspath(SPEC))
 cwatm_hiddenimports = collect_submodules('cwatm')
 
 # Additional hidden imports for CWatM and GUI dependencies
-hiddenimports = additional_packages + cwatm_hiddenimports + [
+hiddenimports = rasterio_hiddenimports + xarray_hiddenimports + cwatm_hiddenimports + [
     'PySide6.QtCore',
-    'PySide6.QtGui', 
+    'PySide6.QtGui',
     'PySide6.QtWidgets',
     'py_splash',
     'numpy',
     'pandas',
     'scipy',
     'netCDF4',
-    'osgeo',
-    'osgeo.gdal',
-    'osgeo.osr',
-    'osgeo.gdalconst',
     'configparser',
     'xml.dom.minidom',
     'difflib',
@@ -63,20 +67,13 @@ datas = [
     # Include source GUI files
     (os.path.join(spec_root, 'src'), 'src'),
 ]
+# Include rasterio's bundled GDAL/PROJ data files
+datas += rasterio_datas
+# Include xarray's data files and package metadata (for backend discovery)
+datas += xarray_datas
 
 # Binary files to include (DLLs and shared libraries)
 binaries = []
-
-# Add GDAL/OSGEO binaries if available
-try:
-    from osgeo import gdal
-    gdal_path = os.path.dirname(gdal.__file__)
-    # Include GDAL DLLs if they exist
-    gdal_dll_path = os.path.join(gdal_path, '..', 'DLLs')
-    if os.path.exists(gdal_dll_path):
-        binaries.append((gdal_dll_path + '/*', 'DLLs'))
-except:
-    pass
 
 # Add routing reservoir binaries
 routing_binaries_path = os.path.join(spec_root, 'cwatm', 'hydrological_modules', 'routing_reservoirs')
@@ -137,7 +134,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,  # Set to False for windowed application
@@ -156,7 +153,7 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='CWatM_GUI'
 )
