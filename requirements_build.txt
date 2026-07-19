@@ -1,19 +1,14 @@
-# Requirements for building CWatM GUI executable
-# Core GUI framework
-PySide6>=6.0.0
+# CWatM GUI - build-only dependencies (PyInstaller executable build)
+#
+# Install the runtime dependencies first, then the build tools:
+#   pip install -r requirements.txt -r requirements_build.txt
+#
+# Note: GDAL is deliberately NOT listed - rasterio wheels ship their own GDAL
+# (see cwtmexe.md); installing the GDAL wheel separately is unnecessary and has
+# caused broken environments.
 
-# Scientific computing
-numpy>=1.20.0
-pandas>=1.3.0
-scipy>=1.7.0
+-r requirements.txt
 
-# Geospatial and data formats
-netCDF4>=1.5.0
-GDAL>=3.0.0
-rasterio>=1.2.0
-
-# Build tools
-pyinstaller>=5.0.0
-
-# Optional: UPX for compression (download separately)
-# UPX can reduce executable size significantly
+# PyInstaller (pulls in altgraph, pefile, pywin32-ctypes, pyinstaller-hooks-contrib)
+pyinstaller==6.21.0
+pyinstaller-hooks-contrib==2026.6

@@ -1,33 +1,124 @@
+# CWatM GUI - runtime dependencies (Python 3.12, Windows)
+#
+# Reproduces the working venv used to run and build CWatM_GUI. Install with:
+#     python -m venv venv
+#     venv\Scripts\activate
+#     pip install -r requirements.txt
+# For the PyInstaller executable build, then also: pip install -r requirements_build.txt
+#
+# --------------------------------------------------------------------------------
+# IMPORTANT - GDAL: do NOT install the separate `GDAL` / `osgeo` wheel.
+# The rasterio wheel below ships its OWN GDAL (in a `rasterio.libs/` folder). This
+# venv previously had a GDAL-less rasterio that borrowed its GDAL DLL from the osgeo
+# wheel; removing GDAL then broke rasterio ("ImportError: DLL load failed while
+# importing _base"). A clean `pip install rasterio==1.5.0` from PyPI gets the wheel
+# WITH bundled GDAL and needs no osgeo. If rasterio ever imports with that error,
+# reinstall the self-contained wheel:  pip install --force-reinstall --no-deps rasterio
+# (see cwtmexe.md and runtime_speedup.md T4).
+# --------------------------------------------------------------------------------
+
+# ---- Core GUI (Qt / QtWebEngine for the maps + plots) ----
+PySide6==6.11.1
+PySide6_Essentials==6.11.1
+PySide6_Addons==6.11.1
+shiboken6==6.11.1
+
+# ---- Scientific / data stack (CWatM model + analysis) ----
+numpy==2.5.0
+pandas==2.3.3
+scipy==1.18.0
+netCDF4==1.7.4
+cftime==1.6.5
+xarray==2026.4.0
+
+# ---- Raster I/O (rasterio bundles its own GDAL - see the GDAL note above) ----
+rasterio==1.5.0
 affine==2.4.0
-altgraph==0.17.4
-attrs==25.3.0
-certifi==2025.8.3
-cftime==1.6.4.post1
-click==8.1.8
-click-plugins==1.1.1.2
-cligj==0.7.2
-colorama==0.4.6
-et_xmlfile==2.0.0
-importlib_metadata==8.5.0
-netCDF4==1.6.5
-numpy==1.24.4
-openpyxl==3.1.5
-packaging==25.0
-pandas==2.0.3
-pefile==2023.2.7
-pyinstaller==6.15.0
-pyinstaller-hooks-contrib==2025.8
-pyparsing==3.1.4
-PySide6==6.6.3.1
-PySide6_Addons==6.6.3.1
-PySide6_Essentials==6.6.3.1
-python-dateutil==2.9.0.post0
-pytz==2025.2
-pywin32-ctypes==0.2.3
-rasterio==1.3.11
-scipy==1.10.1
-shiboken6==6.6.3.1
-six==1.17.0
 snuggs==1.4.7
-tzdata==2025.2
-zipp==3.20.2
+cligj==0.7.2
+click-plugins==1.1.1.2
+click==8.4.2
+attrs==26.1.0
+
+# ---- Maps + plots (Show Basin / NetCDF / Timeseries / Watercycle / Flow Diagram) ----
+folium==0.20.0
+branca==0.8.2
+xyzservices==2026.3.0
+plotly==6.8.0
+narwhals==2.23.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+
+# ---- HTTP (OSM tile/WMS fetching via the osmtile:// handler) ----
+requests==2.34.2
+certifi==2026.6.17
+charset-normalizer==3.4.7
+idna==3.18
+urllib3==2.7.0
+
+# ---- Excel settings sheets (Excel menu + cwatm xlsx reads) ----
+openpyxl==3.1.5
+et_xmlfile==2.0.0
+
+# ---- MODFLOW coupling (flopy) ----
+# flopy couples CWatM to MODFLOW; it pulls in the matplotlib plotting stack
+# (matplotlib -> contourpy / cycler / fonttools / kiwisolver / pillow). NOTE: the
+# PyInstaller spec currently EXCLUDES matplotlib for both exes - to run the MODFLOW
+# coupling from the frozen build, matplotlib + flopy must be un-excluded and collected
+# (see cwatm_gui_dir.spec). flopy needs pandas (2.3.3, pinned above; it capped the
+# previous pandas 3.x).
+flopy==3.10.0
+matplotlib==3.11.0
+contourpy==1.3.3
+cycler==0.12.1
+fonttools==4.63.0
+kiwisolver==1.5.0
+pillow==12.3.0
+# xmipy = the XMI/BMI wrapper CWatM drives MODFLOW through (run_cwatm imports it with
+# flopy under modflow_coupling). It needs bmipy; bmipy depends on the black formatter
+# (used only by bmipy's code-render CLI, NOT at model runtime - so black is EXCLUDED
+# from the frozen exe in cwatm_gui_dir.spec, but pinned here for the source env).
+xmipy==1.5.0
+bmipy==2.0.1
+black==26.5.1
+mypy-extensions==1.1.0
+pathspec==1.1.1
+platformdirs==4.10.0
+pytokens==0.4.1
+
+# ---- CWatM AI (NotebookLM chat + login) ----
+# notebooklm-py drives the Gemini/NotebookLM chat; rookiepy reads the Google session
+# cookie for the "From Firefox / Chrome / Edge / Opera" login (bundled in the exe so
+# login works there too - see CWatM_AI_NotebookLM.md).
+notebooklm-py==0.7.3
+rookiepy==0.5.6
+httpx==0.28.1
+httpcore==1.0.9
+h11==0.16.0
+anyio==4.14.1
+sniffio==1.3.1
+rich==15.0.0
+markdown-it-py==4.2.0
+mdurl==0.1.2
+Pygments==2.20.0
+filelock==3.29.7
+
+# ---- CWatM AI Google-login WINDOW (optional, source-run only; NOT bundled in the exe).
+# Only needed for the interactive "Google login window" login option. After installing,
+# run once:  playwright install chromium   (or use system Chrome). The browser-cookie
+# login options do not need this.
+playwright==1.61.0
+greenlet==3.5.3
+pyee==13.0.1
+
+# ---- Common / shared dependencies ----
+python-dateutil==2.9.0.post0
+pytz==2026.2
+tzdata==2026.2
+packaging==26.2
+pyparsing==3.3.2
+six==1.17.0
+colorama==0.4.6
+importlib_metadata==9.0.0
+zipp==4.1.0
+typing_extensions==4.16.0

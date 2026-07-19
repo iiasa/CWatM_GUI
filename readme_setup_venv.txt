@@ -8,10 +8,18 @@ claude: use a folder with a python project with many python modules and create a
 
 Use a powershell:
 
+.\venv\Scripts\Activate.ps1
+python -m PyInstaller cwatm_gui_dir.spec --noconfirm --distpath C:\work\Danube_1min\GUI
+
+
 ## 1. Create a fresh venv from the base Python 3.8 (matches pyvenv.cfg: home = C:\Python38)
 python.exe -m venv venv
 
+
 ## 2. Activate it
+
+IN A POWERSHELL!!
+
 .\venv\Scripts\Activate.ps1
 #    Prompt should now show (venv). If activation is blocked by execution policy:
 #    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
@@ -37,7 +45,7 @@ python -m PyInstaller cwatm_gui_dir.spec --noconfirm
 
 
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-.\venvv\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 
 use claude and cwtmexe.md
 

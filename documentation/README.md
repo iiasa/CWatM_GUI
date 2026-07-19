@@ -6,7 +6,10 @@ files, run the model directly, and visualise/validate its inputs — without the
 line.
 
 > **Full manual:** see **[CWatM_GUI_Documentation.md](CWatM_GUI_Documentation.md)**.
-> Developer notes are in **[CLAUDE.md](CLAUDE.md)**.
+> **Feature & usage tour:** **[CWatM_GUI_Features.md](CWatM_GUI_Features.md)**.
+> Developer reference is **[CLAUDE.md](../CLAUDE.md)** (concise: menu bar, invariants,
+> architecture, build) with per-feature deep dives in
+> **[CWatM_GUI_Internals.md](CWatM_GUI_Internals.md)**.
 
 ## Key benefits
 
@@ -41,7 +44,7 @@ python cwatm_gui.py
 │ Loaded: <file>                  │ Save  Save As  Fold All  Unfold    │
 │ Start / Spin / End Date         │ All  Top  Down                     │
 │ PathOut / MaskMap / Gauges      │ syntax-highlighted settings text   │
-│ RUN CWatM  + warning label      │ with [-]/[+] collapsible sections  │
+│ RUN CWatM  + warning label      │ with foldable sections + gutter    │
 │ output box  (clock below it)    │                                    │
 └─────────────────────────────────┴────────────────────────────────────┘
 ```
@@ -77,7 +80,7 @@ Top / Down** and **RUN CWatM** remain as buttons *and* menu items.
   is checked with placeholder resolution.
 - **Helper tools** — **Set Gauge** (largest upstream cell inside the mask),
   **Create PathOut Folder**, **Add output Watercycle** (adds
-  `OUT_TSS_AreaSum_Daily = WaterCycle` under `[OUTPUT]`).
+  `OUT_TSS_AreaSum_MonthTot = WaterCycle` under `[OUTPUT]`).
 - **Model execution** — threaded, responsive; live progress clock (below the output
   box) and a selectable/copyable output box; errors in dark red.
 - **Output logging** — **Configure ▸ Write output box** appends to

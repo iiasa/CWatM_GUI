@@ -57,8 +57,7 @@ class DateManager:
         self.start_date_edit.setDate(QDate.currentDate())
         self.start_date_edit.setCalendarPopup(True)
         self.start_date_edit.setMinimumWidth(150)
-        self.start_date_edit.setMinimumHeight(35)
-        self.start_date_edit.setStyleSheet("QDateEdit { background-color: #f5f5f5; }")  # Light gray background
+        self.start_date_edit.setMinimumHeight(30)
         self.start_date_edit.dateChanged.connect(self.validate_dates)
         date_layout.addWidget(date_label)
         date_layout.addWidget(self.start_date_edit)
@@ -69,8 +68,7 @@ class DateManager:
         self.spin_date_edit.setDate(QDate.currentDate().addDays(0))
         self.spin_date_edit.setCalendarPopup(True)
         self.spin_date_edit.setMinimumWidth(150)
-        self.spin_date_edit.setMinimumHeight(35)
-        self.spin_date_edit.setStyleSheet("QDateEdit { background-color: #f5f5f5; }")  # Light gray background
+        self.spin_date_edit.setMinimumHeight(30)
         self.spin_date_edit.dateChanged.connect(self.validate_dates)
         date_layout.addWidget(spin_date_label)
         date_layout.addWidget(self.spin_date_edit)
@@ -81,14 +79,23 @@ class DateManager:
         self.end_date_edit.setDate(QDate.currentDate().addDays(0))
         self.end_date_edit.setCalendarPopup(True)
         self.end_date_edit.setMinimumWidth(150)
-        self.end_date_edit.setMinimumHeight(35)
-        self.end_date_edit.setStyleSheet("QDateEdit { background-color: #f5f5f5; }")  # Light gray background
+        self.end_date_edit.setMinimumHeight(30)
         self.end_date_edit.dateChanged.connect(self.validate_dates)
         date_layout.addWidget(end_date_label)
         date_layout.addWidget(self.end_date_edit)
-        
+
         date_layout.addStretch()
         parent_layout.addLayout(date_layout)
+        self.retheme()
+
+    def retheme(self):
+        """(Re-)apply the theme's field colours to the three date widgets."""
+        from src.gui.utils import theme
+        style = (f"QDateEdit {{ background-color: {theme.c('field_bg')}; "
+                 f"color: {theme.c('field_text')}; }}")
+        for w in (self.start_date_edit, self.spin_date_edit, self.end_date_edit):
+            if w is not None:
+                w.setStyleSheet(style)
         
     def validate_dates(self):
         """Ensure chronological order of dates"""

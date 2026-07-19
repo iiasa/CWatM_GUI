@@ -1,16 +1,12 @@
 # CWatM GUI — Documentation and User Manual
 
-**Community Water Model (CWatM) by IIASA**
+A graphical user interface for the **Community Water Model (CWatM)** developed by
+IIASA. The application lets you load, edit, validate and run CWatM settings files,
+inspect the model set-up on a map, edit the reservoir/crop Excel workbook, and
+visualise the model results — all without leaving the GUI.
 
-<p align="center">
-  <img src="figures/cwatm_logo.png" alt="CWatM logo" height="120">
-  &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="figures/iiasa_logo.png" alt="IIASA — International Institute for Applied Systems Analysis" height="70">
-</p>
-
-<p align="center">
-  <img src="figures/cwatm_concept.png" alt="The Community Water Model concept" width="640">
-</p>
+> The screenshots in this manual were produced with the example set-up
+> `Danube_1min/Morava` (`settings_m_1min.ini`) and its output folder `out_emo-1v3`.
 
 ---
 
@@ -21,481 +17,508 @@
 3. [Getting Started](#3-getting-started)
 4. [User Interface Overview](#4-user-interface-overview)
 5. [Menus and Keyboard Shortcuts](#5-menus-and-keyboard-shortcuts)
-6. [Step-by-Step User Manual](#6-step-by-step-user-manual)
+6. [Editing Settings](#6-editing-settings)
 7. [Gauges, Mask and PathOut Checks](#7-gauges-mask-and-pathout-checks)
-8. [Output Logging](#8-output-logging)
-9. [Data Visualization and Validation](#9-data-visualization-and-validation)
-10. [Technical Documentation](#10-technical-documentation)
-11. [Building the Executable](#11-building-the-executable)
-12. [Troubleshooting](#12-troubleshooting)
-13. [Frequently Asked Questions](#13-frequently-asked-questions)
-14. [Contact and Support](#14-contact-and-support)
+8. [Check settingsfile](#8-check-settingsfile)
+9. [Running the Model](#9-running-the-model)
+10. [Show Basin](#10-show-basin)
+11. [Check Data](#11-check-data)
+12. [Excel Editor (Crops / Reservoirs)](#12-excel-editor-crops--reservoirs)
+13. [Result Analysis](#13-result-analysis)
+13a. [CWatM AI](#13a-cwatm-ai)
+14. [Configuration and Appearance](#14-configuration-and-appearance)
+15. [Building the Executable](#15-building-the-executable)
+16. [Troubleshooting](#16-troubleshooting)
 
 ---
 
 ## 1. Introduction
 
-The CWatM GUI (Graphical User Interface) is a desktop application for the Community
-Water Model (CWatM) developed by the International Institute for Applied Systems
-Analysis (IIASA). It lets you load, parse, edit and manage CWatM settings (`.ini`)
-files and run the model directly from the interface, without using the command line.
+CWatM is a large-scale hydrological model. Its behaviour is driven by a plain-text
+**settings file** (`.ini`) that points at input maps/meteo, defines the simulation
+period, and switches processes on/off. This GUI wraps the whole workflow:
 
-**Key benefits**
-
-- A **menu-driven** interface that removes command-line complexity.
-- Live settings-file editing with syntax highlighting and collapsible sections.
-- Integrated model execution with a progress clock and real-time output.
-- Built-in checks: gauges-in-basin, PathOut existence, and helper tools.
-- Data-visualisation tools for the basin/mask and data validation (Check Data).
-
-**Target audience:** researchers, hydrologists, water-resource managers and students
-working with the CWatM hydrological model.
-
-> **What changed in this version.** The GUI is now menu-driven. The former on-screen
-> buttons (Load Text, Actualize, Options, Show Basin, Check Data, and the "Write
-> output" checkbox) have moved into menus. Field changes now auto-apply to the
-> settings content in memory (see §6.3), and several new tools were added (Set Gauge,
-> Add output Watercycle, Create PathOut Folder).
+- a **syntax-highlighted editor** for the settings file with folding, bookmarks,
+  change tracking and duplicate-key detection;
+- convenience fields for the **dates, PathOut, MaskMap and Gauges** that write back
+  into the settings automatically;
+- **validation** tools (gauge-in-mask, PathOut existence, missing-file checks,
+  Check Data);
+- a one-click **Run** that streams the model output live with a progress clock;
+- an **Excel editor** for the reservoir/crop workbook;
+- **map and plot** windows to inspect the basin and the results.
 
 ---
 
 ## 2. Installation and Requirements
 
-**Requirements**
-
-- Python 3.8+
-- PySide6 (Qt for Python)
-- NumPy, pandas, SciPy
-- xarray and netCDF4 (NetCDF data)
-- rasterio (raster / mask data)
-
-**Run from source**
+**Requirements**: Python 3.10+ (3.12 recommended), PySide6 (incl. QtWebEngine), NumPy,
+pandas, xarray, rasterio, netCDF4, folium, plotly, openpyxl, requests, and the CWatM
+model package. The optional **CWatM AI** chat needs `notebooklm-py`; the optional
+**MODFLOW** coupling needs `flopy` + `xmipy` (and the MODFLOW 6 `libmf6` library). All
+pinned versions are in `requirements.txt`.
 
 ```bash
-pip install PySide6 numpy pandas scipy xarray netCDF4 rasterio
-python cwatm_gui.py
+pip install -r requirements.txt          # runtime (pinned)
+pip install -r requirements.txt -r requirements_build.txt   # + PyInstaller, to build the exe
+python cwatm_gui.py                       # run from source
 ```
 
-**Windows executable**
+Do **not** install a separate GDAL wheel — rasterio ships its own GDAL.
 
-A packaged Windows executable can be produced with PyInstaller (see
-[§11](#11-building-the-executable)). The app starts maximized on larger screens and
-shows the CWatM icon in the taskbar.
+A pre-built **`CWatM_GUI.exe`** (one-folder build) can be run directly with no Python
+installation. See [Building the Executable](#15-building-the-executable).
 
 ---
 
 ## 3. Getting Started
 
-**Quick start**
+1. Start the application (`python cwatm_gui.py` or `CWatM_GUI.exe`). The window opens
+   **maximised**.
+2. **File ▸ Load .ini** (Ctrl+O) and pick a settings file — or drag a `.ini`/`.txt`
+   file onto the window, or start `CWatM_GUI.exe <settings.ini>`.
+3. The settings appear in the editor on the right; the date / PathOut / MaskMap /
+   Gauges fields on the left are filled in from the file.
+4. Edit as needed, then **RUN CWATM ▸ Run CWATM** (Ctrl+R).
 
-1. **Launch** — run `python cwatm_gui.py` (or the built executable). The window opens
-   with a banner and a menu bar on top, a left control panel and a right editor panel.
-2. **Load a settings file** — **File ▸ Load .ini** (Ctrl+O), pick a `.ini` file. It
-   parses automatically with syntax highlighting and collapsible sections.
-3. **Adjust settings (optional)** — edit Start/Spin/End Date, PathOut, MaskMap or
-   Gauges. Changes auto-apply to the content in memory; **Save / Save As** turn blue
-   to show there are unsaved changes.
-4. **Save** — **File ▸ Save .ini** (Ctrl+S) writes the changes to disk.
-5. **Run** — **RUN CWATM ▸ Run CWATM** (Ctrl+R). Watch the progress clock and the
-   real-time output box. Selecting Run CWATM again stops a running model.
+![Main window with a settings file loaded](figures/screenshot_loaded.png)
 
 ---
 
 ## 4. User Interface Overview
 
-![CWatM GUI main window with a settings file loaded](figures/screenshot_loaded.png)
-
-*The main window: the banner and menu bar on top; the control panel (dates, PathOut,
-MaskMap, Gauges, the RUN CWatM button, the output box and the progress clock) on the
-left; and the syntax-highlighted settings editor on the right.*
-
-Schematically:
-
-```
-┌───────────────────────────────────────────────────────────────────────────┐
-│ [icon] CWatM GUI    The Community Water Model User Interface     [IIASA]     │  banner
-├───────────────────────────────────────────────────────────────────────────┤
-│ File   Settings   Tools   RUN CWATM   Configure                     Info    │  menu bar
-├─────────────────────────────────────┬─────────────────────────────────────┤
-│ Left control panel                  │ Right editor panel                    │
-│  • "Loaded: <file>" label           │  • Save / Save As                     │
-│  • Start / Spin / End Date          │  • Fold All / Unfold All              │
-│  • PathOut                          │  • Top / Down                         │
-│  • MaskMap                          │  • Syntax-highlighted settings text   │
-│  • Gauges                           │    with [-]/[+] collapsible sections  │
-│  • RUN CWatM + warning label        │                                       │
-│  • Output box (left-aligned)        │                                       │
-│  • Progress clock (below the box)   │                                       │
-└─────────────────────────────────────┴─────────────────────────────────────┘
-```
-
-**Left control panel**
-
-- **"Loaded:" label** — the currently loaded file name (larger font, left-aligned).
-- **Date fields** — Start Date (StepStart), Spin Date (SpinUp), End Date (StepEnd),
-  with chronological validation.
-- **PathOut** — output directory (placeholders like `$(PathRoot)` are supported).
-- **MaskMap** — mask file path or a coordinate pair defining the model domain.
-- **Gauges** — gauge coordinates, linked to the settings `Gauges` entry. The text is
-  coloured blue/red depending on whether the gauges are inside the basin (see §7).
-- **RUN CWatM button** with a **red warning label** to its right for problems.
-- **Output box** — real-time model output; left-aligned, text selectable/copyable.
-- **Progress clock** — circular progress indicator, shown **below** the output box.
-
-**Right editor panel**
-
-- Toolbar: **Save**, **Save As** (turn blue when there are unsaved changes),
-  **Fold All**, **Unfold All**, **Top**, **Down**.
-- Syntax-highlighted settings text: comments in grey, `True` in blue, `False` in red,
-  bold section headers with `[-]`/`[+]` collapse controls.
+- **Banner** (top): the CWatM icon, the title *“The Community Water Model User
+  Interface”*, and the IIASA logo.
+- **Menu bar** (directly below the banner): the whole application is menu-driven — see
+  [Menus](#5-menus-and-keyboard-shortcuts).
+- **Left panel**: the Start/Spin/End dates, PathOut, MaskMap and Gauges fields, the
+  **RUN CWATM** button with a live *changed-fields* hint and warning label, and the
+  circular **progress clock**.
+- **Right panel**: the **settings editor** (plain-text with syntax highlighting, a
+  line-number gutter with fold markers, and bookmarks).
+- **Output box** (below): a read-only, copyable log of the model run, with the
+  progress clock beneath it.
 
 ---
 
 ## 5. Menus and Keyboard Shortcuts
 
+Menu bar (left → right): **File · Settings · Excel · Tools · RUN CWATM ·
+Configure │ Analyse │ CWatM AI · Help · Info**. Recently opened files are listed
+directly in the **File** menu (there is no separate History menu), and **CWatM AI**
+is a clickable button, not a dropdown.
+
 | Menu | Item | Shortcut | Action |
 |------|------|----------|--------|
-| **File** | Load .ini | Ctrl+O | Open a settings file (auto-parses) |
-| | Reload | Ctrl+L | Reload the current file from disk (asks if there are unsaved changes) |
-| | Save .ini | Ctrl+S | Save to the current file |
-| | Save As | Ctrl+Alt+S | Save to a new file |
-| | Exit | — | Quit (prompts Save/Discard/Cancel if unsaved) |
-| **Settings** | Fold All | Alt+0 | Collapse all sections |
-| | Unfold All | Alt+Shift+0 | Expand all sections |
-| | Top | Alt+T | Jump to the start of the file |
-| | Down | Alt+D | Jump to the end of the file |
-| | Find | F5 | Prompt for text and find it in the editor |
-| | Find next | Ctrl+F | Repeat the last Find (wraps around) |
-| | Undo | Ctrl+Z | Undo editor change |
-| | Redo | Ctrl+Y | Redo editor change |
-| **Tools** | Change Options | — | Open the Options window ([OPTIONS] booleans) |
-| | Show Basin | — | Open the basin viewer |
-| | Set Gauge | — | Set Gauges to the largest-upstream point inside the mask |
-| | Add output Watercycle | — | Insert `OUT_TSS_AreaSum_Daily = WaterCycle` under `[OUTPUT]` |
-| | Check Data | — | Open the Check Data validation window |
-| | Create PathOut Folder | — | Create the resolved PathOut directory if missing |
-| **RUN CWATM** | Run CWATM | Ctrl+R | Run / stop the model |
-| **Configure** | Set output box file | — | Choose a custom output-log file (kept in memory) |
-| | Write output box | — | Checkable; write the run log (tooltip shows the path) |
-| **Info** | About CWatM | — | About dialog |
+| File | Load .ini | Ctrl+O | Load a settings file |
+| File | Reload | Ctrl+L | Reload the current file from disk |
+| File | Save .ini | Ctrl+S | Save to the current file |
+| File | Save As | Ctrl+Alt+S | Save to a new file |
+| File | (recent files) | — | Up to **6** recently opened settings files, listed directly in the File menu between Save As and Exit |
+| File | Exit | — | Quit (prompts if there are unsaved changes) |
+| Settings | Fold All / Unfold All | Alt+0 / Alt+Shift+0 | Collapse / expand all sections |
+| Settings | Top / Down | Alt+T / Alt+D | Jump to start / end of the file |
+| Settings | Find / Find next / Replace | F5 / Ctrl+F / Ctrl+H | Search & replace in the editor |
+| Settings | Undo / Redo | Ctrl+Z / Ctrl+Y | Undo/redo editor **and** field changes |
+| Settings | Toggle / Next / Previous / Clear Bookmark | Ctrl+F2 / F2 / Shift+F2 / Ctrl+Shift+F2 | Bookmarks (orange gutter dots) |
+| Settings | Goto last change | F3 | Jump to the most recently changed line |
+| Settings | **Check settingsfile** | **F4** | Flag settings lines whose file/path is missing |
+| Settings | **Clear checking** | **Shift+F4** | Remove the Check-settingsfile marks/bookmarks |
+| Settings | Compare settings | — | Side-by-side diff of two settings files (differing lines in orange, synced scrolling, Next/Previous Diff) |
+| Excel | **Crops** | — | Open the *Crops* sheet of the settings Excel workbook |
+| Excel | **Reservoirs** | — | Open the *Reservoirs* sheet (with a **Release** button for *Reservoirs_downstream*) |
+| Tools | Change Options | — | Boolean options window |
+| Tools | Show Basin | — | Basin viewer on an OSM map |
+| Tools | Set Gauge | — | Set Gauges to the largest-upstream point in the mask |
+| Tools | Add output Watercycle | — | Add the WaterCycle output block |
+| Tools | Check Data | — | Validate the settings by running CWatM's data checks |
+| Tools | Create PathOut Folder | — | Create the resolved PathOut directory |
+| Tools | Restore settingsfile | — | Open a CWatM output `dis*.nc` and re-create its settings file / list its input files |
+| Tools | **Run Ledger** | — | Table of past runs; reopen results, reload settings, or Compare settings of two runs — see [§9](#9-running-the-model) |
+| RUN CWATM | Run CWATM | Ctrl+R | Run / stop the model |
+| RUN CWATM | Hidden Run CWatM | — | Open a separate window that runs CWatM in its own process (several can run in parallel) — see [§9](#9-running-the-model) |
+| RUN CWATM | **Batch Run…** | — | Run many scenarios from the loaded file (base .ini + per-row overrides, N in parallel) — see [§9](#9-running-the-model) |
+| Configure | Set / Write output box | — | The run-log file |
+| Configure | Load previous settings at start | — | When ticked, the last settings file is re-opened automatically on the next startup |
+| Configure | **Use Modflow** | — | Pre-load flopy for MODFLOW coupling (off = faster start) |
+| Configure | Default openstreet map | — | Default basemap for Show Basin / NetCDF |
+| Configure | Mode | — | Colour theme: Normal / Dark / Mikhail |
+| Configure | Show Decimals | — | Decimals shown in all numeric read-outs |
+| Configure | **Transparency** | — | Initial map transparency for Show Basin / NetCDF |
+| Configure | **Select animal** | — | The cameo animal on the live discharge sparkline |
+| Configure | **Run history folder… / retention…** | — | Where the Run Ledger is stored and how long runs are kept |
+| Analyse | Open PathOut Folder | — | Open the resolved PathOut directory |
+| Analyse | **Output Explorer** | — | Browse PathOut; double-click a result to open the right viewer |
+| Analyse | Timeseries | — | Plot a result `.csv` (+ Load observed / metrics, range slider) |
+| Analyse | NetCDF | — | Show a result `.nc` on a map (+ Fast/Total timeserie, Compare A−B) |
+| Analyse | Watercycle | — | Water-balance sunburst |
+| Analyse | Flow Diagram | — | Water-balance Sankey |
+| CWatM AI | (button) | — | Chat about CWatM, answered by Google NotebookLM — see [§13a](#13a-cwatm-ai) |
+| Help | Documentation / Features / **FAQ** | — | This manual / the feature tour / common questions & troubleshooting |
+| Info | About CWatM | — | About dialog |
 
-Tooltips: hover over **Change Options** ("Display a popup with the settingsfile
-[Options]"), **Set Gauge** ("Find the point with the largest upstream area in Mask
-Map"), **Add output Watercycle** ("Adds an additional output for creating
-watercycles"), and **Write output box** (shows the current output-file path).
-
-### Buttons vs. menu items
-
-Some actions exist **both** as a visible button *and* as a menu item; others were moved
-entirely into menus (their buttons are hidden):
-
-| Action | Visible button? | Menu item |
-|--------|-----------------|-----------|
-| Run / Stop CWatM | Yes (RUN CWatM button) | RUN CWATM ▸ Run CWATM |
-| Save / Save As | Yes (editor toolbar) | File ▸ Save .ini / Save As |
-| Fold All / Unfold All | Yes (editor toolbar) | Settings ▸ Fold All / Unfold All |
-| Top / Down | Yes (editor toolbar) | Settings ▸ Top / Down |
-| Load file | **No** (button removed) | File ▸ Load .ini |
-| Change Options | **No** (button removed) | Tools ▸ Change Options |
-| Show Basin | **No** (button removed) | Tools ▸ Show Basin |
-| Check Data | **No** (button removed) | Tools ▸ Check Data |
-| Write output log | **No** (checkbox removed) | Configure ▸ Write output box |
-| Actualize | **No** (removed entirely) | — (field changes auto-apply) |
+While CWatM is running the GUI stays fully usable (you can analyse results, browse the
+ledger, chat with CWatM AI, …) — only **Save** is disabled, because the run uses the
+file on disk. **Save As** still works.
 
 ---
 
-## 6. Step-by-Step User Manual
+## 6. Editing Settings
 
-### 6.1 Loading and parsing settings files
+The editor **is** the settings file at all times — what you save is exactly what you
+see. Highlights:
 
-1. **File ▸ Load .ini** (Ctrl+O) and choose a `.ini` file.
-2. The file parses automatically: syntax highlighting, collapsible sections, and the
-   Date / PathOut / MaskMap / Gauges fields are populated from the content.
-3. Use **File ▸ Reload** (Ctrl+L) to re-read the file from disk (it asks before
-   discarding unsaved changes).
+- **Syntax highlighting**: section headers bold, comments grey, `True`/`False` in
+  blue/red. Hovering a CWatM variable name shows its unit / description.
+- **Folding**: double-click a `[SECTION]` header (or the ▾/▸ gutter marker) to
+  collapse it; folded sections are still saved and searched.
+- **Bookmarks**: mark lines (Ctrl+F2 or click a line number) and jump with F2 /
+  Shift+F2. Configure ▸ *Bookmark Change* can auto-bookmark changed lines.
+- **Change tracking**: lines that differ from the last save get a **light-blue**
+  background; **Goto last change** (F3) jumps to the most recent edit.
+- **Duplicate keys** are drawn in a **strong red** — CWatM flattens all sections into
+  one dictionary, so a repeated key silently overrides the earlier value. (This is a
+  deeper red than the light-red used by Check settingsfile for a missing file.)
+- **Left-window fields** (dates, PathOut, MaskMap, Gauges) auto-apply into the
+  settings after a short debounce (without saving to disk); a blue hint right of RUN
+  CWATM lists which fields differ from the file. Undo/Redo cover these too.
+- **Change Options** (Tools) lists the boolean `[OPTIONS]` flags as tick boxes.
 
-### 6.2 Dates and validation
-
-- **Start Date (StepStart)**, **Spin Date (SpinUp)**, **End Date (StepEnd)**.
-- The GUI enforces chronological order (start ≤ spin ≤ end).
-- **Integer SpinUp / StepEnd**: if either is given as an integer *N* (a timestep count)
-  instead of a date, the field is shown as `StepStart + (N − 1)` days, matching CWatM's
-  convention where StepStart is timestep 1.
-
-### 6.3 Editing fields — auto-apply (no save)
-
-Changing **Start/Spin/End Date, PathOut, MaskMap or Gauges** automatically updates the
-settings content in memory and refreshes the editor a moment after you stop typing
-(~0.5 s debounce). **This does not write to disk** — Save / Save As turn blue to show
-there are unsaved changes. Saving or running flushes any pending change first.
-
-### 6.4 Managing options
-
-**Tools ▸ Change Options** opens a window listing all boolean parameters from the
-`[OPTIONS]` section as checkboxes. Toggling a checkbox updates the content immediately
-and marks the document as changed.
-
-### 6.5 Saving and section management
-
-- **File ▸ Save .ini** (Ctrl+S) / **Save As** (Ctrl+Alt+S) write clean content
-  (no `[-]`/`[+]` markers), preserving formatting and whitespace.
-- **Settings ▸ Fold All / Unfold All** collapse/expand all sections; click a `[-]`/`[+]`
-  marker to toggle a single section. **Top / Down** jump to the file start/end.
-- **Undo / Redo** (Ctrl+Z / Ctrl+Y) and **Find / Find next** (F5 / Ctrl+F) operate on
-  the editor text.
-
-### 6.6 Running the model
-
-1. Make sure the settings are correct and **saved** (Run executes the file **on disk**).
-2. Optionally enable **Configure ▸ Write output box** to log the run to a file (§8).
-3. **RUN CWATM ▸ Run CWATM** (Ctrl+R). The progress clock shows completion (0–100%)
-   and output appears live in the output box.
-4. Selecting **Run CWATM** again during a run stops it (graceful stop with cleanup of
-   open NetCDF/file handles).
-
-The model runs in a separate thread, so the GUI stays responsive. Errors appear in
-dark red in the output box.
+![Options window](figures/screenshot_options.png)
 
 ---
 
 ## 7. Gauges, Mask and PathOut Checks
 
-### 7.1 Gauges field and the in-basin check
+The GUI continuously validates the **live** field values (not just the saved file):
 
-The **Gauges** field (under MaskMap) is linked to the settings `Gauges` entry. On load
-and save, and whenever you edit the gauge coordinates, the GUI checks whether the gauge
-points fall **inside the mask/basin**:
+- **Gauge-in-mask**: the Gauges field text is **blue** when every gauge lies inside
+  the basin, **red** if any is outside. It works for a file-based MaskMap *and* a
+  coordinate-based one (the basin is generated on the fly).
+- A **warning label** right of RUN CWATM shows problems in red, e.g. *“Gauge is not
+  inside the basin!”* or *“PathOut does not exist!”*.
+- **Tools ▸ Set Gauge** places the gauge on the largest-upstream cell in the mask.
+- **Tools ▸ Create PathOut Folder** creates the resolved output directory.
 
-- **Blue** field text — all gauges are inside the basin.
-- **Red** field text — at least one gauge is outside; a red message appears next to
-  the RUN CWatM button:
-  *"Gauge is not inside the basin! Change manually or use Tools/Set Gauge."*
-
-The check works for **both** a file-based MaskMap (a raster) and a **coordinate-based**
-MaskMap (a `lon lat` pair, for which a basin is generated internally). The generated
-mask is cached in memory and only rebuilt when a file is loaded or the MaskMap changes
-and is saved. If the mask cannot be built (e.g. a coordinate MaskMap with no resolvable
-`ups.nc`), a short status-bar note is shown and the check is skipped.
-
-### 7.2 Tools ▸ Set Gauge
-
-Sets the Gauges field to the cell centre with the **largest upstream area** (from
-`ups.nc`) that lies inside the mask, formatted to four decimal places. This is a quick
-way to place a gauge on the main river outlet of the basin.
-
-### 7.3 PathOut existence check
-
-On load and save, the GUI resolves PathOut (expanding placeholders such as
-`$(PathRoot)`) and checks that the folder exists. If it does not, a red message appears
-next to RUN CWatM: *"PathOut does not exists! You can use Tools/Create PathOut Folder."*
-
-### 7.4 Tools ▸ Create PathOut Folder
-
-Creates the resolved PathOut directory (including missing parents) and clears the
-warning.
-
-### 7.5 Tools ▸ Add output Watercycle
-
-Inserts the line `OUT_TSS_AreaSum_Daily = WaterCycle` under the `[OUTPUT]` section (or
-creates `[OUTPUT]` if absent). It first checks that a WaterCycle entry for that key is
-not already present, so it will not add a duplicate. The change is in memory only until
-you Save.
+![Gauge-not-in-basin warning](figures/screenshot_gauge_warning.png)
 
 ---
 
-## 8. Output Logging
+## 8. Check settingsfile
 
-Enable **Configure ▸ Write output box** to write the run output to a file.
+**Settings ▸ Check settingsfile** (F4) scans the settings as shown in the editor and
+checks every value that can be identified as a **filename or path** (a `$(…)`
+placeholder, a data-file extension such as `.nc/.tif/.map/.txt/.csv/.xlsx`, or an
+absolute path). Placeholders are resolved from the other settings entries.
 
-- **Location** — by default `<PathOut>/cwatm_out.txt` (placeholders resolved). Use
-  **Configure ▸ Set output box file** to choose a custom path/name, which is kept in
-  memory for the session. The **Write output box** tooltip shows the current path.
-- **Append, not overwrite** — each run is appended to the file. A header is written
-  straight to the file (not shown in the output box):
-
-  ```
-  =================================
-  2026-07-01 14:32:05
-  ---------------------------------
-  ```
-
-  and a blank line is written after the run's content. Successive runs are therefore
-  clearly delimited within one file.
-
-The on-screen output box itself shows the run content only; the header/footer lines are
-file-only. Per-timestep "date + discharge" progress overwrites a single line in the box
-(mirroring the console). The output text is selectable and can be copied with Ctrl+C or
-via right-click ▸ "Copy all output".
-
----
-
-## 9. Data Visualization and Validation
-
-### 9.1 Basin viewer (Tools ▸ Show Basin)
-
-Displays basin/NetCDF data with native Qt rendering (no matplotlib dependency):
-
-- Mouse-wheel and button zoom; click-and-drag pan with coordinate tracking.
-- UPS data shown with a viridis-like colormap and a semi-transparent green mask overlay.
-- Click a location to read its lon/lat and data values.
-- Opens as a modal dialog tied to the main window.
-
-### 9.2 Check Data (Tools ▸ Check Data)
-
-Validates a configuration by running CWatM in check mode (`-c`) without a full run:
-
-- Optional comparison against an existing discharge NetCDF file.
-- Results saved to CSV and shown in an interactive, sortable table.
-- Detects configuration issues, missing files and data inconsistencies.
-- **Restore settings from discharge map** — reads the `version_settingsfile` global
-  attribute from a discharge NetCDF and writes `settings_restore_dischargenc.ini`.
+- Values whose file/folder **does not exist** get their line **marked red** and
+  **bookmarked** — press **F2 / Shift+F2** to jump between them.
+- Keys whose name starts with **`path`** (`PathRoot`, `PathOut`, `PathMaps`, …) are
+  treated as **directories** and checked strictly for existence.
+- **Semantic checks** run too: the simulation **date ordering**
+  `StepStart ≤ SpinUp ≤ StepEnd`; **option dependencies** — an option switched **on** whose
+  required keys are missing **or point to a non-existent path** (e.g.
+  `modflow_coupling = True` with a bad `path_mf6dll`) — the **option line itself** is
+  marked, not just the path line;
+  and whether the run window fits inside the **meteo forcing** data's time range (reading
+  the precipitation/temperature NetCDFs' time axis) — catching the common *"StepEnd is
+  past my forcing data"* crash **before** you waste a run. Offending lines are marked and
+  listed too.
+- A concise summary — **only the problem lines** — is written to the output box.
+- **Settings ▸ Clear checking** (Shift+F4) removes the red marks and the bookmarks
+  the check added (your own bookmarks are kept).
 
 ---
 
-## 10. Technical Documentation
+## 9. Running the Model
 
-### 10.1 Architecture
+**RUN CWATM ▸ Run CWATM** (Ctrl+R) starts the model; the same item becomes **Stop**
+while it runs.
 
-| Module | Responsibility |
-|--------|----------------|
-| `cwatm_gui.py` | Entry point, application icon / taskbar identity, exception handling |
-| `src/gui/components/main_window.py` | Main window; menus, fields, run control, checks |
-| `src/gui/components/config_parser.py` | INI parsing, date/settings extraction, updates |
-| `src/gui/managers/date_manager.py` | Date widgets, validation, integer SpinUp/StepEnd |
-| `src/gui/managers/file_manager.py` | File load/save operations |
-| `src/gui/managers/text_display.py` | Editor text area / content management |
-| `src/gui/widgets/options_window.py` | `[OPTIONS]` boolean editor |
-| `src/gui/widgets/check_data_window.py` | Check Data / NetCDF comparison |
-| `src/gui/widgets/basin_viewer.py` | Basin viewer + mask/gauge/PathOut helper functions |
-| `src/gui/utils/progress_clock.py` | Circular progress indicator |
-| `src/gui/utils/cwatm_worker.py` | Threaded CWatM execution worker |
+- Output streams **live** into the output box (per-timestep date + discharge
+  overwrite a single line, as on the console); errors show in dark red.
+- The **progress clock** shows the percentage plus **elapsed** and estimated
+  **remaining** time, frozen as *run time* / *failed after* / *stopped after* at the
+  end.
+- **Run mode**: the model runs in its **own OS process** — Stop is an immediate kill
+  (works even if the model hangs in C code) and a model crash cannot take the GUI down.
+- **Live discharge sparkline**: next to the progress clock, a small plot of the
+  discharge at the first gauge over the last ~3 months (older values fade out). Every
+  so often a little animal (Configure ▸ **Select animal**) swims along the trace.
+- **Output-box log file** (Configure): the run log can be appended to a file
+  (`<PathOut>/cwatm_out.txt` by default, or a custom path).
 
-Key helper functions in `basin_viewer.py`: `build_mask_context`, `gauges_inside`,
-`gauges_in_maskmap`, `pathout_exists`, `find_largest_ups_gauge`.
+Every finished run — main, Hidden or Batch — is recorded in the **Run Ledger** (below).
 
-### 10.2 Threading
+### Hidden Run CWatM
 
-- CWatM runs in a `CWatMWorker` QThread; the GUI stays responsive.
-- Communication via Qt signals (`finished`, `error`, `progress`).
-- Cooperative stop with a timeout fallback; NetCDF datasets and file handles are closed
-  on stop, error and shutdown.
+**RUN CWATM ▸ Hidden Run CWatM** opens a small **separate window** that runs CWatM on
+a settings file in its **own process**, independent of the main window — so the main
+GUI stays fully usable and **several Hidden Run windows can run at once** (e.g. to run
+different settings files in parallel).
 
-### 10.3 Output capture
+Each window opens **pre-loaded** with the settings file currently open in the main
+window (shown in **bold green**); a **Load** button picks a different `.ini`. Press
+**Run CWatM** (it toggles to **Stop CWatM** while running) and the run streams into
+that window's own output box.
 
-- A `PrintRedirector` captures stdout/stderr and emits Qt signals to the output box.
-- Normal text in black, errors in dark red; internal "Worker:" lines are filtered.
-- The output buffer keeps the last ~100 lines for the on-screen display; the log file
-  (when enabled) keeps the full history.
+### Batch Run
 
-### 10.4 File formats
+**RUN CWATM ▸ Batch Run…** runs **many scenarios** derived from the loaded settings
+file. A **table** where each row is a scenario:
 
-- Settings: INI (`.ini`), UTF-8, original formatting preserved.
-- Data: NetCDF4; rasters (GeoTIFF, etc.) via rasterio; CSV for Check Data output.
+- a **Scenario** name and its own **PathOut** (defaulted to `<base PathOut>_<name>` so
+  runs don't collide; the folder is created automatically);
+- per-scenario **key = value overrides** — add a column with **Add key column**, which
+  takes the key from the settings-editor's **cursor line** (put the cursor on the key
+  you want to vary, e.g. `SnowMeltCoef`, then press the button).
+
+Set **Parallel runs** (1 = sequential) and press **▶ Run all**; each row shows a live
+**Progress / Status**. **Stop all** kills everything; **Clear** starts fresh. The
+scenario table is **remembered** between sessions. Each finished scenario is written to
+the Run Ledger.
+
+For a **parameter sweep** (sensitivity analysis / manual calibration), press **Sweep…**
+and enter one `key: values` line per parameter — the values as a **list**
+(`SnowMeltCoef: 3.5, 4.0, 4.5`) or a **range** `min:max:step` (`3.5:4.5:0.5`). Several
+keys generate the **full grid** of combinations; the rows (with their own PathOut per
+combination) are filled in for you.
+
+![Batch Run](figures/screenshot_batchrun.png)
+
+### Run Ledger
+
+**Tools ▸ Run Ledger** is a table of your **past runs** (main, Hidden and Batch) — time,
+Title, PathOut, duration, success and last discharge. Select a run and:
+
+- **Open results** — its PathOut in the Output Explorer;
+- **Load settings** — reopen its settings file in the main window;
+- **Compare settings** — mark **two** runs (Ctrl/Shift+click) and diff the settings each
+  one actually used (a snapshot is kept per run, so the diff is correct even if you edit
+  the file later).
+
+Where the ledger is stored and how long runs are kept are set in **Configure ▸ Run
+history folder… / retention…** (default: keep 60 days under
+`%LOCALAPPDATA%\CWatM_GUI`).
+
+![Run Ledger](figures/screenshot_runledger.png)
 
 ---
 
-## 11. Building the Executable
+## 10. Show Basin
 
-The project uses a virtual environment named **`venv/`** (an older `build_env/` copy is
-deprecated). Build with PyInstaller:
+**Tools ▸ Show Basin** opens the basin viewer — a Leaflet (**EPSG:4326**) map with the
+`ups.nc` upstream-area river network and the catchment **mask** overlaid on an OSM
+basemap, drawn in native lon/lat (no reprojection blur).
 
-```powershell
-venv\Scripts\Activate.ps1
+![Show Basin](figures/screenshot_basin.png)
+
+- **Markers**: red pins = the gauges (numbered `1..N`, taken from the Gauges box),
+  a blue **M** = the mask-start, black = the last clicked cell.
+- **Click** anywhere to read the coordinates, basin area and mask state in the strip
+  under the map.
+- **Buttons**: Hide/Show Mask, Create new Mask, **Copy Mask**, Zoom to Mask, Create
+  gauge / **Copy Gauge** (accumulate several gauges, then commit them all to the
+  Gauges box), **Load JSON** (overlay a GeoJSON), Exit. **Clicking a gauge pin removes
+  it** from the working list.
+- **OSM transparency slider**: fades between only-the-data (0 %) and the OSM basemap
+  with the data at 50 % on top (100 %); the start value comes from Configure ▸
+  Transparency. A **Basemap** dropdown switches the OSM style.
+
+---
+
+## 11. Check Data
+
+**Tools ▸ Check Data** runs CWatM's own data checks against the settings (input maps,
+resolutions, extents) and lists any trouble in a table. It works only with a
+**file-based MaskMap** (not coordinates). It can also compare against an existing
+discharge NetCDF and restore settings from a discharge map.
+
+![Check Data](figures/screenshot_checkdata.png)
+
+---
+
+## 12. Excel Editor (Crops / Reservoirs)
+
+The **Excel** menu opens sheets of the workbook named in the settings
+`Excel_settings_file` in an editable table that **reproduces the sheet's cell
+colours** (fill and font).
+
+- **Excel ▸ Crops** — the crop parameter table.
+
+  ![Excel Crops](figures/screenshot_excel_crops.png)
+
+- **Excel ▸ Reservoirs** — the reservoir table, with an extra **Release** button
+  (right of Save As) that opens the **Reservoirs_downstream** companion sheet; the
+  button is greyed out if that sheet is absent.
+
+  ![Excel Reservoirs](figures/screenshot_excel_reservoirs.png)
+
+- Cells are **editable**; **Reload / Save / Save As** write the edits back through the
+  workbook, **preserving every other sheet and all styling**. Very large sheets load
+  instantly (the table is lazy — only the visible cells are read).
+
+---
+
+## 13. Result Analysis
+
+The **Analyse** menu visualises CWatM results. Each window has a **Save HTML** button
+that exports the current, self-contained plot.
+
+### 13.0 Output Explorer
+
+**Analyse ▸ Output Explorer** is a browser of the resolved **PathOut** folder:
+**double-click** a result and it opens in the matching viewer — `.nc` → NetCDF map,
+`WaterCycle*.csv` → sunburst, other `.csv` → Timeseries. It turns "run → analyse" into
+one click instead of a file dialog.
+
+![Output Explorer](figures/screenshot_outputexplorer.png)
+
+### 13.1 Timeseries
+
+**Analyse ▸ Timeseries** plots a result `.csv` (e.g. `discharge_daily.csv`) as a line
+chart. Multiple columns are shown one at a time (Forward/Backward); **Compare**
+overlays another result file; **Save as csv** exports the shown series in the CWatM
+result-CSV format.
+
+- A **range slider** below the plot shrinks the displayed period from either end.
+- **Load observed** overlays an observed series (a CWatM `.csv` or a simple
+  `date,value.csv`) and shows goodness-of-fit metrics — **KGE / NSE / PBIAS / RMSE** —
+  computed over the period the slider selects. This is the model-evaluation step you no
+  longer need Excel/Python for.
+
+![Timeseries](figures/screenshot_timeseries.png)
+
+### 13.2 NetCDF
+
+**Analyse ▸ NetCDF** shows a result `.nc` (e.g. `discharge_daily.nc`) as a raster
+overlay on an OSM map (EPSG:4326). A **timestep slider + Play** scrubs through time; a
+**colour-scale** selector, **Log scale** toggle and **OSM transparency** slider tune
+the display. Click a cell to read its value. The left-window gauges appear as small
+numbered red pins.
+
+- Plot a clicked cell's series with **Fast Display Timeserie** (quick — the map's
+  timesteps only, with gaps) or **Total Timeseries** (every timestep — can take a while,
+  so a progress bar shows next to the buttons).
+- **Compare A−B** loads a second `.nc` on the same grid and shows the **difference**
+  (this − other) per timestep on a red/blue diverging scale — ideal for comparing two
+  scenarios you just ran. **Clear compare** returns to the single-file view.
+
+![NetCDF](figures/screenshot_netcdf.png)
+
+### 13.3 Watercycle
+
+**Analyse ▸ Watercycle** reads a `WaterCycle_areasum_monthtot.csv` and shows the
+overall water balance as a **sunburst** (Inputs / Outputs / Storage /
+Evapotranspiration / Transpiration). A month **range slider** selects the period.
+
+![Watercycle](figures/screenshot_watercycle.png)
+
+### 13.4 Flow Diagram
+
+**Analyse ▸ Flow Diagram** shows the same water balance as a **Sankey** flow diagram
+(Precipitation → Rain/Snow → Soil/Groundwater/Runoff → Waterbodies → Discharge, plus
+withdrawal/consumption), over the slider-selected months.
+
+![Flow Diagram](figures/screenshot_flowdiagram.png)
+
+---
+
+## 13a. CWatM AI
+
+The **CWatM AI** button (left of *Help*) opens a chat window where questions about
+CWatM are answered by Google **NotebookLM** (Gemini), grounded on the CWatM
+documentation. Type a question and press **Enter** (Shift+Enter for a new line);
+answers are shown as formatted text, and the transcript and question history are kept
+between sessions. A **Short / Medium / Long** selector sets the answer length.
+
+To use it you sign in **once** with your Google account (**Login…**):
+
+- **From Firefox** — the easiest, no administrator rights needed.
+- **From Chrome / Edge / Opera** — Windows encrypts these browsers' cookies, so you
+  must **run CWatM as administrator** first, then choose the browser.
+- **Google login window** — an interactive sign-in; only available when running from
+  source (it needs the optional `playwright` package).
+
+After a successful login the session is reused automatically on later runs. A full,
+dedicated guide is in **`documentation/CWatM_AI_NotebookLM.md`**.
+
+Two buttons bridge the chat and the editor: **→ Settings** inserts a `key = value`
+from an answer into the settings file under the right section, and **Explain current
+line** asks NotebookLM to explain the editor's current settings line.
+
+---
+
+## 14. Configuration and Appearance
+
+Under the **Configure** menu:
+
+- **Mode** — colour theme of the whole GUI: **Normal** (light), **Dark**, **Mikhail**
+  (black + amber). Switches live and is remembered.
+- **Show Decimals** — how many decimals every numeric read-out shows (default 3).
+- **Transparency** — the initial map transparency (0–100) that Show Basin and NetCDF
+  open with.
+- **Select animal** — the little animal (Fish / Otter / Beaver / Sailboat) that
+  occasionally appears on the live discharge sparkline during a run.
+- **Default openstreet map** — the default basemap for the map windows.
+- **Load previous settings at start** — when ticked, the last settings file you had
+  open is re-opened automatically the next time the GUI starts.
+- **Use Modflow** — when on, the GUI pre-loads the MODFLOW coupling library (flopy) so
+  MODFLOW-coupled runs/checks are ready; when off (default) flopy is not loaded, keeping
+  startup fast. *(A MODFLOW run also needs `xmipy` and the MODFLOW 6 library `libmf6`
+  whose path you set in the settings — the GUI does not ship the DLL.)*
+- **Run history folder… / retention…** — where the **Run Ledger** is stored and how
+  many days of runs to keep (0 = keep forever).
+- **Bookmark Change** — auto-bookmark a line when it is edited.
+- **Set / Write output box** — the run-log file.
+
+All Configure settings are persisted across sessions.
+
+---
+
+## 15. Building the Executable
+
+The one-folder build is produced with PyInstaller from `cwatm_gui_dir.spec`:
+
+```bash
+pip install -r requirements.txt -r requirements_build.txt
 python -m PyInstaller cwatm_gui_dir.spec --noconfirm
 ```
 
-- `cwatm_gui_dir.spec` — one-folder build (recommended); `cwatm_gui.spec` — one-file.
-- The specs collect rasterio and xarray submodules and data, copy xarray's metadata,
-  bundle `cwatm` / `src` / `assets`, set `console=False`, and disable UPX for faster
-  builds.
-
-See the companion notes in this folder: **`cwtmexe.md`** (rasterio/xarray/GDAL
-packaging fixes), **`makeitfaster.md`** (PyInstaller build speed), and
-**`nuitka_plan.md`** (optional Nuitka build for faster runtime).
+The result is `dist/CWatM_GUI/CWatM_GUI.exe` (plus an `_internal/` folder that also
+contains the lightweight `CWatM_model.exe` child process used for model runs). The
+spec collects rasterio + GDAL data, xarray backends, folium/plotly, **openpyxl**,
+requests, QtWebEngine, the **MODFLOW** stack (flopy + matplotlib + xmipy), the CWatM AI
+libraries, the `cwatm`/`src` code and the documentation (incl. these screenshots).
+Reference notes: `cwtmexe.md`, `makeitfaster.md`.
 
 ---
 
-## 12. Troubleshooting
+## 16. Troubleshooting
 
-**Application fails to start**
-1. Check Python 3.8+ (`python --version`).
-2. `pip install PySide6 numpy pandas scipy xarray netCDF4 rasterio`.
-3. Run from a terminal to see error messages.
+- **A map or plot is blank** — the map/plot windows need QtWebEngine; behind a
+  corporate proxy the tiles are fetched with Python (proxy-proof). If the OSM basemap
+  is missing, only the tiles failed — the data overlay and controls still work.
+- **“Gauge is not inside the basin!”** — move the gauge (Tools ▸ Set Gauge or the
+  basin viewer's Create/Copy Gauge), or fix the MaskMap.
+- **“PathOut does not exist!”** — Tools ▸ Create PathOut Folder.
+- **Check settingsfile flags a line red** — the resolved file/folder was not found;
+  the output box lists the resolved path. `Path…` keys are checked as directories. (A
+  **strong-red** line in the editor instead means a *duplicate key*, not a missing file.)
+- **The run stops early with a date/time error** — the run window is likely past your
+  forcing data; run **Check settingsfile** (F4), which now warns when `StepEnd` is after
+  the meteo forcing ends.
+- **A MODFLOW run fails** — it needs `xmipy` + `flopy` installed and the `libmf6`
+  library path set in the settings; enable **Configure ▸ Use Modflow** for a faster
+  first use.
+- **Diagnostic log** — swallowed errors are written to
+  `%LOCALAPPDATA%/CWatM_GUI/gui.log`.
 
-**Settings file won't load**
-1. Confirm it is a valid INI file with UTF-8 encoding.
-2. Check file permissions and look for syntax errors.
-3. Try a known-good settings file.
-
-**Date validation errors**
-1. Use a supported format (e.g. DD/MM/YYYY, YYYY-MM-DD) or an integer for SpinUp/StepEnd.
-2. Keep chronological order (Start ≤ Spin ≤ End).
-
-**Gauges shown red / "Gauge is not inside the basin!"**
-1. Use **Tools ▸ Set Gauge** to place the gauge on the largest-upstream cell.
-2. Or edit the coordinates manually; the field turns blue when inside.
-3. If the check is skipped (status-bar note), verify the MaskMap and that `ups.nc` is
-   resolvable.
-
-**"PathOut does not exists!"**
-1. Use **Tools ▸ Create PathOut Folder**, or fix the PathOut / `$(PathRoot)` value.
-
-**CWatM execution fails**
-1. Verify all referenced files exist and PathOut is writable.
-2. **Save** before running — Run uses the file on disk.
-3. Review the error messages (dark red) in the output box; enable the output log for a
-   full record.
-
-**GUI becomes unresponsive**
-1. Wait for the current operation, or stop a running model (Ctrl+R).
-2. Restart the application if necessary.
+**More answers:** a fuller FAQ is in-app under **Help ▸ FAQ**
+(`documentation/CWatM_GUI_FAQ.md`).
 
 ---
 
-## 13. Frequently Asked Questions
-
-**Q: Can I run several simulations at once?**
-No — one run at a time, to avoid resource conflicts and keep output management clean.
-
-**Q: Do field edits change the file on disk?**
-No. Editing Date/PathOut/MaskMap/Gauges updates the content **in memory** only; use
-Save / Save As to write to disk. Running the model uses the file on disk, so save first.
-
-**Q: What happened to the Actualize button?**
-It was removed. Field changes now auto-apply to the content automatically, and Save
-writes them to disk. Save / Run flush any pending change first.
-
-**Q: My manual edits — are they kept when I fold/unfold sections?**
-Yes. Folding/unfolding is a view operation and preserves your edits.
-
-**Q: Which mask formats are supported for the gauge check?**
-A file-based MaskMap (raster via rasterio) or a coordinate-based MaskMap (a `lon lat`
-pair, for which a basin is generated internally using `ups.nc`).
-
-**Q: Does the output log overwrite previous runs?**
-No — it appends, with a dated header separating each run.
-
-**Q: Can I use the GUI on Linux or macOS?**
-Yes, it is cross-platform. Install Python 3.8+ and the required packages and run from
-source. (The Windows taskbar-icon tweak is a no-op elsewhere.)
-
----
-
-## 14. Contact and Support
-
-**International Institute for Applied Systems Analysis (IIASA)**
-Email: info@iiasa.ac.at · Website: www.iiasa.ac.at
-
-- **CWatM documentation & source:** https://github.com/iiasa/CWatM
-- **Issues / feature requests:** use the GitHub repository; include error messages,
-  system information, steps to reproduce, and a sample settings file (remove sensitive
-  data).
-
-**Citing the CWatM GUI**
-
-> CWatM GUI Application, International Institute for Applied Systems Analysis (IIASA),
-> Laxenburg, Austria. Available at: https://github.com/iiasa/CWatM
-
----
-
-*Document version: 3.0 · Format: Markdown · Supersedes the RTF documentation (v2.0).*
+*This manual is also available in-app under **Help ▸ CWatM GUI Documentation**; the
+shorter feature tour is under **Help ▸ CWatM GUI Features**, and common questions under
+**Help ▸ FAQ**.*

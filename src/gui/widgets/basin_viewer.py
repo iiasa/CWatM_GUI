@@ -27,878 +27,406 @@ import configparser
 import re
 from typing import Optional, Tuple, Union
 
+from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils import display_format
+from src.gui.utils import theme
+
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QScrollArea, QWidget, QApplication
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QScrollArea, QWidget, QApplication, QMessageBox, QStackedWidget, QSlider, QComboBox
 )
-from PySide6.QtCore import Qt, QPoint, Signal, QRect
+from PySide6.QtCore import (Qt, QPoint, Signal, QRect, QUrl, QByteArray, QBuffer, QObject,
+                            Slot, QTimer, QFile, QIODevice)
 from PySide6.QtGui import (
-    QPainter, QWheelEvent, QKeyEvent, QMouseEvent, 
+    QPainter, QWheelEvent, QKeyEvent, QMouseEvent,
     QColor, QBrush, QPen, QFont, QPixmap, QImage, QIcon
 )
+
+# Optional interactive OpenStreetMap view (Leaflet rendered in QtWebEngine)
+try:
+    from PySide6.QtWebEngineWidgets import QWebEngineView
+    from PySide6.QtWebEngineCore import QWebEnginePage
+    from PySide6.QtWebChannel import QWebChannel
+    import folium
+    _OSM_AVAILABLE = True
+    _OSM_IMPORT_ERROR = ""
+
+    class _MapBridge(QObject):
+        """Exposed to the map's JavaScript for click + logging callbacks."""
+        def __init__(self, click_cb, log_cb):
+            super().__init__()
+            self._click_cb = click_cb
+            self._log_cb = log_cb
+
+        @Slot(float, float)
+        def click(self, lat, lon):
+            self._click_cb(lat, lon)
+
+        @Slot(str)
+        def log(self, msg):
+            self._log_cb(msg)
+
+    class _MapPage(QWebEnginePage):
+        """Web page that ignores TLS certificate errors so OpenStreetMap tiles load
+        behind HTTPS-intercepting proxies (a common cause of blank tiles)."""
+        def certificateError(self, error):
+            try:
+                error.acceptCertificate()
+            except Exception:
+                pass
+            return True
+
+    from PySide6.QtWebEngineCore import (QWebEngineUrlScheme, QWebEngineUrlSchemeHandler,
+                                         QWebEngineUrlRequestJob)
+
+    # Custom "osmtile" scheme so map tiles are fetched with Python's network stack
+    # (which works) instead of QtWebEngine/Chromium (which may be blocked by a proxy).
+    # registerScheme must run before the QApplication is created - this module is
+    # imported before that happens.
+    try:
+        _tile_scheme = QWebEngineUrlScheme(b"osmtile")
+        _flags = (QWebEngineUrlScheme.Flag.SecureScheme
+                  | QWebEngineUrlScheme.Flag.LocalAccessAllowed
+                  | QWebEngineUrlScheme.Flag.CorsEnabled)
+        # Qt >= 6.6: fetch()/XHR on a custom scheme needs FetchApiAllowed.
+        # Leaflet loads tiles via <img> (no fetch), but MapLibre (Show Basin2)
+        # fetches them - without this flag it dies with "Failed to fetch".
+        _fetch_flag = getattr(QWebEngineUrlScheme.Flag, "FetchApiAllowed", None)
+        if _fetch_flag is not None:
+            _flags |= _fetch_flag
+        _tile_scheme.setFlags(_flags)
+        QWebEngineUrlScheme.registerScheme(_tile_scheme)
+    except Exception:
+        pass
+
+    # Selectable basemaps (all free, no API key). "Transport"/"Cycle" (Thunderforest)
+    # need an API key and are intentionally omitted.
+    _TILE_PROVIDERS = {
+        "standard": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+        "hot": "https://a.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
+        "topo": "https://a.tile.opentopomap.org/{z}/{x}/{y}.png",
+        "cartolight": "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        "cartovoyager": "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+    }
+
+    class _TileSchemeHandler(QWebEngineUrlSchemeHandler):
+        """Serve BOTH the map page and basemap tiles via Python (same origin, so a proxy
+        that blocks Chromium's own network is bypassed and there is no cross-origin
+        restriction between the page and the tiles). Tile URLs carry the provider:
+        osmtile://tile/{provider}/{z}/{x}/{y}.png"""
+        _session = None
+        _logged = False
+
+        def __init__(self):
+            super().__init__()
+            self._html = b""
+            self._html2 = b""  # Show Basin2's Plotly/MapLibre page (osmtile://map2)
+            self._pages = {}   # extra same-origin pages by host (e.g. NetCDF)
+
+        def set_html(self, html):
+            self._html = html.encode("utf-8") if isinstance(html, str) else html
+
+        def set_html2(self, html):
+            self._html2 = html.encode("utf-8") if isinstance(html, str) else html
+
+        def set_page(self, name, html):
+            """Register an extra page served at osmtile://<name>/ (same-origin as the
+            tiles/WMS). Used by Analyse ▸ NetCDF."""
+            self._pages[name] = html.encode("utf-8") if isinstance(html, str) else html
+
+        def requestStarted(self, job):
+            url = job.requestUrl()
+            # The map pages themselves (served same-origin as the tiles, so no
+            # cross-origin restriction applies to the tile fetches)
+            host = url.host()
+            if host in ("map", "map2") or host in self._pages:
+                buf = QBuffer(job)
+                buf.setData(QByteArray(self._html if host == "map"
+                                       else self._html2 if host == "map2"
+                                       else self._pages[host]))
+                buf.open(QBuffer.ReadOnly)
+                job.reply(b"text/html", buf)
+                return
+            import re as _re, os as _os, tempfile
+            # A WMS GetMap request (Show Basin2, EPSG:4326): osmtile://wms/service?<query>.
+            # The query (LAYERS/BBOX/SRS/...) is forwarded verbatim to a real OSM WMS
+            # endpoint - so an EPSG:4326 map gets a correctly-projected OSM basemap
+            # (XYZ tiles are Web-Mercator and cannot align on a 4326 map). Fetched with
+            # Python (proxy-proof) and cached by the query.
+            if url.host() == "wms":
+                import hashlib
+                q = url.query()
+                real = "https://ows.terrestris.de/osm/service?" + q
+                cache = _os.path.join(tempfile.gettempdir(), 'cwatm_wms')
+                _os.makedirs(cache, exist_ok=True)
+                fp = _os.path.join(cache, hashlib.md5(q.encode("utf-8")).hexdigest() + ".png")
+                try:
+                    if not _os.path.exists(fp):
+                        import requests
+                        if _TileSchemeHandler._session is None:
+                            sess = requests.Session()
+                            sess.headers.update({"User-Agent": "CWatM-GUI/1.0 (basin viewer)"})
+                            _TileSchemeHandler._session = sess
+                        r = _TileSchemeHandler._session.get(real, timeout=15)
+                        if r.status_code != 200 or "image" not in r.headers.get("content-type", ""):
+                            job.fail(QWebEngineUrlRequestJob.Error.RequestFailed)
+                            return
+                        with open(fp, "wb") as f:
+                            f.write(r.content)
+                    buf = QBuffer(job)
+                    buf.setData(QByteArray(open(fp, "rb").read()))
+                    buf.open(QBuffer.ReadOnly)
+                    job.reply(b"image/png", buf)
+                except Exception as _e:
+                    if not _TileSchemeHandler._logged:
+                        _TileSchemeHandler._logged = True
+                        print("WMS: fetch via Python FAILED: %s" % _e, file=sys.stderr)
+                    try:
+                        job.fail(QWebEngineUrlRequestJob.Error.RequestFailed)
+                    except Exception:
+                        pass
+                return
+            # A tile: osmtile://tile/{provider}/{z}/{x}/{y}.png
+            m = _re.search(r'/tile/([^/]+)/(\d+)/(\d+)/(\d+)\.png', url.toString())
+            if not m:
+                job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
+                return
+            provider, z, x, y = m.groups()
+            tmpl = _TILE_PROVIDERS.get(provider, _TILE_PROVIDERS["standard"])
+            tile_url = tmpl.format(z=z, x=x, y=y)
+            cache = _os.path.join(tempfile.gettempdir(), 'cwatm_tiles')
+            _os.makedirs(cache, exist_ok=True)
+            fp = _os.path.join(cache, "%s_%s_%s_%s.png" % (provider, z, x, y))
+            try:
+                if not _os.path.exists(fp):
+                    import requests
+                    if _TileSchemeHandler._session is None:
+                        sess = requests.Session()
+                        sess.headers.update({"User-Agent": "CWatM-GUI/1.0 (basin viewer)"})
+                        _TileSchemeHandler._session = sess
+                    r = _TileSchemeHandler._session.get(tile_url, timeout=12)
+                    if r.status_code != 200:
+                        job.fail(QWebEngineUrlRequestJob.Error.RequestFailed)
+                        return
+                    with open(fp, "wb") as f:
+                        f.write(r.content)
+                buf = QBuffer(job)
+                buf.setData(QByteArray(open(fp, "rb").read()))
+                buf.open(QBuffer.ReadOnly)
+                job.reply(b"image/png", buf)
+            except Exception as _e:
+                if not _TileSchemeHandler._logged:
+                    _TileSchemeHandler._logged = True
+                    print("OSM: tile fetch via Python FAILED: %s" % _e, file=sys.stderr)
+                try:
+                    job.fail(QWebEngineUrlRequestJob.Error.RequestFailed)
+                except Exception:
+                    pass
+
+    # A single, app-lifetime scheme handler. QWebEngineView uses the shared default
+    # profile, so re-installing a per-window handler on the 2nd Show Basin was ignored
+    # ("already registered") and left a dead handler -> blank map. Reuse one handler.
+    _TILE_HANDLER_SINGLETON = None
+
+    def _get_tile_handler():
+        global _TILE_HANDLER_SINGLETON
+        if _TILE_HANDLER_SINGLETON is None:
+            _TILE_HANDLER_SINGLETON = _TileSchemeHandler()
+        return _TILE_HANDLER_SINGLETON
+except Exception as _osm_err:
+    _OSM_AVAILABLE = False
+    _OSM_IMPORT_ERROR = f"{type(_osm_err).__name__}: {_osm_err}"
+    print(f"OpenStreetMap view unavailable: {_OSM_IMPORT_ERROR}", file=sys.stderr)
 
 import cwatm.run_cwatm as run_cwatm
 
 
-class BasinCanvas(QWidget):
-    """
-    Custom Qt widget for rendering basin data with native QPainter.
-    Handles all drawing operations, user interactions, and coordinate calculations.
-    """
-    
-    # Signals
-    coordinate_clicked = Signal(float, float, float, object)  # lat, lon, basin_val, mask_val
-    zoom_changed = Signal(float)  # zoom_factor
-    
-    def __init__(self, basin_data: np.ndarray, lats: np.ndarray, lons: np.ndarray, 
-                 mask_data: Optional[np.ndarray] = None, parent=None):
-        """
-        Initialize the basin canvas widget.
-        
-        Args:
-            basin_data: 2D numpy array with basin/UPS data
-            lats: 1D numpy array with latitude coordinates
-            lons: 1D numpy array with longitude coordinates  
-            mask_data: Optional 2D numpy array with mask data
-            parent: Parent widget
-        """
-        super().__init__(parent)
-        
-        # Store data
-        self.basin_data = basin_data
-        self.lats = lats
-        self.lons = lons
-        self.mask_data = mask_data
-        
-        # Calculate data properties
-        self.data_height, self.data_width = basin_data.shape
-        self.lat_min, self.lat_max = float(np.min(lats)), float(np.max(lats))
-        self.lon_min, self.lon_max = float(np.min(lons)), float(np.max(lons))
-        
-        # Normalize basin data for color mapping
-        self.data_min = np.nanmin(basin_data)
-        self.data_max = np.nanmax(basin_data)
-        self.data_range = self.data_max - self.data_min if self.data_max > self.data_min else 1.0
-        
-        # Display settings - always show both UPS and mask
-        self.show_ups = True
-        self.show_mask = True
-        
-        # Zoom and pan settings
-        self.zoom_factor = 1.0
-        self.min_zoom = 0.1
-        self.max_zoom = 20.0
-        
-        # Mouse interaction
-        self.setMouseTracking(True)
-        self.setFocusPolicy(Qt.StrongFocus)
-        self.drag_start = None
-        self.is_dragging = False
-        
-        # Initialize widget size
-        self._setup_initial_size()
-        
-    def _setup_initial_size(self):
-        """Setup initial widget size based on data dimensions."""
-        # Calculate initial scale to fit nicely
-        initial_scale = min(800 / self.data_width, 600 / self.data_height, 3.0)
-        self.zoom_factor = max(initial_scale, self.min_zoom)
-        
-        # Set widget size
-        width = int(self.data_width * self.zoom_factor)
-        height = int(self.data_height * self.zoom_factor)
-        
-        self.setMinimumSize(50, 50)
-        self.setMaximumSize(int(self.data_width * self.max_zoom), 
-                          int(self.data_height * self.max_zoom))
-        self.resize(width, height)
-        
-    # === Display Control Methods ===
-    
-    def toggle_mask(self, show: bool):  
-        """Toggle mask overlay display."""
-        self.show_mask = show
-        self._cached_image = None  # Force image recreation
-        self.update()
-        
-    def set_mask_data(self, mask_data: Optional[np.ndarray]):
-        """Update mask data and refresh display."""
-        self.mask_data = mask_data
-        self._cached_image = None  # Force image recreation
-        self.update()
-        
-    def set_zoom(self, zoom_factor: float):
-        """Set zoom factor and resize widget."""
-        zoom_factor = max(self.min_zoom, min(zoom_factor, self.max_zoom))
-        if zoom_factor != self.zoom_factor:
-            self.zoom_factor = zoom_factor
-            
-            new_width = max(50, int(self.data_width * zoom_factor))
-            new_height = max(50, int(self.data_height * zoom_factor))
-            
-            self.resize(new_width, new_height)
-            # No need to recreate image, just repaint at new size
-            self.update()
-            self.zoom_changed.emit(zoom_factor)
-            
-    def zoom_in(self):
-        """Zoom in by 25%."""
-        self.set_zoom(self.zoom_factor * 1.25)
-        
-    def zoom_out(self):
-        """Zoom out by 20%."""
-        self.set_zoom(self.zoom_factor * 0.8)
-        
-    # === Event Handlers ===
-    
-    def wheelEvent(self, event: QWheelEvent):
-        """Handle mouse wheel for zooming."""
-        # Get mouse position for zoom center
-        mouse_pos = event.position().toPoint()
-        
-        # Store old size for centering calculation
-        old_size = self.size()
-        old_zoom = self.zoom_factor
-        
-        # Apply zoom
-        delta = event.angleDelta().y()
-        if delta > 0:
-            self.zoom_in()
+class BasinDataHelpers:
+    """Display-agnostic helpers shared by the basin viewer. They only read
+    ``self.basin_data`` / ``lats`` / ``lons`` / ``mask_data`` / ``settings_file`` and
+    the live main-window fields, so they carry no UI of their own. (Extracted from the
+    former classic ``BasinWindow`` / ``BasinCanvas``, now removed - Show Basin is the
+    folium EPSG:4326 viewer in ``basin_viewer2``.)"""
+
+    def _orient(self, rgba):
+        """Flip an image so the top row is north and the left column is west (as the
+        map's ImageOverlay expects), based on the lat/lon coordinate order."""
+        lats = np.asarray(self.lats)
+        lons = np.asarray(self.lons)
+        if lats.ndim == 1 and lats.size > 1 and lats[0] < lats[-1]:
+            rgba = rgba[::-1]
+        if lons.ndim == 1 and lons.size > 1 and lons[0] > lons[-1]:
+            rgba = rgba[:, ::-1]
+        return rgba
+
+    def _build_ups_rgba(self):
+        """RGBA image of the full upstream-area grid (ups.nc), blue by log(area)."""
+        basin = np.asarray(self.basin_data, dtype=float)
+        H, W = basin.shape
+        valid = np.isfinite(basin) & (basin > 0)
+        if valid.any():
+            v = np.log1p(np.where(valid, basin, 0.0))
+            vmin, vmax = float(v[valid].min()), float(v[valid].max())
+            norm = np.clip((v - vmin) / (vmax - vmin + 1e-9), 0.0, 1.0)
         else:
-            self.zoom_out()
-            
-        # If zoom changed, adjust scroll position to keep mouse position centered
-        if self.zoom_factor != old_zoom:
-            # Find the scroll area (should be immediate parent)
-            parent = self.parent()
-            scroll_area = None
-            
-            if isinstance(parent, QScrollArea):
-                scroll_area = parent
+            norm = np.zeros((H, W))
+        c0 = np.array([222, 235, 247], dtype=float)  # light blue
+        c1 = np.array([8, 48, 107], dtype=float)      # dark blue
+        col = (c0 * (1 - norm[..., None]) + c1 * norm[..., None]).astype(np.uint8)
+        rgba = np.zeros((H, W, 4), dtype=np.uint8)
+        rgba[..., :3] = col
+        # Valid cells are FULLY opaque (alpha 255): the overlay opacity is then
+        # controlled solely by the transparency slider, so at the slider's left
+        # extreme (opacity 1.0) the ups overlay completely hides the OSM basemap.
+        rgba[..., 3] = np.where(valid, 255, 0).astype(np.uint8)
+        return self._orient(rgba)
+
+    def _build_mask_rgba(self):
+        """RGBA image of the mask (basin) as a semi-transparent green layer."""
+        basin = np.asarray(self.basin_data, dtype=float)
+        H, W = basin.shape
+        mask = np.asarray(self.mask_data) if self.mask_data is not None else None
+        rgba = np.zeros((H, W, 4), dtype=np.uint8)
+        if mask is not None and mask.shape == (H, W):
+            inside = mask == 1
+            rgba[inside] = np.array([0, 170, 0, 110], dtype=np.uint8)
+        return self._orient(rgba)
+
+    def _rgba_to_datauri(self, rgba):
+        """Encode an RGBA numpy array to a base64 PNG data URI (via QImage)."""
+        import base64
+        H, W = rgba.shape[:2]
+        buf = np.ascontiguousarray(rgba).tobytes()
+        qimg = QImage(buf, W, H, 4 * W, QImage.Format_RGBA8888).copy()
+        ba = QByteArray()
+        b = QBuffer(ba)
+        b.open(QBuffer.WriteOnly)
+        qimg.save(b, "PNG")
+        b.close()
+        return "data:image/png;base64," + base64.b64encode(bytes(ba)).decode("ascii")
+
+    def _main_window(self):
+        """Return the main GUI window (holds the live MaskMap/Gauges text boxes)."""
+        app = QApplication.instance()
+        if app:
+            for w in app.allWidgets():
+                if hasattr(w, 'maskmap_field') and hasattr(w, 'gauges_field'):
+                    return w
+        return None
+
+    def _field_gauges(self):
+        """Red-point source: gauge (lon, lat) pairs from the live Gauges text box,
+        falling back to the settings file if the text box is unavailable."""
+        mw = self._main_window()
+        if mw is not None:
+            try:
+                pairs = _parse_coord_pairs(mw.gauges_field.text())
+                if pairs:
+                    return pairs
+            except Exception:
+                pass
+        try:
+            return _parse_gauges(open(self.settings_file, encoding="utf-8",
+                                      errors="ignore").read())
+        except Exception:
+            return []
+
+    def _mask_start_point(self):
+        """Blue-point source: the MaskMap coordinate from the live MaskMap text box (if
+        it is a 'lon lat' pair), else the MaskMap in the settings file, else the
+        largest-ups cell inside the mask (the catchment outlet)."""
+        mw = self._main_window()
+        if mw is not None:
+            try:
+                pairs = _parse_coord_pairs(mw.maskmap_field.text())
+                if pairs:
+                    return pairs[0]
+            except Exception:
+                pass
+        try:
+            content = open(self.settings_file, encoding="utf-8", errors="ignore").read()
+            viewer = BasinViewer(content)
+            mask_path = viewer._find_mask_path()
+            if mask_path:
+                resolved = viewer._resolve_placeholders(mask_path) or mask_path
+                parts = resolved.split()
+                if len(parts) >= 2:
+                    return float(parts[0]), float(parts[1])
+        except Exception:
+            pass
+        return self._largest_ups_point()
+
+    def _largest_ups_point(self):
+        """Return (lon, lat) of the ups.nc cell with the largest upstream area that is
+        inside the mask, computed directly from the in-memory arrays. None if absent."""
+        try:
+            basin = np.asarray(self.basin_data, dtype=float)
+            lats = np.asarray(self.lats)
+            lons = np.asarray(self.lons)
+            if basin.ndim != 2 or lats.ndim != 1 or lons.ndim != 1:
+                return None
+            if self.mask_data is not None and np.asarray(self.mask_data).shape == basin.shape:
+                inside = np.asarray(self.mask_data) == 1
             else:
-                # Look in parent hierarchy
-                while parent:
-                    if hasattr(parent, 'scroll_area'):
-                        scroll_area = parent.scroll_area
-                        break
-                    parent = parent.parent()
-            
-            if scroll_area:
-                # Calculate zoom ratio
-                zoom_ratio = self.zoom_factor / old_zoom
-                
-                # Get current scroll position
-                h_scroll = scroll_area.horizontalScrollBar()
-                v_scroll = scroll_area.verticalScrollBar()
-                
-                # Calculate new scroll position to keep mouse position centered
-                new_h = int((h_scroll.value() + mouse_pos.x()) * zoom_ratio - mouse_pos.x())
-                new_v = int((v_scroll.value() + mouse_pos.y()) * zoom_ratio - mouse_pos.y())
-                
-                # Apply new scroll positions with bounds
-                h_scroll.setValue(max(0, min(new_h, h_scroll.maximum())))
-                v_scroll.setValue(max(0, min(new_v, v_scroll.maximum())))
-                
-        event.accept()
-        
-    def mousePressEvent(self, event: QMouseEvent):
-        """Handle mouse press for drag start."""
-        if event.button() == Qt.LeftButton:
-            self.drag_start = event.pos()
-            self.is_dragging = False
-        super().mousePressEvent(event)
-        
-    def mouseMoveEvent(self, event: QMouseEvent):
-        """Handle mouse move for panning."""
-        if event.buttons() & Qt.LeftButton and self.drag_start:
-            distance = (event.pos() - self.drag_start).manhattanLength()
-            if distance > 5:
-                if not self.is_dragging:
-                    self.is_dragging = True
-                    self.setCursor(Qt.ClosedHandCursor)
-                
-                # Calculate pan delta and emit to parent for scroll area handling
-                delta = event.pos() - self.drag_start
-                self.drag_start = event.pos()  # Update for next move
-                
-                # Find scroll area for panning
-                parent = self.parent()
-                scroll_area = None
-                
-                if isinstance(parent, QScrollArea):
-                    scroll_area = parent
-                else:
-                    # Look in parent hierarchy
-                    while parent:
-                        if hasattr(parent, 'scroll_area'):
-                            scroll_area = parent.scroll_area
-                            break
-                        parent = parent.parent()
-                
-                if scroll_area:
-                    h_scroll = scroll_area.horizontalScrollBar()
-                    v_scroll = scroll_area.verticalScrollBar()
-                    
-                    # Pan by updating scroll bar values (negative for natural feel)
-                    new_h = h_scroll.value() - delta.x()
-                    new_v = v_scroll.value() - delta.y()
-                    
-                    # Apply with bounds checking
-                    h_scroll.setValue(max(0, min(new_h, h_scroll.maximum())))
-                    v_scroll.setValue(max(0, min(new_v, v_scroll.maximum())))
-                    
-        super().mouseMoveEvent(event)
-        
-    def mouseReleaseEvent(self, event: QMouseEvent):
-        """Handle mouse release for click detection."""
-        if event.button() == Qt.LeftButton:
-            if not self.is_dragging and self.drag_start:
-                # This was a click, emit coordinates
-                self._emit_coordinates(event.pos())
-            
-            self.is_dragging = False
-            self.drag_start = None
-            self.setCursor(Qt.ArrowCursor)
-            
-        super().mouseReleaseEvent(event)
-        
-    # === Painting ===
-    
-    def paintEvent(self, event):
-        """Main paint event - renders image-based maps like mask_viewer."""
-        painter = QPainter(self)
-        
-        try:
-            # Create and display the composite image
-            if not hasattr(self, '_cached_image') or self._cached_image is None:
-                self._create_composite_image()
-            
-            if hasattr(self, '_cached_image') and self._cached_image:
-                # Scale image to current widget size with nearest neighbor for sharp pixels
-                scaled_image = self._cached_image.scaled(
-                    self.size(), Qt.KeepAspectRatio, Qt.FastTransformation
-                )
-                
-                # Center the image
-                x = (self.width() - scaled_image.width()) // 2
-                y = (self.height() - scaled_image.height()) // 2
-                
-                painter.drawImage(x, y, scaled_image)
-                
-            # Draw axis frame on top
-            self._draw_axis_frame(painter)
-            
+                inside = np.isfinite(basin)
+            u = np.where(inside & np.isfinite(basin), basin, -np.inf)
+            if not np.isfinite(u).any():
+                return None
+            r, c = np.unravel_index(int(np.argmax(u)), u.shape)
+            return float(lons[c]), float(lats[r])
         except Exception as e:
-            self._draw_error(painter, str(e))
-            
-        painter.end()
-        
-    def _create_composite_image(self):
-        """Create composite image from basin and mask data like mask_viewer."""
+            print(f"Error finding largest ups point: {e}", file=sys.stderr)
+            return None
+
+    def _ups_text(self, lon, lat):
+        """ups.nc value (upstream area) at the cell nearest to (lon, lat), shown in
+        the marker tooltips as 'UPS: <n> km2' - no decimals by design. Empty string
+        when it cannot be determined."""
         try:
-            height, width = self.basin_data.shape
-            
-            # Create RGBA image (with alpha channel for transparency)
-            rgba_array = np.zeros((height, width, 4), dtype=np.uint8)
+            lats = np.asarray(self.lats)
+            lons = np.asarray(self.lons)
+            if lats.ndim != 1 or lons.ndim != 1:
+                return ""
+            row = int(np.abs(lats - float(lat)).argmin())
+            col = int(np.abs(lons - float(lon)).argmin())
+            basin = np.asarray(self.basin_data, dtype=float)
+            if not (0 <= row < basin.shape[0] and 0 <= col < basin.shape[1]):
+                return ""
+            val = basin[row, col]
+            if np.isnan(val):
+                return "no data"
+            return "%d km<sup>2</sup>" % int(round(val))
+        except Exception:
+            return ""
 
-            # Fill basin/UPS data if enabled
-            if self.show_ups:
-                # Create discrete 8-class classification for UPS data
-                valid_mask = ~np.isnan(self.basin_data)
-                
-                if self.data_range > 0:
-                    # Apply logarithmic normalization for better visual distribution
-                    # Add small offset to avoid log(0) issues
-                    log_min = np.log10(self.data_min + 1e-10)
-                    log_max = np.log10(self.data_max + 1e-10)
-                    log_data = np.log10(self.basin_data + 1e-10)
-                    
-                    # Normalize logarithmic values to 0-1 range
-                    if log_max > log_min:
-                        normalized_data = (log_data - log_min) / (log_max - log_min)
-                    else:
-                        normalized_data = np.zeros_like(log_data)
-                    
-                    # Create 8 discrete classes
-                    class_indices = np.floor(normalized_data * 7.999).astype(int)  # 0-7 classes
-                    class_indices = np.clip(class_indices, 0, 7)
-                    
-                    # Define 8 discrete blue colors from light to dark
-                    blue_colors = np.array([
-                        [173, 216, 230],  # Very light blue
-                        [135, 206, 235],  # Light blue  
-                        [100, 149, 237],  # Cornflower blue
-                        [70, 130, 180],   # Steel blue
-                        [30, 144, 255],   # Dodger blue
-                        [0, 100, 200],    # Medium blue
-                        [0, 70, 160],     # Dark blue
-                        [0, 40, 120]      # Very dark blue
-                    ], dtype=np.uint8)
-                    
-                    # Vectorized color assignment
-                    rgba_array[valid_mask, :3] = blue_colors[class_indices[valid_mask]]
-                    rgba_array[valid_mask, 3] = 100  # Alpha channel
-                    
-                    # Transparent for invalid values
-                    rgba_array[~valid_mask] = [255, 255, 255, 0]
-
-
-            else:
-                # All transparent when UPS is hidden
-                rgba_array[:, :, 3] = 0
-
-            # Add mask overlay if enabled - vectorized operation
-            if self.show_mask and self.mask_data is not None:
-                rgba_array[:, :, 3] = np.where(rgba_array[:, :, 3] == 0,0,(np.where(self.mask_data ==1, 255,128)))
-
-            # Create QImage from array
-            self._cached_image = QImage(
-                rgba_array.data, width, height, width * 4, QImage.Format_RGBA8888
-            )
-            
-        except Exception as e:
-            print(f"Error creating composite image: {str(e)}", file=sys.stderr)
-            self._cached_image = None
-                    
-    def _draw_axis_frame(self, painter: QPainter):
-        """Draw clean axis frame with corner ticks."""
-        rect = self.rect()
-        
-        # Main frame - dark gray
-        frame_pen = QPen(QColor(64, 64, 64), 1)
-        painter.setPen(frame_pen)
-        
-        # Draw rectangle frame
-        painter.drawRect(0, 0, rect.width() - 1, rect.height() - 1)
-        
-        # Corner tick marks - lighter gray
-        tick_pen = QPen(QColor(96, 96, 96), 1)
-        painter.setPen(tick_pen)
-        
-        tick_size = 6
-        
-        # Bottom-left corner
-        painter.drawLine(0, rect.height() - tick_size, 0, rect.height() - 1)
-        painter.drawLine(0, rect.height() - 1, tick_size, rect.height() - 1)
-        
-        # Bottom-right corner  
-        painter.drawLine(rect.width() - tick_size, rect.height() - 1, 
-                        rect.width() - 1, rect.height() - 1)
-        
-        # Top-left corner
-        painter.drawLine(0, 0, tick_size, 0)
-        painter.drawLine(0, 0, 0, tick_size)
-        
-        # Top-right corner
-        painter.drawLine(rect.width() - tick_size, 0, rect.width() - 1, 0)
-        painter.drawLine(rect.width() - 1, 0, rect.width() - 1, tick_size)
-        
-    def _draw_error(self, painter: QPainter, error_msg: str):
-        """Draw error message when rendering fails."""
-        painter.fillRect(self.rect(), QColor(255, 200, 200))
-        painter.setPen(QColor(200, 0, 0))
-        font = QFont("Arial", 12, QFont.Weight.Bold)
-        painter.setFont(font)
-        painter.drawText(self.rect(), Qt.AlignCenter, f"Render Error:\n{error_msg}")
-        
-
-    # === Coordinate Calculations ===
-    
-    def _emit_coordinates(self, pos: QPoint):
-        """Calculate and emit geographic coordinates for clicked position."""
-        try:
-            lat, lon, basin_val, mask_val = self._get_coordinates_at_position(pos)
-            if lat is not None:
-                self.coordinate_clicked.emit(lat, lon, basin_val, mask_val)
-        except Exception as e:
-            print(f"Error getting coordinates: {e}", file=sys.stderr)
-            
-    def _get_coordinates_at_position(self, pos: QPoint) -> Tuple[Optional[float], Optional[float], Optional[float], Union[float, str]]:
-        """Convert widget position to geographic coordinates and data values."""
-        rect = self.rect()
-        
-        # Convert widget coordinates to data indices
-        rel_x = pos.x() / rect.width()
-        rel_y = pos.y() / rect.height()
-        
-        data_j = int(rel_x * self.data_width)
-        data_i = int(rel_y * self.data_height)
-        
-        # Clamp to valid ranges
-        data_i = max(0, min(data_i, self.data_height - 1))
-        data_j = max(0, min(data_j, self.data_width - 1))
-        
-        # Calculate geographic coordinates
-        lon = self.lon_min + rel_x * (self.lon_max - self.lon_min)
-        lat = self.lat_max - rel_y * (self.lat_max - self.lat_min)  # Flip Y axis
-        
-        # Get data values
-        basin_val = self.basin_data[data_i, data_j]
-        mask_val = self.mask_data[data_i, data_j] if self.mask_data is not None else "N/A"
-        
-        return lat, lon, basin_val, mask_val
-
-
-class BasinWindow(QDialog):
-    """
-    Main basin visualization window with controls and display area.
-    Provides a complete interface for viewing and interacting with basin data.
-    """
-    
-    def __init__(self, basin_data: np.ndarray, lats: np.ndarray, lons: np.ndarray,
-                 title: str = "Basin Display", mask_data: Optional[np.ndarray] = None, 
-                 settings_file: Optional[str] = None, parent=None):
-        """
-        Initialize the basin visualization window.
-        
-        Args:
-            basin_data: 2D numpy array with basin/UPS data
-            lats: 1D numpy array with latitude coordinates
-            lons: 1D numpy array with longitude coordinates
-            title: Window title
-            mask_data: Optional 2D numpy array with mask data
-            settings_file: Path to CWatM settings file for mask creation
-            parent: Parent widget
-        """
-        super().__init__(parent)
-        
-        # Store data and setup window
-        self.basin_data = basin_data
-        self.lats = lats
-        self.lons = lons
-        self.mask_data = mask_data
-        self.settings_file = settings_file
-        
-        self.setWindowTitle(f"🗺️ {title}")
-        self.setModal(True)
-        self.resize(950, 650)  # Slightly larger for buttons
-        
-        # Set window flags to NOT show in taskbar but have min/max/close buttons
-        self.setWindowFlags(Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
-        
-        # Set CWatM icon
-        try:
-            icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 'assets', 'cwatm.ico')
-            if os.path.exists(icon_path):
-                self.setWindowIcon(QIcon(icon_path))
-        except Exception as e:
-            print(f"Warning: Could not load CWatM icon: {e}", file=sys.stderr)
-        
-        # Window styling
-        self.setStyleSheet("""
-            QDialog {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-            }
-        """)
-        
-        # Control variables - always display both UPS and mask
-        self.show_ups = True
-        self.show_mask = True
-        
-        # Setup UI components
-        self._setup_ui()
-        self.setFocusPolicy(Qt.StrongFocus)
-        
-        # Force initial display
-        QApplication.processEvents()
-        self.basin_canvas.update()
-        
-    def _setup_ui(self):
-        """Setup the complete user interface."""
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(12)
-        
-        # Title header
-        self._create_title_header(main_layout)
-        
-        # Main display area with scroll
-        self._create_display_area(main_layout)
-        
-        # Coordinate info label
-        self._create_info_label(main_layout)
-        
-        # Control buttons
-        self._create_control_buttons(main_layout)
-        
-    def _create_title_header(self, layout: QVBoxLayout):
-        """Create the title header."""
-        title_text = self.windowTitle().replace('🗺️ ', '')
-        title_label = QLabel(f"Basin Visualization: {title_text}")
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("""
-            QLabel {
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 18px;
-                font-weight: 700;
-                color: #2c3e50;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #ffffff, stop:1 #f8f9fa);
-                border: 2px solid #e9ecef;
-                border-radius: 10px;
-                padding: 12px 20px;
-            }
-        """)
-        layout.addWidget(title_label)
-        
-    def _create_display_area(self, layout: QVBoxLayout):
-        """Create the scrollable display area with basin canvas as scrollable content."""
-        # Create QScrollArea as the primary scrollable container
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(False)  # Manual sizing for zoom control
-        self.scroll_area.setAlignment(Qt.AlignCenter)
-        self.scroll_area.setMinimumSize(580, 420)
-        
-        # Configure scroll bar policies - show when needed
-        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        # Style the scroll area and scroll bars
-        self.scroll_area.setStyleSheet("""
-            QScrollArea {
-                background-color: #ffffff;
-                border: 2px solid #dee2e6;
-                border-radius: 8px;
-                margin: 4px;
-            }
-            QScrollBar:vertical {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border: 1px solid #dee2e6;
-                border-radius: 6px;
-                width: 18px;
-            }
-            QScrollBar:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border: 1px solid #dee2e6;
-                border-radius: 6px;
-                height: 18px;
-            }
-            QScrollBar::handle:vertical {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #3498db, stop:1 #2980b9);
-                border-radius: 5px;
-                min-height: 30px;
-                margin: 2px;
-            }
-            QScrollBar::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3498db, stop:1 #2980b9);
-                border-radius: 5px;
-                min-width: 30px;
-                margin: 2px;
-            }
-            QScrollBar::handle:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #5dade2, stop:1 #3498db);
-            }
-            QScrollBar::add-line, QScrollBar::sub-line {
-                border: none;
-                background: transparent;
-            }
-        """)
-        
-        # Create the basin canvas as the scrollable widget content
-        self.basin_canvas = BasinCanvas(self.basin_data, self.lats, self.lons, self.mask_data)
-        self.basin_canvas.setStyleSheet("""
-            BasinCanvas {
-                background-color: white;
-                border: 1px solid #e9ecef;
-                margin: 2px;
-            }
-        """)
-        
-        # Connect canvas coordinate click signal
-        self.basin_canvas.coordinate_clicked.connect(self._on_coordinate_clicked)
-        
-        # Set basin canvas as the widget inside scroll area
-        self.scroll_area.setWidget(self.basin_canvas)
-        
-        # Add scroll area to main layout
-        layout.addWidget(self.scroll_area)
-        
-    def _create_info_label(self, layout: QVBoxLayout):
-        """Create the coordinate information display label."""
-        self.info_label = QLabel("Click on the image to see coordinates and values")
-        self.info_label.setStyleSheet("""
-            QLabel {
-                font-family: 'Segoe UI', 'Consolas', monospace;
-                font-size: 12px;
-                font-weight: 500;
-                color: #2c3e50;
-                padding: 12px 16px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border: 2px solid #dee2e6;
-                border-radius: 8px;
-                min-height: 20px;
-            }
-        """)
-        layout.addWidget(self.info_label)
-        
-    def _create_control_buttons(self, layout: QVBoxLayout):
-        """Create the control button layout."""
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(12)
-        button_layout.setContentsMargins(8, 8, 8, 8)
-        
-        # Standard button style for toggles
-        toggle_style = """
-            QPushButton {
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 11px;
-                font-weight: 500;
-                color: white;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #87ceeb, stop:1 #5dade2);
-                border: none;
-                border-radius: 6px;
-                padding: 6px 12px;
-                min-width: 70px;
-                min-height: 28px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #add8e6, stop:1 #87ceeb);
-                box-shadow: 0 2px 6px rgba(135, 206, 235, 0.3);
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #5dade2, stop:1 #3498db);
-            }
-            QPushButton:checked {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #b0c4de, stop:1 #778899);
-            }
-            QPushButton:disabled {
-                background: #d3d3d3;
-                color: #a9a9a9;
-            }
-        """
-        
-        # Show Mask toggle button
-        self.mask_button = QPushButton("Hide Mask")
-        self.mask_button.setCheckable(True)
-        self.mask_button.setChecked(True)
-        self.mask_button.clicked.connect(self._toggle_mask)
-        self.mask_button.setStyleSheet(toggle_style)
-        
+    def _mask_bbox(self):
+        """Return (row0, row1, col0, col1) bounding box of the mask==1 cells, or None."""
         if self.mask_data is None:
-            self.mask_button.setEnabled(False)
-            self.mask_button.setText("Mask (N/A)")
-            
-        button_layout.addWidget(self.mask_button)
-        
-        # Create new mask button
-        self.create_mask_button = QPushButton("Create new Mask")
-        self.create_mask_button.clicked.connect(self._create_new_mask)
-        self.create_mask_button.setStyleSheet(toggle_style)
-        button_layout.addWidget(self.create_mask_button)
-        
-        # Use coordinates button - initially disabled
-        self.use_coords_button = QPushButton("Use Coordinates")
-        self.use_coords_button.clicked.connect(self._use_coordinates)
-        self.use_coords_button.setStyleSheet(toggle_style)
-        self.use_coords_button.setEnabled(False)  # Disabled until mask is created successfully
-        button_layout.addWidget(self.use_coords_button)
-        
-        button_layout.addStretch()
-        
-        layout.addLayout(button_layout)
-        
-    # === Event Handlers ===
-    
-    def _toggle_mask(self):
-        """Toggle mask overlay display."""
-        self.show_mask = self.mask_button.isChecked()
-        self.mask_button.setText("Hide Mask" if self.show_mask else "Show Mask")
-        self.basin_canvas.toggle_mask(self.show_mask)
-        
-    def _use_coordinates(self):
-        """Put the lon lat coordinates into maskmap_field in the main GUI."""
-        if hasattr(self, 'last_clicked_lat') and hasattr(self, 'last_clicked_lon'):
-            try:
-                # Format coordinates to 4 decimal places
-                coord_string = f"{self.last_clicked_lon:.4f} {self.last_clicked_lat:.4f}"
-                
-                # Try to access the main window's maskmap field
-                # This assumes the main window has a maskmap_field attribute
-                app = QApplication.instance()
-                if app:
-                    for widget in app.allWidgets():
-                        if hasattr(widget, 'maskmap_field'):
-                            widget.maskmap_field.setText(coord_string)
-                            # Coordinates updated successfully
-                            return
-                
-                print("Could not find MaskMap field in main GUI", file=sys.stderr)
-                
-            except Exception as e:
-                print(f"Error updating MaskMap field: {str(e)}", file=sys.stderr)
-        else:
-            print("No coordinates available - create a mask first", file=sys.stderr)
-        
-    def _create_new_mask(self):
-        """Create new mask using current clicked coordinates."""
-        if hasattr(self, 'last_clicked_lat') and hasattr(self, 'last_clicked_lon'):
-            try:
-                # Import here to avoid circular imports
-                import cwatm.run_cwatm as run_cwatm
-                import configparser
-                import tempfile
-                
-                # Creating new mask at specified coordinates
-                
-                # Check if we have settings file
-                if not hasattr(self, 'settings_file') or not self.settings_file:
-                    print("No settings file available for mask creation", file=sys.stderr)
-                    return
-                
-                # Read and modify settings file
-                config = configparser.ConfigParser()
-                config.optionxform = str
-                config.read(self.settings_file)
-                
-                # Update MaskMap with coordinates - format as "lon lat" with 4 decimal places
-                coord_string = f"{self.last_clicked_lon:.4f} {self.last_clicked_lat:.4f}"
-                if config.has_section('MASK_OUTLET'):
-                    config.set('MASK_OUTLET', 'MaskMap', coord_string)
-                else:
-                    config.add_section('MASK_OUTLET')
-                    config.set('MASK_OUTLET', 'MaskMap', coord_string)
-                
-                # Update Gauges with coordinates as well
-                if config.has_section('MASK_OUTLET'):
-                    config.set('MASK_OUTLET', 'Gauges', coord_string)
-                else:
-                    config.set('MASK_OUTLET', 'Gauges', coord_string)
-                
-                # Create temporary settings file in same directory as original
-                import os
-                original_dir = os.path.dirname(self.settings_file)
-                temp_filename = f"temp_mask_{os.getpid()}.ini"
-                temp_settings_path = os.path.join(original_dir, temp_filename)
-                
-                with open(temp_settings_path, 'w') as temp_file:
-                    config.write(temp_file)
-                
-                # Temporary settings file created and coordinates updated
-                
-                # Call CWatM mainwarm function with temporary settings file
-                result = run_cwatm.mainwarm(temp_settings_path, ["-vgm"], [])
-                
-                if result and len(result) > 0:
-                    # Update mask data with new result
-                    new_mask = result[0].data
-                    new_mask = np.where(new_mask != 1, 0, 1)
-                    
-                    if new_mask.shape != self.basin_data.shape:
-                        # Handle different sized masks by placing them correctly
-                        x = result[1]
-                        y = result[2]
-                        maskbig = np.zeros(self.basin_data.shape)
-                        maskbig[y:y + new_mask.shape[0], x:x + new_mask.shape[1]] = new_mask
-                        self.mask_data = maskbig
-                    else:
-                        self.mask_data = new_mask
-                    
-                    # Update canvas with new mask data
-                    self.basin_canvas.set_mask_data(self.mask_data)
-                    # New mask created successfully
-                    
-                    # Enable mask button if it was disabled
-                    if not self.mask_button.isEnabled():
-                        self.mask_button.setEnabled(True)
-                        self.mask_button.setText("Hide Mask")
-                        self.mask_button.setChecked(True)
-                        self.show_mask = True
-                    
-                    # Force refresh of the composite image display
-                    self.basin_canvas._cached_image = None
-                    self.basin_canvas.update()
-                    
-                    # Enable "Use Coordinates" button after successful mask creation
-                    self.use_coords_button.setEnabled(True)
-                    
-                    # Enable mask button if it was disabled
-                    if not self.mask_button.isEnabled():
-                        self.mask_button.setEnabled(True)
-                        self.mask_button.setText("Hide Mask")
-                        self.mask_button.setChecked(True)
-                        self.show_mask = True
-                    
-                else:
-                    print("Failed to create new mask - no result from CWatM", file=sys.stderr)
-                
-                # Delete temporary file completely
-                try:
-                    import os
-                    if os.path.exists(temp_settings_path):
-                        os.remove(temp_settings_path)
-                        # Temporary file deleted successfully
-                except Exception as cleanup_error:
-                    print(f"Warning: Could not delete temporary file {temp_settings_path}: {cleanup_error}", file=sys.stderr)
-                    
-            except Exception as e:
-                print(f"Error creating new mask: {str(e)}", file=sys.stderr)
-        else:
-            print("No coordinates available - click on the map first", file=sys.stderr)
-    
-    def _on_coordinate_clicked(self, lat: float, lon: float, basin_val: float, mask_val):
-        """Handle coordinate click from canvas."""
-        try:
-            # Store coordinates for mask creation
-            self.last_clicked_lat = lat
-            self.last_clicked_lon = lon
-            
-            # Format basin value
-            if basin_val is not None and np.isnan(basin_val):
-                basin_str = "No Data"
-            elif basin_val is not None:
-                basin_str = f"{basin_val:.1f}"
-            else:
-                basin_str = "N/A"
+            return None
+        m = np.asarray(self.mask_data) == 1
+        if not m.any():
+            return None
+        rows = np.where(m.any(axis=1))[0]
+        cols = np.where(m.any(axis=0))[0]
+        return int(rows.min()), int(rows.max()), int(cols.min()), int(cols.max())
 
-            if mask_val == 1:
-                mask = "True"
-            else:
-                mask = "False"
-                
-            # Update info label
-            info_text = f"Lat: {lat:.3f}°, Lon: {lon:.3f}° | Basin area: {basin_str} km2 | Mask: {mask}"
-            self.info_label.setText(info_text)
-            
+    def _run_gauge_check(self, main_window, rebuild_mask=False):
+        """Apply the just-edited field into the settings content and re-check whether
+        the gauge is inside the mask (rebuilding the mask cache first if MaskMap
+        changed). Called after Copy Mask / Copy Gauge / gauge removal."""
+        try:
+            flush = getattr(main_window, "_flush_pending_field_changes", None)
+            if callable(flush):
+                flush()
+            if rebuild_mask:
+                rebuild = getattr(main_window, "_rebuild_mask_cache", None)
+                if callable(rebuild):
+                    rebuild(force=True)
+            check = getattr(main_window, "_update_warnings", None)
+            if callable(check):
+                check(check_pathout=False)
         except Exception as e:
-            print(f"Error handling coordinate click: {e}", file=sys.stderr)
-            self.info_label.setText("Error getting coordinates")
-            
-    def wheelEvent(self, event: QWheelEvent):
-        """Forward wheel events to canvas for zoom functionality."""
-        if hasattr(self, 'basin_canvas') and self.basin_canvas:
-            self.basin_canvas.wheelEvent(event)
-        else:
-            super().wheelEvent(event)
-        
-    def keyPressEvent(self, event: QKeyEvent):
-        """Handle keyboard shortcuts."""
-        key = event.key()
-        
-        if key == Qt.Key_M and self.mask_data is not None:
-            self.mask_button.setChecked(not self.mask_button.isChecked())
-            self._toggle_mask()
-        elif key == Qt.Key_U:
-            self.ups_button.setChecked(not self.ups_button.isChecked())
-            self._toggle_ups()
-        elif key in (Qt.Key_Plus, Qt.Key_Equal):
-            self.basin_canvas.zoom_in()
-        elif key == Qt.Key_Minus:
-            self.basin_canvas.zoom_out()
-        elif key == Qt.Key_Escape:
-            self.close()
-        else:
-            super().keyPressEvent(event)
+            print(f"Gauge-in-mask check failed: {e}", file=sys.stderr)
 
 
 class BasinViewer:
@@ -915,49 +443,9 @@ class BasinViewer:
             config_content: INI configuration file content as string
         """
         self.config_content = config_content
-        self.basin_window = None
-        
-    def show_basin(self, settings_file: str, parent=None):
-        """
-        Load and display basin data from NetCDF file.
-        
-        Args:
-            settings_file: Path to the CWatM settings file
-            parent: Parent window for the basin dialog
-        """
-        try:
-            # Store settings file path for mask creation
-            self.settings_file = settings_file
-            # Find UPS file path
-            ups_path = self._find_ups_path()
-            if not ups_path:
-                print("No UPS path found in configuration", file=sys.stderr)
-                return
-                
-            # Resolve placeholders and validate path
-            resolved_path = self._resolve_placeholders(ups_path)
-            if not resolved_path or not os.path.exists(resolved_path):
-                print(f"Basin file not found: {resolved_path}", file=sys.stderr)
-                return
-                
-            # Load NetCDF data
-            basin_data, lats, lons = self._load_netcdf_data(resolved_path)
-            if basin_data is None:
-                return
-                
-            # Load mask data if available
-            mask_data = self._load_mask_data(self.settings_file,basin_data.shape)
-            
-            # Create and show window
-            title = f"Basin: {os.path.basename(resolved_path)}"
-            self.basin_window = BasinWindow(basin_data, lats, lons, title, mask_data, settings_file, parent)
-            self.basin_window.exec()
-            
-        except Exception as e:
-            print(f"Error loading basin data: {e}", file=sys.stderr)
-            import traceback
-            traceback.print_exc()
-            
+        # Data loader only now: the window is opened by basin_viewer2.show_basin2
+        # (Tools ▸ Show Basin). The classic BasinWindow launcher was removed.
+
     def _find_ups_path(self) -> Optional[str]:
         """Find UPS file path from TOPOP.ldd configuration."""
         if not self.config_content:
@@ -980,6 +468,21 @@ class BasinViewer:
             print(f"Error finding UPS path: {e}", file=sys.stderr)
             return None
             
+    def _find_title(self) -> Optional[str]:
+        """Return the 'Title' value from the settings file, or None if absent."""
+        if not self.config_content:
+            return None
+        try:
+            config = configparser.ConfigParser(interpolation=None)
+            config.read_string(self.config_content)
+            for section_name in config.sections():
+                for key, value in config.items(section_name):
+                    if key.lower() == 'title':
+                        return value.strip()
+        except Exception as e:
+            print(f"Error finding Title: {e}", file=sys.stderr)
+        return None
+
     def _find_mask_path(self) -> Optional[str]:
         """Find mask file path from configuration."""
         if not self.config_content:
@@ -1138,8 +641,35 @@ class BasinViewer:
                     print(f"Mask file not found: {resolved_path}", file=sys.stderr)
                     return None
             else:
-                # Coordinate-based - use CWatM method
-                mask_result = run_cwatm.mainwarm(settings_file, ["-vgm"], [])
+                # Coordinate-based - use CWatM's mask routine (mainwarm -vgm).
+                # IMPORTANT: the gauge check is defined against the LIVE settings
+                # content (self.config_content = the left-window boxes), which can
+                # differ from the file on disk - e.g. right after Copy Mask /
+                # Copy Gauge or a manual MaskMap edit, before saving. mainwarm can
+                # only read a file, so write the live content to a temporary .ini
+                # next to the original (same dir, so relative paths and
+                # placeholders resolve identically) and run the routine on that.
+                # Running it on `settings_file` directly built the OLD basin and
+                # made the check wrongly flag gauges as outside.
+                import tempfile
+                run_file = settings_file
+                temp_path = None
+                try:
+                    if self.config_content:
+                        base_dir = (os.path.dirname(os.path.abspath(settings_file))
+                                    if settings_file else os.getcwd())
+                        fd, temp_path = tempfile.mkstemp(
+                            suffix=".ini", prefix="temp_gaugecheck_", dir=base_dir)
+                        with os.fdopen(fd, "w", encoding="utf-8") as f:
+                            f.write(self.config_content)
+                        run_file = temp_path
+                    mask_result = run_cwatm.mainwarm(run_file, ["-vgm"], [])
+                finally:
+                    if temp_path:
+                        try:
+                            os.remove(temp_path)
+                        except Exception:
+                            pass
                 if mask_result:
                     mask_data = mask_result[0].data
                     mask_data = np.where(mask_data != 1, 0, 1)
@@ -1149,9 +679,9 @@ class BasinViewer:
                         maskbig = np.zeros(upsshape)
                         maskbig[y:y + mask_data.shape[0], x:x + mask_data.shape[1]] = mask_data
                         mask_data = maskbig
-                        return mask_data
-
-
+                    # (a mask generated on the full ups grid needs no pasting -
+                    # the old code fell through to `return None` in that case)
+                    return mask_data
                 return None
                 
         except Exception as e:
@@ -1179,6 +709,16 @@ def _parse_gauges(config_content: str):
         if not value:
             return []
         nums = [float(x) for x in re.split(r'[\s,]+', value.strip()) if x]
+        return [(nums[i], nums[i + 1]) for i in range(0, len(nums) - 1, 2)]
+    except Exception:
+        return []
+
+
+def _parse_coord_pairs(value: str):
+    """Parse a raw 'lon lat [lon lat ...]' string (e.g. a Gauges/MaskMap text-box
+    value) into a list of (lon, lat) tuples. Empty list if it is not coordinates."""
+    try:
+        nums = [float(x) for x in re.split(r'[\s,]+', (value or '').strip()) if x]
         return [(nums[i], nums[i + 1]) for i in range(0, len(nums) - 1, 2)]
     except Exception:
         return []
@@ -1416,6 +956,6 @@ def pathout_exists(config_content):
 
 
 # === Module Exports ===
-__all__ = ['BasinViewer', 'BasinWindow', 'BasinCanvas', 'gauges_in_maskmap',
+__all__ = ['BasinViewer', 'BasinDataHelpers', 'gauges_in_maskmap',
            'build_mask_context', 'gauges_inside', 'pathout_exists',
            'find_largest_ups_gauge']

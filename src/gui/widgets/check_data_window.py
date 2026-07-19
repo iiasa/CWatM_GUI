@@ -12,12 +12,58 @@ from PySide6.QtGui import QColor, QIcon, QKeySequence
 import os
 import sys
 import re
-import cwatm.run_cwatm as run_cwatm
-try:
-    import netCDF4
-    NETCDF_AVAILABLE = True
-except ImportError:
-    NETCDF_AVAILABLE = False
+
+from src.gui.utils import theme
+
+# cwatm.run_cwatm (-> scipy/pandas/netCDF4) and netCDF4 are imported lazily in
+# the methods that use them (report §4.1) so importing this module stays cheap.
+
+
+def _cell_true_bg():
+    """Result-table cell background for OK/True cells (light blue; theme-aware)."""
+    return QColor("#d9eff9") if not theme.is_dark() else theme.qcolor("changed_line")
+
+
+def _cell_false_bg():
+    """Result-table cell background for trouble/False cells (light red; theme-aware)."""
+    return QColor("#FFB6C1") if not theme.is_dark() else theme.qcolor("duplicate_line")
+
+
+def _modern_btn(font_size=12, radius=6, padding="8px 16px", extra_base="",
+                with_disabled=False):
+    """The window's standard button QSS built from the active theme (Normal =
+    the classic white-gradient look)."""
+    disabled = ""
+    if with_disabled:
+        disabled = f"""
+            QPushButton:disabled {{
+                background: {theme.c('surface_bg')};
+                border-color: {theme.c('border')};
+                color: {theme.c('text_gray')};
+            }}"""
+    return f"""
+        QPushButton {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {theme.c('btn_top')}, stop:1 {theme.c('btn_bottom')});
+            border: 2px solid {theme.c('btn_border')};
+            border-radius: {radius}px;
+            color: {theme.c('btn_text')};
+            font-weight: 600;
+            font-size: {font_size}px;
+            padding: {padding};
+            {extra_base}
+        }}
+        QPushButton:hover {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {theme.c('btn_hover_top')}, stop:1 {theme.c('btn_hover_bottom')});
+            border-color: {theme.c('btn_hover_border')};
+        }}
+        QPushButton:pressed {{
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 {theme.c('btn_press_top')}, stop:1 {theme.c('btn_press_bottom')});
+            border-color: {theme.c('btn_press_border')};
+        }}{disabled}
+    """
 
 
 class CheckDataWindow(QDialog):
@@ -75,34 +121,42 @@ class CheckDataWindow(QDialog):
         
         # Title label with modern styling
         title_label = QLabel("Check Data")
-        title_label.setStyleSheet("""
-            QLabel {
+        if theme.is_dark():
+            _title_color, _title_border = theme.c('accent'), theme.c('border')
+        else:  # classic blue gradient title + underline
+            _title_color = ("qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+                            "stop:0 #2980b9, stop:1 #3498db)")
+            _title_border = ("qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+                             "stop:0 #74b9ff, stop:1 #0984e3)")
+        title_label.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
-                font-weight: 700; 
-                font-size: 24px; 
-                color: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #2980b9, stop:1 #3498db);
+                font-weight: 700;
+                font-size: 24px;
+                color: {_title_color};
                 padding: 15px 0px 20px 0px;
-                border-bottom: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #74b9ff, stop:1 #0984e3);
+                border-bottom: 3px solid {_title_border};
                 margin-bottom: 20px;
-            }
+            }}
         """)
         left_layout.addWidget(title_label)
         
         # Description text
         description_text = QLabel(
-            "With this window you can check the data of the settings file\n"
-            "It will run CWatM but only analyse the data in the settings file\n\n"
+            "With this window you can check the data of the settings file<br>"
+            "It will run CWatM but only analyse the data in the settings file<br><br>"
+            "<b style='color:#c0392b;'>Works only if you use a MaskMap map, "
+            "not coordinates!</b>"
         )
-        description_text.setStyleSheet("""
-            QLabel {
+        description_text.setTextFormat(Qt.RichText)
+        description_text.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
                 font-size: 12px;
-                color: #2c3e50;
+                color: {theme.c('text')};
                 padding: 10px 0px;
                 line-height: 1.4;
-            }
+            }}
         """)
         left_layout.addWidget(description_text)
         
@@ -111,44 +165,23 @@ class CheckDataWindow(QDialog):
         
 
         self.output_browse_button = QPushButton("Save result file as .csv")
-        self.output_browse_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #ffffff, stop:1 #f1f3f4);
-                border: 2px solid #e1e5e9;
-                border-radius: 6px;
-                color: #2c3e50;
-                font-weight: 600;
-                font-size: 12px;
-                padding: 8px 16px;
-                min-width: 80px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border-color: #74b9ff;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #e9ecef, stop:1 #dee2e6);
-                border-color: #0984e3;
-            }
-        """)
+        self.output_browse_button.setStyleSheet(
+            _modern_btn(extra_base="min-width: 80px;"))
         self.output_browse_button.clicked.connect(self.browse_output_file)
         
         # Create filename display label
         self.output_filename_label = QLabel(self.output_file_path)
-        self.output_filename_label.setStyleSheet("""
-            QLabel {
+        self.output_filename_label.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
                 font-size: 11px;
-                color: #666;
+                color: {theme.c('text_gray')};
                 padding: 2px 5px;
-                background-color: #f8f9fa;
-                border: 1px solid #e1e5e9;
+                background-color: {theme.c('surface_bg')};
+                border: 1px solid {theme.c('border')};
                 border-radius: 3px;
                 margin-top: 5px;
-            }
+            }}
         """)
         
         # Top row with label and browse button
@@ -164,7 +197,7 @@ class CheckDataWindow(QDialog):
         separator1 = QFrame()
         separator1.setFrameShape(QFrame.HLine)
         separator1.setFrameShadow(QFrame.Sunken)
-        separator1.setStyleSheet("QFrame { color: #e1e5e9; }")
+        separator1.setStyleSheet(f"QFrame {{ color: {theme.c('border')}; }}")
         left_layout.addWidget(separator1)
         
         # Comparison section description
@@ -172,14 +205,14 @@ class CheckDataWindow(QDialog):
             "It can also be used to check against an existing output\n"
             "output must be a discharge... netcdf file\n"
         )
-        comparison_text.setStyleSheet("""
-            QLabel {
+        comparison_text.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
                 font-size: 12px;
-                color: #2c3e50;
+                color: {theme.c('text')};
                 padding: 10px 0px;
                 line-height: 1.4;
-            }
+            }}
         """)
         left_layout.addWidget(comparison_text)
         
@@ -188,45 +221,23 @@ class CheckDataWindow(QDialog):
 
 
         self.browse_button = QPushButton("Select discharge NetCDF file")
-        self.browse_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #ffffff, stop:1 #f1f3f4);
-                border: 2px solid #e1e5e9;
-                border-radius: 6px;
-                color: #2c3e50;
-                font-weight: 600;
-                font-size: 12px;
-                padding: 8px 16px;
-                min-width: 80px;
-                margin-top: -10px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border-color: #74b9ff;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #e9ecef, stop:1 #dee2e6);
-                border-color: #0984e3;
-            }
-        """)
+        self.browse_button.setStyleSheet(
+            _modern_btn(extra_base="min-width: 80px; margin-top: -10px;"))
         self.browse_button.clicked.connect(self.browse_netcdf_file)
         
         # Create NetCDF filename display label
         self.netcdf_filename_label = QLabel("No file selected")
-        self.netcdf_filename_label.setStyleSheet("""
-            QLabel {
+        self.netcdf_filename_label.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
                 font-size: 11px;
-                color: #666;
+                color: {theme.c('text_gray')};
                 padding: 2px 5px;
-                background-color: #f8f9fa;
-                border: 1px solid #e1e5e9;
+                background-color: {theme.c('surface_bg')};
+                border: 1px solid {theme.c('border')};
                 border-radius: 3px;
                 margin-top: -5px;
-            }
+            }}
         """)
         
         #netcdf_section_layout.addWidget(netcdf_label)
@@ -235,35 +246,9 @@ class CheckDataWindow(QDialog):
         
         # Restore settings button
         self.restore_settings_button = QPushButton("Restore settings from discharge map")
-        self.restore_settings_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #ffffff, stop:1 #f1f3f4);
-                border: 2px solid #e1e5e9;
-                border-radius: 6px;
-                color: #2c3e50;
-                font-weight: 600;
-                font-size: 12px;
-                padding: 8px 16px;
-                min-width: 80px;
-                margin-top: 5px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border-color: #74b9ff;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #e9ecef, stop:1 #dee2e6);
-                border-color: #0984e3;
-            }
-            QPushButton:disabled {
-                background: #f8f9fa;
-                border-color: #e1e5e9;
-                color: #adb5bd;
-            }
-        """)
+        self.restore_settings_button.setStyleSheet(
+            _modern_btn(extra_base="min-width: 80px; margin-top: 5px;",
+                        with_disabled=True))
         self.restore_settings_button.clicked.connect(self.restore_settings_from_discharge)
         self.restore_settings_button.setEnabled(False)  # Initially disabled
         netcdf_section_layout.addWidget(self.restore_settings_button)
@@ -303,29 +288,9 @@ class CheckDataWindow(QDialog):
         self.run_check_button.clicked.connect(self.run_check)
         
         self.close_button = QPushButton("Close")
-        self.close_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #ffffff, stop:1 #f1f3f4);
-                border: 2px solid #e1e5e9;
-                border-radius: 8px;
-                color: #2c3e50;
-                font-weight: 600;
-                font-size: 13px;
-                padding: 10px 20px;
-                min-width: 100px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border-color: #74b9ff;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #e9ecef, stop:1 #dee2e6);
-                border-color: #0984e3;
-            }
-        """)
+        self.close_button.setStyleSheet(
+            _modern_btn(font_size=13, radius=8, padding="10px 20px",
+                        extra_base="min-width: 100px;"))
         self.close_button.clicked.connect(self.close)
         
         button_layout.addWidget(self.run_check_button)
@@ -349,81 +314,31 @@ class CheckDataWindow(QDialog):
         label_button_layout.setSpacing(10)
         
         results_label = QLabel("Check Results Table")
-        results_label.setStyleSheet("""
-            QLabel {
+        results_label.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
-                font-weight: 600; 
-                font-size: 16px; 
-                color: #2c3e50;
+                font-weight: 600;
+                font-size: 16px;
+                color: {theme.c('text')};
                 padding: 15px 0px 20px 0px;
-                border-bottom: 2px solid #e1e5e9;
+                border-bottom: 2px solid {theme.c('border')};
                 margin-bottom: 20px;
-            }
+            }}
         """)
         
         self.select_trouble_button = QPushButton("Select trouble")
-        self.select_trouble_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #ffffff, stop:1 #f1f3f4);
-                border: 2px solid #e1e5e9;
-                border-radius: 6px;
-                color: #2c3e50;
-                font-weight: 600;
-                font-size: 11px;
-                padding: 4px 12px;
-                min-width: 80px;
-                max-height: 21px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border-color: #74b9ff;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #e9ecef, stop:1 #dee2e6);
-                border-color: #0984e3;
-            }
-            QPushButton:disabled {
-                background: #f8f9fa;
-                border-color: #e1e5e9;
-                color: #adb5bd;
-            }
-        """)
+        self.select_trouble_button.setStyleSheet(
+            _modern_btn(font_size=11, padding="4px 12px",
+                        extra_base="min-width: 80px; max-height: 21px;",
+                        with_disabled=True))
         self.select_trouble_button.clicked.connect(self.filter_trouble_rows)
         self.select_trouble_button.setEnabled(False)  # Initially disabled
         
         self.copy_table_button = QPushButton("Copy Table")
-        self.copy_table_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #ffffff, stop:1 #f1f3f4);
-                border: 2px solid #e1e5e9;
-                border-radius: 6px;
-                color: #2c3e50;
-                font-weight: 600;
-                font-size: 11px;
-                padding: 4px 12px;
-                min-width: 80px;
-                max-height: 21px;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #f8f9fa, stop:1 #e9ecef);
-                border-color: #74b9ff;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
-                    stop:0 #e9ecef, stop:1 #dee2e6);
-                border-color: #0984e3;
-            }
-            QPushButton:disabled {
-                background: #f8f9fa;
-                border-color: #e1e5e9;
-                color: #adb5bd;
-            }
-        """)
+        self.copy_table_button.setStyleSheet(
+            _modern_btn(font_size=11, padding="4px 12px",
+                        extra_base="min-width: 80px; max-height: 21px;",
+                        with_disabled=True))
         self.copy_table_button.clicked.connect(self.copy_table_to_clipboard)
         self.copy_table_button.setEnabled(False)  # Initially disabled
         
@@ -437,29 +352,29 @@ class CheckDataWindow(QDialog):
         # Results table widget 
         self.results_table = QTableWidget()
 
-        self.results_table.setStyleSheet("""
-            QTableWidget {
-                border: 2px solid #e1e5e9;
+        self.results_table.setStyleSheet(f"""
+            QTableWidget {{
+                border: 2px solid {theme.c('border')};
                 border-radius: 8px;
-                gridline-color: #e1e5e9;
-                selection-background-color: #74b9ff;
-                selection-color: white;
+                gridline-color: {theme.c('border')};
+                selection-background-color: {theme.c('sel_bg')};
+                selection-color: {theme.c('sel_text')};
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 10px;
-            }
+            }}
 
-            QTableWidget::item:selected {
-                color: white;
-            }
-            QHeaderView::section {
-                background-color: #f8f9fa;
-                border: 1px solid #e1e5e9;
+            QTableWidget::item:selected {{
+                color: {theme.c('sel_text')};
+            }}
+            QHeaderView::section {{
+                background-color: {theme.c('surface_bg')};
+                border: 1px solid {theme.c('border')};
                 padding: 8px;
                 font-family: 'Consolas', 'Monaco', monospace;
                 font-size: 11px;
                 font-weight: 600;
-                color: #2c3e50;
-            }
+                color: {theme.c('text')};
+            }}
         """)
         
         # Set table properties
@@ -544,6 +459,7 @@ class CheckDataWindow(QDialog):
                 if netcdf_file:
                     args.append(netcdf_file)
 
+                import cwatm.run_cwatm as run_cwatm  # lazy (§4.1)
                 success, checkinfo = run_cwatm.main(settings_file, args)
 
                 if success:
@@ -572,11 +488,17 @@ class CheckDataWindow(QDialog):
 
 
             except Exception as e:
+                import traceback
+                # Send the full CWatM traceback (file + line, e.g. readmeteo.py:137)
+                # to the output box so the real cause is visible, not just str(e).
                 print(f"Error running CWatM check: {str(e)}", file=sys.stderr)
+                print(traceback.format_exc(), file=sys.stderr)
                 print("Check the configuration file and try again.", file=sys.stderr)
-                
+
         except Exception as e:
+            import traceback
             print(f"Error in check data process: {str(e)}", file=sys.stderr)
+            print(traceback.format_exc(), file=sys.stderr)
     
     def display_check_results_table(self, checkinfo):
         """Display checkinfo CSV data as table, showing all lines"""
@@ -632,7 +554,7 @@ class CheckDataWindow(QDialog):
 
                         # Color first column light blue
                         if col_idx == 0:
-                            item.setBackground(QColor("#d9eff9"))
+                            item.setBackground(_cell_true_bg())
                         
                         # Color non-numeric cells in 2nd column light red
                         if col_idx == 1:
@@ -643,24 +565,24 @@ class CheckDataWindow(QDialog):
                                 # It's a number - no special coloring
                             except ValueError:
                                 # Not a number - color light red
-                                item.setBackground(QColor("#d9eff9"))  #
+                                item.setBackground(_cell_true_bg())  #
                         
                         # Color "Same Date" column based on True/False values
                         if col_idx < len(headers) and headers[col_idx] == "Same Date":
                             cell_str = str(cell_data).strip()
                             if cell_str == "False":
-                                item.setBackground(QColor("#FFB6C1"))  # Light red for False
+                                item.setBackground(_cell_false_bg())  # Light red for False
                             elif cell_str == "True":
-                                item.setBackground(QColor("#d9eff9"))  # Light blue for True
+                                item.setBackground(_cell_true_bg())  # Light blue for True
                             # No coloring for other values
                         
                         # Color "valid" column based on True/False values
                         if col_idx < len(headers) and headers[col_idx] == "valid":
                             cell_str = str(cell_data).strip()
                             if cell_str == "False":
-                                item.setBackground(QColor("#FFB6C1"))  # Light red for False
+                                item.setBackground(_cell_false_bg())  # Light red for False
                             elif cell_str == "True":
-                                item.setBackground(QColor("#d9eff9"))  # Light blue for True
+                                item.setBackground(_cell_true_bg())  # Light blue for True
                             # No coloring for other values
                         
                         self.results_table.setItem(row_idx, col_idx, item)
@@ -700,121 +622,116 @@ class CheckDataWindow(QDialog):
             # Enable the Select trouble and Copy Table buttons now that we have valid table data
             self.select_trouble_button.setEnabled(True)
             self.copy_table_button.setEnabled(True)
+            # Fresh results: reset the trouble-filter toggle back to "Select trouble"
+            self._trouble_filtered = False
+            self.select_trouble_button.setText("Select trouble")
             
         except Exception as e:
             print(f"Error displaying check results table: {str(e)}", file=sys.stderr)
     
     def filter_trouble_rows(self):
-        """Filter table to show only rows where valid=False or Same Date=False"""
+        """Toggle between showing only troublesome rows (valid=False or Same Date=False)
+        and showing all rows again. Clicking the button flips between the two."""
         try:
             if not self.original_headers or not self.original_data:
                 print("No original data available for filtering")
                 return
-            
-            # Find column indices for "valid" and "Same Date"
+
+            # Second click: restore all rows
+            if getattr(self, "_trouble_filtered", False):
+                self._render_results_table(self.original_data)
+                self._trouble_filtered = False
+                self.select_trouble_button.setText("Select trouble")
+                print(f"Showing all {len(self.original_data)} rows")
+                return
+
+            # First click: keep only the troublesome rows
             valid_col_idx = -1
             same_date_col_idx = -1
-            
             for i, header in enumerate(self.original_headers):
                 if header.strip().lower() == "valid":
                     valid_col_idx = i
                 elif header.strip().lower() == "same date":
                     same_date_col_idx = i
-            
-            # Filter rows based on criteria
+
             filtered_data = []
             for row in self.original_data:
                 should_include = False
-                
-                # Check if valid column exists and is False
-                if valid_col_idx >= 0 and valid_col_idx < len(row):
-                    valid_value = str(row[valid_col_idx]).strip().lower()
-                    if valid_value == "false":
-                        should_include = True
-                
-                # Check if "Same Date" column exists and is False
-                if same_date_col_idx >= 0 and same_date_col_idx < len(row):
-                    same_date_value = str(row[same_date_col_idx]).strip().lower()
-                    if same_date_value == "false":
-                        should_include = True
-                
+                if 0 <= valid_col_idx < len(row) and \
+                        str(row[valid_col_idx]).strip().lower() == "false":
+                    should_include = True
+                if 0 <= same_date_col_idx < len(row) and \
+                        str(row[same_date_col_idx]).strip().lower() == "false":
+                    should_include = True
                 if should_include:
                     filtered_data.append(row)
-            
-            # Clear and reconfigure table with filtered data
-            self.results_table.setRowCount(len(filtered_data))
-            self.results_table.setColumnCount(len(self.original_headers))
-            self.results_table.setHorizontalHeaderLabels(self.original_headers)
-            
-            # Fill table with filtered data and apply custom formatting
-            for row_idx, row_data in enumerate(filtered_data):
-                for col_idx, cell_data in enumerate(row_data):
-                    if col_idx < len(self.original_headers):  # Ensure we don't exceed column count
-                        item = QTableWidgetItem(str(cell_data))
 
-                        # Color first column light blue
-                        if col_idx == 0:
-                            item.setBackground(QColor("#d9eff9"))
-                        
-                        # Color non-numeric cells in 2nd column light red
-                        if col_idx == 1:
-                            cell_str = str(cell_data).strip()
-                            # Check if the cell contains a number (int or float)
-                            try:
-                                float(cell_str)  # Try to convert to float
-                                # It's a number - no special coloring
-                            except ValueError:
-                                # Not a number - color light red
-                                item.setBackground(QColor("#d9eff9"))
-                        
-                        # Color "Same Date" column based on True/False values
-                        if col_idx < len(self.original_headers) and self.original_headers[col_idx] == "Same Date":
-                            cell_str = str(cell_data).strip()
-                            if cell_str == "False":
-                                item.setBackground(QColor("#FFB6C1"))  # Light red for False
-                            elif cell_str == "True":
-                                item.setBackground(QColor("#d9eff9"))  # Light blue for True
-                            # No coloring for other values
-                        
-                        # Color "valid" column based on True/False values
-                        if col_idx < len(self.original_headers) and self.original_headers[col_idx] == "valid":
-                            cell_str = str(cell_data).strip()
-                            if cell_str == "False":
-                                item.setBackground(QColor("#FFB6C1"))  # Light red for False
-                            elif cell_str == "True":
-                                item.setBackground(QColor("#d9eff9"))  # Light blue for True
-                            # No coloring for other values
-                        
-                        self.results_table.setItem(row_idx, col_idx, item)
-            
-            # Set column widths with special handling
-            self.results_table.resizeColumnsToContents()
-            
-            # Configure header properties for individual columns
-            horizontal_header = self.results_table.horizontalHeader()
-            
-            # Set fixed width for first 2 columns (non-resizable)
-            if len(self.original_headers) >= 1:
-                # First column (Path/Filename) - fixed width, non-resizable, 40% narrower
-                horizontal_header.setSectionResizeMode(0, QHeaderView.Fixed)
-                self.results_table.setColumnWidth(0, 120)  # Fixed width for first column (40% narrower than 200)
-                
-            if len(self.original_headers) >= 2:
-                # Second column (Name/Variable/Parameter) - fixed width, non-resizable
-                horizontal_header.setSectionResizeMode(1, QHeaderView.Fixed)
-                self.results_table.setColumnWidth(1, 150)  # Fixed width for second column
-                
-            # Make remaining columns interactive (resizable)
-            for i in range(2, len(self.original_headers)):
-                if i < len(self.original_headers) - 1:  # All columns except last
-                    horizontal_header.setSectionResizeMode(i, QHeaderView.Interactive)
-                else:  # Last column stretches
-                    horizontal_header.setSectionResizeMode(i, QHeaderView.Stretch)
-            
-            print(f"Filtered trouble rows: {len(filtered_data)} rows displayed (from {len(self.original_data)} total)")
-            
+            self._render_results_table(filtered_data)
+            self._trouble_filtered = True
+            self.select_trouble_button.setText("Show all")
+            print(f"Filtered trouble rows: {len(filtered_data)} rows displayed "
+                  f"(from {len(self.original_data)} total)")
+
         except Exception as e:
             print(f"Error filtering trouble rows: {str(e)}", file=sys.stderr)
+
+    def _render_results_table(self, data):
+        """(Re)populate the results table with the given rows, applying the same
+        formatting and column sizing as the full results view. Used by the
+        Select trouble / Show all toggle."""
+        self.results_table.setRowCount(len(data))
+        self.results_table.setColumnCount(len(self.original_headers))
+        self.results_table.setHorizontalHeaderLabels(self.original_headers)
+
+        for row_idx, row_data in enumerate(data):
+            for col_idx, cell_data in enumerate(row_data):
+                if col_idx < len(self.original_headers):
+                    item = QTableWidgetItem(str(cell_data))
+
+                    # Color first column light blue
+                    if col_idx == 0:
+                        item.setBackground(_cell_true_bg())
+
+                    # Color non-numeric cells in 2nd column light blue
+                    if col_idx == 1:
+                        cell_str = str(cell_data).strip()
+                        try:
+                            float(cell_str)
+                        except ValueError:
+                            item.setBackground(_cell_true_bg())
+
+                    # Color "Same Date" column based on True/False values
+                    if self.original_headers[col_idx] == "Same Date":
+                        cell_str = str(cell_data).strip()
+                        if cell_str == "False":
+                            item.setBackground(_cell_false_bg())
+                        elif cell_str == "True":
+                            item.setBackground(_cell_true_bg())
+
+                    # Color "valid" column based on True/False values
+                    if self.original_headers[col_idx] == "valid":
+                        cell_str = str(cell_data).strip()
+                        if cell_str == "False":
+                            item.setBackground(_cell_false_bg())
+                        elif cell_str == "True":
+                            item.setBackground(_cell_true_bg())
+
+                    self.results_table.setItem(row_idx, col_idx, item)
+
+        # Column widths / resize behavior
+        self.results_table.resizeColumnsToContents()
+        horizontal_header = self.results_table.horizontalHeader()
+        if len(self.original_headers) >= 1:
+            horizontal_header.setSectionResizeMode(0, QHeaderView.Fixed)
+            self.results_table.setColumnWidth(0, 120)
+        if len(self.original_headers) >= 2:
+            horizontal_header.setSectionResizeMode(1, QHeaderView.Fixed)
+            self.results_table.setColumnWidth(1, 150)
+        for i in range(2, len(self.original_headers)):
+            if i < len(self.original_headers) - 1:
+                horizontal_header.setSectionResizeMode(i, QHeaderView.Interactive)
+            else:
+                horizontal_header.setSectionResizeMode(i, QHeaderView.Stretch)
     
     def copy_table_to_clipboard(self):
         """Copy the current table data to clipboard in CSV format"""
@@ -868,7 +785,9 @@ class CheckDataWindow(QDialog):
     def restore_settings_from_discharge(self):
         """Restore settings from discharge NetCDF file's global attributes"""
         try:
-            if not NETCDF_AVAILABLE:
+            try:
+                import netCDF4  # lazy (§4.1)
+            except ImportError:
                 print("NetCDF4 library not available. Cannot read NetCDF files.", file=sys.stderr)
                 return
                 

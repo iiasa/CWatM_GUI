@@ -64,6 +64,19 @@ class FileManager:
         
         return None, None
     
+    def load_file_from_path(self, file_path):
+        """Load a specific configuration file by path (no dialog).
+
+        Returns (content, filename) or (None, error message).
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                content = file.read()
+            self.current_file_path = file_path
+            return content, os.path.basename(file_path)
+        except Exception as e:
+            return None, f"Error: {str(e)}"
+
     def save_file(self, content, file_path=None):
         """Save content to file"""
         target_path = file_path or self.current_file_path

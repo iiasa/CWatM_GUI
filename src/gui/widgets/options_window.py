@@ -3,10 +3,12 @@ Options Window for CWatM GUI
 Manages boolean options from the [Options] section of configuration files
 """
 
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QCheckBox, QPushButton, QScrollArea, QWidget, QFrame)
 from PySide6.QtCore import Qt
 import re
+
+from src.gui.utils import theme
 
 
 class OptionsWindow(QDialog):
@@ -38,69 +40,74 @@ class OptionsWindow(QDialog):
         
         # Title label with modern styling
         title_label = QLabel("Configuration Options")
-        title_label.setStyleSheet("""
-            QLabel {
+        if theme.is_dark():
+            _title_color, _title_border = theme.c('accent'), theme.c('border')
+        else:  # classic blue gradient title + underline
+            _title_color = ("qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+                            "stop:0 #2980b9, stop:1 #3498db)")
+            _title_border = ("qlineargradient(x1:0, y1:0, x2:1, y2:0, "
+                             "stop:0 #74b9ff, stop:1 #0984e3)")
+        title_label.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
-                font-weight: 700; 
-                font-size: 24px; 
-                color: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #2980b9, stop:1 #3498db);
+                font-weight: 700;
+                font-size: 24px;
+                color: {_title_color};
                 padding: 15px 0px 20px 0px;
-                border-bottom: 3px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                    stop:0 #74b9ff, stop:1 #0984e3);
+                border-bottom: 3px solid {_title_border};
                 margin-bottom: 10px;
-            }
+            }}
         """)
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
         
         # Subtitle with modern styling
         subtitle_label = QLabel("Boolean options from the [Options] section:")
-        subtitle_label.setStyleSheet("""
-            QLabel {
+        subtitle_label.setStyleSheet(f"""
+            QLabel {{
                 font-family: 'Segoe UI', sans-serif;
-                font-size: 14px; 
-                color: #6c757d;
+                font-size: 14px;
+                color: {theme.c('text_gray')};
                 font-weight: 400;
                 margin: 0px 0px 15px 0px;
                 line-height: 1.4;
-            }
+            }}
         """)
         main_layout.addWidget(subtitle_label)
         
         # Scrollable area for options with modern styling
         scroll_area = QScrollArea()
-        scroll_area.setStyleSheet("""
-            QScrollArea {
-                border: 1px solid #e1e5e9;
+        scroll_area.setStyleSheet(f"""
+            QScrollArea {{
+                border: 1px solid {theme.c('border')};
                 border-radius: 12px;
-                background-color: #ffffff;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-            }
-            QScrollBar:vertical {
-                background-color: #f8f9fa;
+                background-color: {theme.c('panel_bg')};
+            }}
+            QScrollBar:vertical {{
+                background-color: {theme.c('surface_bg')};
                 width: 10px;
                 border-radius: 5px;
                 margin: 2px;
-            }
-            QScrollBar::handle:vertical {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+            }}
+            QScrollBar::handle:vertical {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #74b9ff, stop:1 #0984e3);
                 border-radius: 5px;
                 min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #81c3ff, stop:1 #0d7bd6);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 border: none;
                 background: none;
-            }
+            }}
         """)
         
         scroll_widget = QWidget()
-        scroll_widget.setStyleSheet("background-color: #ffffff; border-radius: 12px;")
+        scroll_widget.setStyleSheet(
+            f"background-color: {theme.c('panel_bg')}; border-radius: 12px;")
         self.scroll_layout = QVBoxLayout(scroll_widget)
         self.scroll_layout.setSpacing(1)  # Much closer spacing
         self.scroll_layout.setContentsMargins(15, 15, 15, 15)
@@ -157,7 +164,6 @@ class OptionsWindow(QDialog):
                     border-radius: 12px;
                     padding: 25px;
                     margin: 15px;
-                    box-shadow: 0 4px 12px rgba(255, 234, 167, 0.3);
                 }
             """)
             
@@ -203,65 +209,61 @@ class OptionsWindow(QDialog):
             checkbox = QCheckBox()
             checkbox.setChecked(option_value)
             checkbox.stateChanged.connect(lambda state, name=option_name: self.on_checkbox_changed(name, state))
-            checkbox.setStyleSheet("""
-                QCheckBox {
+            checkbox.setStyleSheet(f"""
+                QCheckBox {{
                     spacing: 12px;
                     font-size: 14px;
                     font-family: 'Segoe UI', sans-serif;
-                    color: #2c3e50;
+                    color: {theme.c('text')};
                     padding: 8px;
                     border-radius: 6px;
-                }
-                QCheckBox:hover {
-                    background-color: #f8f9fa;
-                }
-                QCheckBox::indicator {
+                }}
+                QCheckBox:hover {{
+                    background-color: {theme.c('surface_bg')};
+                }}
+                QCheckBox::indicator {{
                     width: 20px;
                     height: 20px;
                     border-radius: 6px;
-                    border: 2px solid #e1e5e9;
-                    background-color: white;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-                }
-                QCheckBox::indicator:hover {
-                    border-color: #74b9ff;
-                    box-shadow: 0 0 0 3px rgba(116, 185, 255, 0.1);
-                }
-                QCheckBox::indicator:checked {
+                    border: 2px solid {theme.c('border')};
+                    background-color: {theme.c('field_bg')};
+                }}
+                QCheckBox::indicator:hover {{
+                    border-color: {theme.c('btn_hover_border')};
+                }}
+                QCheckBox::indicator:checked {{
                     border-color: #00b894;
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                         stop:0 #00b894, stop:1 #00a085);
                     image: url(data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIiIGhlaWdodD0iOSIgdmlld0JveD0iMCAwIDEyIDkiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxwYXRoIGQ9Ik0xIDQuNUw0LjUgOEwxMSAxIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4K);
-                    box-shadow: 0 4px 8px rgba(0, 184, 148, 0.3);
-                }
-                QCheckBox::indicator:checked:hover {
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, 
+                }}
+                QCheckBox::indicator:checked:hover {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                         stop:0 #17a085, stop:1 #008a75);
-                    box-shadow: 0 0 0 3px rgba(0, 184, 148, 0.2);
-                }
+                }}
             """)
             
             # Create label with improved styling
             label = QLabel(option_name)
-            label.setStyleSheet("""
-                QLabel {
+            label.setStyleSheet(f"""
+                QLabel {{
                     font-family: 'Segoe UI', sans-serif;
                     font-size: 14px;
                     font-weight: 600;
-                    color: #2c3e50;
-                }
+                    color: {theme.c('text')};
+                }}
             """)
             
             # Add row number for easier identification (optional)
             row_label = QLabel(f"{i+1}.")
-            row_label.setStyleSheet("""
-                QLabel {
+            row_label.setStyleSheet(f"""
+                QLabel {{
                     font-family: 'Segoe UI', sans-serif;
                     font-size: 12px;
-                    color: #95a5a6;
+                    color: {theme.c('text_gray')};
                     font-weight: 500;
                     min-width: 25px;
-                }
+                }}
             """)
             
             option_layout.addWidget(row_label)
