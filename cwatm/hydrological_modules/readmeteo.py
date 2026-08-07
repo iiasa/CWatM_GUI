@@ -21,29 +21,53 @@ class readmeteo(object):
     spatial downscaling using WorldClim data, manages temporal interpolation,
     and provides data preprocessing for hydrological calculations.
     
-    **Global variables**
+    Attributes
+    ----------
     
+    model : object
+        Reference to the main CWatM model instance
+    var : object
+        Reference to model variables object containing state variables
+
+   
+
+
+
+
+
+
+
+
+
+    **Global variables**
     ===================================  ==========    ======================================================================  =====
     Variable [self.var]                  Type          Description                                                             Unit 
     ===================================  ==========    ======================================================================  =====
+    stopaftersnow                        Flag          stop run after snow calcualtion -> for snow calibration (AI)            --   
     DtDay                                Array         seconds in a timestep (default=86400)                                   s    
     con_precipitation                    Array         conversion factor for precipitation                                     --   
     con_e                                Array         conversion factor for evaporation                                       --   
     meteo                                Array         store all meteo data in memeory for warm start (eg calibration)         compl
     ETRef                                Array         potential evapotranspiration rate from reference crop                   m    
     Precipitation                        Array         Precipitation (input for the model)                                     m    
-    pet_modus                            Number        Index which ETP approach is used e.g. 1 for Penman-Monteith             bool 
     only_radiation                       Flag          Boolean if only radiation is use for calculation e.g JRC EMO dataset    bool 
+    Psurf                                Array         Instantaneous surface pressure                                          Pa   
+    Rsdl                                 Array         long wave downward surface radiation fluxes                             W m-2
+    huss                                 Array         2 m istantaneous specific humidity[kg / kg] (AI)                        --   
+    EAct                                 Array         Daily vapor pressure                                                    hPa  
+    rhs                                  Array                                                                                 --   
+    useTdew                              Flag                                                                                  --   
+    Tdew                                 Array         calculate Tdew (Magnus Formula) based on FAO56 https://www.fao.org/4/X  --   
+    calc_evapo                           Flag          and missing meteo variables have to be calculated in evapoPot.py (AI)   --   
+    pet_modus                            Number        Index which ETP approach is used e.g. 1 for Penman-Monteith             bool 
+    without_rlds                         Flag                                                                                  --   
     TMin                                 Array         minimum air temperature                                                 K    
     TMax                                 Array         maximum air temperature                                                 K    
     Tavg                                 Array         Input, average air Temperature                                          K    
-    Rsds                                 Array         short wave downward surface radiation fluxes                            W/m2 
-    EAct                                 Array         Daily vapor pressure                                                    hPa  
-    Psurf                                Array         Instantaneous surface pressure                                          Pa   
-    Qair                                 Array         specific humidity                                                       kg/kg
-    Rsdl                                 Array         long wave downward surface radiation fluxes                             W/m2 
-    Wind                                 Array         wind speed                                                              m/s  
+    Rsds                                 Array         short wave downward surface radiation fluxes                            W m-2
+    Wind                                 Array         wind speed                                                              m s-1
     EWRef                                Array         potential evaporation rate from water surface                           m    
+    thermalI                             Array         ThermalIndex. Use to calculate pot. Evaporation with Thornthwaite       deg C
     includeGlaciers                      Flag          Include glaciers                                                        bool 
     meteomapsscale                       Array         if meteo maps have the same extend as the other spatial static maps ->  --   
     meteodown                            Array         if meteo maps should be downscaled                                      --   
@@ -54,11 +78,13 @@ class readmeteo(object):
     tempMaps                             Array         choose between steady state temperature maps for steady state modflow   --   
     evaTMaps                             Array         choose between steady state ETP water maps for steady state modflow or  --   
     eva0Maps                             Array         choose between steady state ETP reference maps for steady state modflo  --   
-    RSDSMaps                             Array         Surface Downwelling Shortwave Radiation                                 w/m2 
-    RSDLMaps                             Array         Surface Downwelling Longwave Radiation                                  W/m2 
+    RSDSMaps                             Array         Surface Downwelling Shortwave Radiation                                 w m-2
+    RSDLMaps                             Array         Surface Downwelling Longwave Radiation                                  W m-2
     glaciermeltMaps                      Array         Melt from glacier                                                       m    
     glacierrainMaps                      Array         Rain on glacier                                                         m    
-    snowmelt_radiation                   Array                                                                                 --   
+    snowmelt_radiation                   Array         use radiation term in snow melt (AI)                                    --   
+    only_radiation_Wm2                   Flag                                                                                  --   
+    WtoMJ                                Array         Conversion factor from [W] to [MJ] for radiation: 86400 * 1E-6          --   
     wc2_tavg                             Array         High resolution WorldClim map for average temperature                   K    
     wc4_tavg                             Array         upscaled to low resolution WorldClim map for average temperature        K    
     wc2_tmin                             Array         High resolution WorldClim map for min temperature                       K    
@@ -67,7 +93,7 @@ class readmeteo(object):
     wc4_tmax                             Array         upscaled to low resolution WorldClim map for max temperature            K    
     wc2_prec                             Array         High resolution WorldClim map for precipitation                         m    
     wc4_prec                             Array         upscaled to low resolution WorldClim map for precipitation              m    
-    xcoarse_prec                         List                                                                                  --   
+    xcoarse_prec                         List          these variables are generated to avoid calculating them at each timest  --   
     ycoarse_prec                         List                                                                                  --   
     xfine_prec                           List                                                                                  --   
     yfine_prec                           List                                                                                  --   
@@ -77,23 +103,14 @@ class readmeteo(object):
     xfine_tavg                           List                                                                                  --   
     yfine_tavg                           List                                                                                  --   
     meshlist_tavg                        List                                                                                  --   
-    prec                                 Array         precipitation in kg m-2s-1 = mm/s (output variable)                     kg m-
-    temp                                 Array         average temperature in Celsius deg                                      Â°C  
-    WtoMJ                                Array         Conversion factor from [W] to [MJ] for radiation: 86400 * 1E-6          --   
     GlacierMelt                          Array         melt from glacier                                                       m    
     GlacierRain                          Array         rain on glacier                                                         m    
+    prec                                 Array         precipitation in kg m-2s-1 = mm/s (output variable)                     kg m-
+    temp                                 Array         average temperature in Celsius deg                                      degC 
+    usepySnowClim                        Flag          Flag to use pySnowClim                                                  --   
     SnowFactor                           Array         Multiplier applied to precipitation that falls as snow                  --   
     ===================================  ==========    ======================================================================  =====
 
-    Attributes
-    ----------
-    
-    model : object
-        Reference to the main CWatM model instance
-    var : object
-        Reference to model variables object containing state variables
-
-   
     """
 
     def __init__(self, model):
@@ -225,6 +242,10 @@ class readmeteo(object):
         self.var.only_radiation = False
         if 'only_radiation' in binding:
             self.var.only_radiation = returnBool('only_radiation')
+
+        self.var.only_radiation_Wm2 = False
+        if 'only_radiation_Wm2' in binding:
+            self.var.only_radiation_Wm2 = returnBool('only_radiation_Wm2')
 
         # for high resolution runs eg 1 arcmin the rlds maps are too coarse
         self.var.without_rlds = False
@@ -778,11 +799,14 @@ class readmeteo(object):
                 # If evaporation is not modified Thornthwaite
                 # because with Priestley-Taylor or Thornthwaite there are no radiation maps
                 if self.var.only_radiation:
-                    # read daily calculated radiation [in KJ/m2/day]
+                    # read daily calculated radiation [in W/m2 or KJ/m2/day to MJ/m2/day]
                     # named here Rsds instead of rds, because use in evaproationPot in the same way as rsds
                     self.var.Rsds = readmeteodata('RGDMaps', dateVar['currDate'], addZeros=True, mapsscale=self.var.meteomapsscale)
-                    self.var.Rsds = self.downscaling2(self.var.Rsds) * 0.000001  # convert from KJ to MJ/m2/day
-                    # but for EMO it is 1e6 instead 1000 it seems it is J instead of KJ
+                    if self.var.only_radiation_Wm2:
+                        self.var.Rsds = self.downscaling2(self.var.Rsds) * self.var.WtoMJ  # convert from W/m2 to MJ/m2/day
+                    else:
+                        self.var.Rsds = self.downscaling2(self.var.Rsds) * 0.000001  # convert from KJ to MJ/m2/day
+
                     # read daily vapor pressure [in hPa]
                     self.var.EAct = readmeteodata('EActMaps', dateVar['currDate'], addZeros=True, mapsscale=self.var.meteomapsscale)
                     self.var.EAct = self.downscaling2(self.var.EAct) * 0.1  # convert from hP to kP

@@ -106,10 +106,11 @@ class _ComparePane(QWidget):
     def __init__(self, with_load=False, with_diffnav=False, with_topdown=True,
                  with_fold=True, show_vscroll=True, lead_spacing=0,
                  diffnav_flush_right=False, on_changed=None, on_focus=None,
-                 on_fold_all=None, on_unfold_all=None, parent=None):
+                 on_fold_all=None, on_unfold_all=None, on_saved=None, parent=None):
         super().__init__(parent)
         self._on_changed = on_changed          # re-diff callback (Load / Save)
         self._on_focus = on_focus              # active-side callback
+        self._on_saved = on_saved              # notify after a successful write(path)
         self.file_path = None
         self.filler_rows = set()               # display rows that are gray padding
 
@@ -257,8 +258,11 @@ class _ComparePane(QWidget):
         if not self.file_path:
             self._on_save_as()
             return
-        if self._write(self.file_path) and self._on_changed:
-            self._on_changed()
+        if self._write(self.file_path):
+            if self._on_changed:
+                self._on_changed()
+            if self._on_saved:
+                self._on_saved(self.file_path)
 
     def _on_save_as(self):
         path, _ = QFileDialog.getSaveFileName(
@@ -271,6 +275,8 @@ class _ComparePane(QWidget):
             self.header.setText(os.path.basename(path))
             if self._on_changed:
                 self._on_changed()
+            if self._on_saved:
+                self._on_saved(path)
 
     def _write(self, path):
         try:
@@ -396,12 +402,14 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
                                  diffnav_flush_right=True,
                                  on_changed=self._recompare, on_focus=self._set_active,
                                  on_fold_all=self._fold_all_both,
-                                 on_unfold_all=self._unfold_all_both)
+                                 on_unfold_all=self._unfold_all_both,
+                                 on_saved=self._on_pane_saved)
         # Right pane: no Fold/Unfold, no Top/Down (driven from the left / synced) - has
         # Load. lead_spacing shifts Load/Save/Save As further to the right of centre.
         self.right = _ComparePane(with_load=True, with_diffnav=False, with_topdown=False,
                                   with_fold=False, show_vscroll=True, lead_spacing=60,
-                                  on_changed=self._recompare, on_focus=self._set_active)
+                                  on_changed=self._recompare, on_focus=self._set_active,
+                                  on_saved=self._on_pane_saved)
         panes.addWidget(self.left, 1)
         panes.addWidget(self.right, 1)
         layout.addLayout(panes, 1)
@@ -661,6 +669,31 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
         except Exception:
             log.debug("preload left failed", exc_info=True)
         self.left.set_source("", None, "(no settings loaded)")
+
+    def _on_pane_saved(self, path):
+        """A pane just saved to ``path``. If that file is the one open in the main
+        settings window, refresh the main window so it shows the saved version
+        (otherwise the main editor keeps showing the pre-save content)."""
+        mw = self._main
+        if mw is None or not path:
+            return
+        try:
+            cur = mw.file_manager.get_current_file_path()
+        except Exception:
+            cur = None
+        if not cur:
+            return
+        try:
+            same = (os.path.normcase(os.path.abspath(cur))
+                    == os.path.normcase(os.path.abspath(path)))
+        except Exception:
+            same = (cur == path)
+        if not same:
+            return
+        try:
+            mw.reload_after_external_save(path)
+        except Exception:
+            log.debug("main-window refresh after compare save failed", exc_info=True)
 
     def load_files(self, left_path, right_path):
         """Load two specific settings files into the two panes and diff them (Run

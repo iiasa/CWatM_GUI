@@ -78,6 +78,7 @@ def open_timeseries(parent=None):
         return
     try:
         win = TimeseriesWindow(path, parent)
+        win.setAttribute(Qt.WA_DeleteOnClose)  # else the parent keeps it alive (report §5.3)
         win.exec()
     except Exception as e:
         import traceback
@@ -232,7 +233,8 @@ class TimeseriesWindow(GeometryMemoryMixin, QDialog):
                 if c.lower().startswith("settingsfile:"):
                     path = c.split(":", 1)[1].strip()
                     if path and os.path.exists(path):
-                        content = open(path, encoding="utf-8", errors="ignore").read()
+                        with open(path, encoding="utf-8", errors="ignore") as _f:
+                            content = _f.read()
                         t = self._title_from_settings_content(content)
                         if t:
                             return t
@@ -451,9 +453,10 @@ class TimeseriesWindow(GeometryMemoryMixin, QDialog):
 
     @staticmethod
     def _lonlat_from_name(name):
-        """Pull (lon, lat) out of a point label like ``lon 16.6084, lat 48.9083``."""
+        """Pull (lon, lat) out of a point label like ``lon 16.6084, lat 48.9083``
+        (or ``x 114481.0, y 6897523.0`` for a projected grid)."""
         s = (name or "").strip().lower()
-        if s.startswith("lon"):
+        if s.startswith("lon") or s.startswith("x "):
             m = re.findall(r'-?\d+\.?\d*', s)
             if len(m) >= 2:
                 return m[0], m[1]

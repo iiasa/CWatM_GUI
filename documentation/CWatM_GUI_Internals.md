@@ -81,6 +81,13 @@ Save) for a `*.ini`.
   Find next (Ctrl+F), **Bookmarks** (Toggle/Next/Previous/Clear — Ctrl+F2/F2/Shift+F2/
   Ctrl+Shift+F2, same as the main window), Next/Previous Diff.
 Themed like the other secondary windows; geometry key `compare_settings`.
+- **Save propagates to the main window**: each pane's Save / Save As reports the
+  written path up via an `on_saved(path)` callback → `_on_pane_saved`. If that path is
+  the file currently open in the **main** settings window, the main window is refreshed
+  from disk (`main_window.reload_after_external_save`) so it shows the saved version
+  instead of the pre-save content — reloaded silently when the main editor is clean,
+  and behind a discard-changes prompt when it has unsaved edits. A Save As to a
+  different path does not touch the main window.
 - **Open two specific files** (used by Run Ledger ▸ Compare settings):
   `open_compare_files(parent, a, b)` → `CompareSettingsWindow.load_files(left, right)`
   reads both paths into the two panes and re-diffs (a missing file loads as empty).
@@ -229,12 +236,27 @@ See `ai.md` for the full plan/history.
   `is_authenticated`, notebook auto-resolve by title containing "cwat"). Lazy-imported
   in `main_window.open_cwatm_ai()` (fast-startup rule — never import notebooklm/httpx
   at module level).
+- **Query-latency shaves** (the answer time is dominated by NotebookLM's server-side
+  generation, which the GUI cannot shorten, but two avoidable round-trips were removed):
+  - **Background pre-warm** — once the session is *confirmed* valid (`_on_auth_result`
+    "ok" on open, or `_auto_on_verify` "ok" after login) the window calls
+    `_warm_worker()` → `NotebookLMWorker.warm()`, which queues a `_WARM` sentinel the
+    run loop turns into a **connect-only** step (no `busy()`, quiet on failure). So the
+    connect + `notebooks.list` + `chat.configure` cost is paid in the background, not on
+    the first question.
+  - **Cached source ids** — `chat.ask(source_ids=None)` re-fetches the whole notebook
+    (`get_source_ids` → `get_raw`, *not* cached in notebooklm 0.7.3) on **every**
+    question. `NotebookLMClientWrapper._prefetch_source_ids()` fetches them once at
+    connect and `ask()` passes `source_ids=self._source_ids`, removing that per-question
+    round-trip (best-effort: an empty/failed fetch falls back to `None` so correctness
+    wins). A shorter **answer length** (the Short/Medium/Long selector) also cuts
+    generation time.
 - **Window** (`src/gui/widgets/notebooklm_window.py`, `NotebookLMWindow` =
   `GeometryMemoryMixin` + non-modal `QDialog`, geometry key `cwatm_ai`, themed like the
   NetCDF window — every colour a `theme.c(token)`): header + a centred login-state line,
   a `QTextBrowser` transcript (You / Gemini / status / error colours), a multi-line
   input (Enter sends, Shift+Enter = newline) + **Send** (blue), and **Login… /
-  Notebook… / Clear / Exit** (Notebook/Clear/Exit grey). **Gemini answers are
+  Choose browser… / Notebook… / Clear / Exit** (all but Login grey). **Gemini answers are
   rendered as markdown** (`markdown-it-py` "gfm-like": bold/lists/tables/code —
   `_render_markdown`), each answer followed by an `<hr>` **separator** before the next
   question; the *Explaining settings line: …* notice (Explain button / phrase) is shown
@@ -263,31 +285,36 @@ See `ai.md` for the full plan/history.
   `_on_worker_error`) it drops the dead worker and **prompts to re-authenticate**
   (`_prompt_reauth` → the Google login window). A transient network/proxy error leaves
   the state unchanged (just a note). `playwright` (pinned) drives that Google-login
-  re-auth path. **Login…** (`QProcess`, source-run) offers a **Google login
-  window** (system Chrome via `--browser chrome`, no download; bundled-Chromium
-  fallback offered on failure) and browser-cookie paths (Firefox works on Windows;
-  Chrome/Edge cookies are app-bound-encrypted and usually cannot be read — precise
-  hints are shown). Reads the session cookie bundle via **`rookiepy`**
-  (`notebooklm-py[cookies]`).
+  re-auth path. **Login…** is now **one click, auto-detect**
+  (`_start_auto_login`): it walks a browser list **Firefox → Chrome → Edge → Opera**
+  (`_auto_try_next`), for each runs `notebooklm login --browser-cookies <browser>`
+  (`QProcess`) and — because a written cookie file does not prove a working session —
+  **verifies each** with a background `_AuthCheckWorker` (`_auto_verify` →
+  `_auto_on_verify`), **stopping at the first browser whose `check_connection()`
+  returns `"ok"`** (transcript shows "Trying Firefox… / Chrome: no valid session… /
+  Logged in via Chrome"). A `"error"` (network/proxy) stops the run and reports it
+  (other browsers can't help); `"auth"`/`"no_session"` moves to the next. If none work
+  (`_auto_login_failed`) it explains why — noting the **Windows app-bound cookie
+  encryption** admin caveat when a Chrome/Edge/Opera decrypt error was seen
+  (`_auto_saw_decrypt`) — and offers the manual picker. **Choose browser…**
+  (`_on_choose_browser`, the former per-browser dialog) is the fallback: pick a
+  specific browser or the interactive **Google login window** (Playwright, source-run;
+  system Chrome via `--browser chrome`, no download; bundled-Chromium fallback offered
+  on failure). Cookies are read via **`rookiepy`** (`notebooklm-py[cookies]`); Firefox
+  is tried first as its store is readable without elevation.
 - **Notebook selection**: `notebooklm/notebook_id` (a bare id or a NotebookLM URL;
   `Notebook…` sets/persists it); if unset the wrapper auto-picks a notebook whose title
   contains "cwat", else the only one, else raises listing the choices.
-- **Settings bridge** (answer ⇄ settings editor): two grey buttons above the input,
-  **→ Settings** and **Explain current line**, each also triggerable by typing a set
-  phrase (e.g. "put this in the settings" / "explain this line" — matched in
-  `_maybe_handle_command`, so genuine questions are not intercepted). **→ Settings**
-  takes the **marked** transcript text; if it names no `[SECTION]` it first **asks
-  NotebookLM which heading the key belongs under** (e.g. `[OPTIONS]`) — via a
-  `_pending_ctx` question whose reply is intercepted in `_on_reply`, the `[...]` parsed
-  out and prepended — then calls `main_window.ai_put_text_in_settings`, which
-  **validates** it as `[SECTION]`/`key = value` (rejects prose), updates existing keys
-  in place / inserts new ones under their section (created if needed) via
-  `set_content_preserving` (one undoable step; Save turns dirty), and **jumps** the
-  editor to that line (`_goto_editor_line` + `reveal_cursor`). The *Explaining settings
-  line: …* / *Placed under […]: …* notices use `_append_label_line` (**bold-blue label
-  + normal-weight body**).
-  **Explain current line** reads `main_window.ai_current_settings_line()` (the editor's
-  cursor line) and asks NotebookLM to explain it. (Phases 2–3 of `ai.md`.)
+- **Settings bridge** (settings editor → answer): one grey **Explain current line**
+  button above the input, also triggerable by typing a set phrase (e.g. "explain this
+  line" — matched in `_maybe_handle_command`, so genuine questions are not intercepted).
+  It reads `main_window.ai_current_settings_line()` (the editor's cursor line, or the
+  selection) and asks NotebookLM to explain it; the *Explaining settings line: …* notice
+  uses `_append_label_line` (**bold-blue label + normal-weight body**). (The former
+  **→ Settings** button and its answer→settings insertion machinery —
+  `_cmd_put_in_settings`/`_do_put_in_settings`, the `_pending_ctx` section lookup, the
+  "put this in the settings" phrases, and `main_window.ai_put_text_in_settings` +
+  `_parse_settings_block`/`_apply_settings_entries` — were **removed**.)
 
 ## Data Visualization internals
 

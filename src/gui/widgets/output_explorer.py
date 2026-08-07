@@ -254,12 +254,22 @@ class OutputExplorerWindow(GeometryMemoryMixin, QDialog):
 
     def _open_timeseries(self, path, parent):
         from src.gui.widgets.analysis_timeseries import TimeseriesWindow
-        TimeseriesWindow(path, parent or self).exec()
+        self._exec_viewer(TimeseriesWindow(path, parent or self))
 
     def _open_netcdf(self, path, parent):
         from src.gui.widgets.analysis_netcdf import NetcdfWindow
-        NetcdfWindow(path, parent or self).exec()
+        self._exec_viewer(NetcdfWindow(path, parent or self))
 
     def _open_watercycle(self, path, parent):
         from src.gui.widgets.analysis_watercycle import WatercycleWindow
-        WatercycleWindow(path, parent or self).exec()
+        self._exec_viewer(WatercycleWindow(path, parent or self))
+
+    @staticmethod
+    def _exec_viewer(win):
+        """Run a viewer dialog modally and let it destroy itself on close.
+
+        Without WA_DeleteOnClose the Qt parent keeps every viewer ever opened from
+        this tree alive - each holding its frame list, caches and QWebEngine page -
+        until the main window closes (report §5.3)."""
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        win.exec()

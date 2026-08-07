@@ -180,7 +180,10 @@ hiddenimports = rasterio_hiddenimports + xarray_hiddenimports + cwatm_hiddenimpo
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
-    'py_splash',
+    # NOTE: the PyInstaller runtime module is 'pyi_splash' - this used to read
+    # 'py_splash', which silently collected nothing (the splash worked anyway
+    # because Splash(...) below injects pyi_splash itself). See performance_report §7.3.
+    'pyi_splash',
     'numpy',
     'pandas',
     'scipy',
@@ -200,7 +203,7 @@ hiddenimports = rasterio_hiddenimports + xarray_hiddenimports + cwatm_hiddenimpo
     'ctypes',
     'warnings',
     'decimal',
-    'contextmanager',
+    'contextlib',
     're',
     'glob',
     'sys',

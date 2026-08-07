@@ -48,11 +48,20 @@ class LineNumberGutter(QWidget):
         offset = editor.contentOffset()
         height = self.height()
         while block.isValid():
+            if not block.isVisible():
+                # A folded block has ZERO bounding height, so it never advances y and
+                # the "y > height" break below can never fire on it - after Fold All
+                # that made every paint (i.e. every keystroke and cursor move) query
+                # the layout geometry of every hidden block to the end of the document.
+                # Hidden blocks were never yielded anyway, so skip them before paying
+                # for blockBoundingGeometry (report §4.1).
+                block = block.next()
+                continue
             geo = editor.blockBoundingGeometry(block).translated(offset)
             y = geo.top() + top
             if y > height:
                 break
-            if block.isVisible() and geo.bottom() + top >= 0:
+            if geo.bottom() + top >= 0:
                 yield block, y, geo.height()
             block = block.next()
 

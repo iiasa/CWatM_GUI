@@ -559,7 +559,11 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
                 self._set_cell(row, self._status_col(),
                                f"error: cannot create PathOut ({e})", editable=False)
                 return
-        worker = CWatMProcessWorker(temp, self._mw)
+        # Run from the base settings file's folder (where the scenario .ini is
+        # written too), so relative paths resolve against it - not against the main
+        # window's working dir, and not against the exe/source root.
+        worker = CWatMProcessWorker(temp, self._mw,
+                                    working_dir=self._base_dir or None)
         self._active[row] = dict(worker=worker, temp=temp, started=time.time(),
                                  pathout=resolved, name=self._cell_text(row, 0),
                                  content=content)

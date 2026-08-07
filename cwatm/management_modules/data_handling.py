@@ -266,19 +266,19 @@ def loadsetclone(self, name):
         filename = os.path.splitext(cbinding(name))[0] + '.nc'
         try:
             nf1 = Dataset(filename, 'r')
+
             value = getvariablename(nf1)
+            
+            # sometimes lat and lon gets mixed and lon is variable[0]
+            lon_idx = next(i for i, v in enumerate(nf1.variables) if v in ("lon","x", "X"))
+            lat_idx = next(i for i, v in enumerate(nf1.variables) if v in ("lat", "y", "Y"))
 
-            x1 = list(nf1.variables.values())[1][0]
-            x2 = list(nf1.variables.values())[1][1]
-            xlast = list(nf1.variables.values())[1][-1]
-            #x1 = nf1.variables['lon'][0]
-            #x2 = nf1.variables['lon'][1]
-            #xlast = nf1.variables['lon'][-1]
+            x1 = list(nf1.variables.values())[lon_idx][0]
+            x2 = list(nf1.variables.values())[lon_idx][1]
+            xlast = list(nf1.variables.values())[lon_idx][-1]
 
-            #y1 = nf1.variables['lat'][0]
-            #ylast = nf1.variables['lat'][-1]
-            y1 = list(nf1.variables.values())[0][0]
-            ylast = list(nf1.variables.values())[0][-1]
+            y1 = list(nf1.variables.values())[lat_idx][0]
+            ylast = list(nf1.variables.values())[lat_idx][-1]
 
             # swap to make y1 the biggest number
             if y1 < ylast:  y1, ylast = ylast, y1
@@ -601,6 +601,7 @@ def loadmap(name, lddflag=False,compress = True, local = False, cut = True):
             # load netcdf map but only the rectangle needed
             value = getvariablename(nf1)
 
+            #if (nf1.variables[maskmapAttr['coordy']][0] - nf1.variables[maskmapAttr['coordy']][-1]) < 0:
             if (nf1.variables[maskmapAttr['coordy']][0] - nf1.variables[maskmapAttr['coordy']][-1]) < 0:
                 msg = "Error 202: Latitude is in wrong order\n"
                 raise CWATMFileError(filename, msg)
@@ -862,7 +863,7 @@ def metaNetCDF():
         name1 = glob.glob(os.path.normpath(name))[0]
         nf1 = Dataset(name1, 'r')
         for var in nf1.variables:
-           metadataNCDF[var] = nf1.variables[var].__dict__
+           metadataNCDF[var] =  {k: v for k, v in nf1.variables[var].__dict__.items() if k != '_FillValue'}
         nf1.close()
     except:
         msg = "Error 204: Trying to get metadata from netcdf\n"
@@ -1393,7 +1394,6 @@ def multinetdf(meteomaps, usebuffer,startcheck = 'dateBegin'):
             except:
                 history = ""
             addtoversiondate(filename,history)
-
             datestart = num2date(int(round(nctime[:][0],0)), units=nctime.units,calendar=nctime.calendar)
 
             # sometime daily records have a strange hour to start with -> it is changed to 0:00 to have the same record
@@ -2472,12 +2472,12 @@ def writeIniNetcdf(netfile,varlist, inputlist):
     if latlon:
         if 'lon' in list(metadataNCDF.keys()):
             lon = nf1.createDimension('lon', col)
-            longitude = nf1.createVariable('lon', 'f8', ('lon',))
+            longitude = nf1.createVariable('lon', 'f8', ('lon',), fill_value=1e20)
             for i in metadataNCDF['lon']:
                 exec('%s="%s"' % ("longitude." + i, metadataNCDF['lon'][i]))
         if 'lat' in list(metadataNCDF.keys()):
             lat = nf1.createDimension('lat', row)  # x 950
-            latitude = nf1.createVariable('lat', 'f8', 'lat')
+            latitude = nf1.createVariable('lat', 'f8', 'lat', fill_value=1e20)
             for i in metadataNCDF['lat']:
                 exec('%s="%s"' % ("latitude." + i, metadataNCDF['lat'][i]))
 

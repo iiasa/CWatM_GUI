@@ -19,6 +19,10 @@ from src.gui.utils.gui_log import get_logger
 
 log = get_logger("notebooklm_worker")
 
+# Sentinel queued by warm(): connect the client in the background without asking a
+# question, so the first real question skips the connect + notebook-resolve cost.
+_WARM = object()
+
 
 class NotebookLMWorker(QThread):
     status = Signal(str)          # progress notes ("Connecting…", "Thinking…")
@@ -40,6 +44,12 @@ class NotebookLMWorker(QThread):
     def ask(self, question):
         """Enqueue a question (returns immediately)."""
         self._queue.put(question)
+
+    def warm(self):
+        """Pre-connect the client in the background (no question). Call once the
+        session is confirmed valid so the first real question doesn't pay the
+        connect + notebooks.list + configure round-trips."""
+        self._queue.put(_WARM)
 
     def set_response_length(self, key):
         """Change the desired answer length; applied before the next question
@@ -69,6 +79,17 @@ class NotebookLMWorker(QThread):
             item = self._queue.get()
             if item is None:
                 break
+            if item is _WARM:
+                # Background connect only - no busy() (Send stays live) and a
+                # warm failure is quiet: the real ask will surface any error.
+                if self._client is None and not self._stop:
+                    try:
+                        self.status.emit("Connecting to NotebookLM…")
+                        self._client = self._make_client()
+                        self.status.emit("Ready.")
+                    except Exception:  # noqa: BLE001
+                        log.debug("NotebookLM warm-up failed", exc_info=True)
+                continue
             question = item
             try:
                 self.busy.emit(True)

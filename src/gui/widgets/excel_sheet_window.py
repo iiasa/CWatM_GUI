@@ -339,6 +339,15 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
 
         row = QHBoxLayout()
         row.setSpacing(10)
+        # "Load": open ANOTHER workbook in this same editor, showing the same sheet
+        # (Crops / Reservoirs) - so a different xlsx than the settings
+        # Excel_settings_file can be inspected without changing the settings.
+        self.load_button = QPushButton("Load")
+        self.load_button.setStyleSheet(_btn)
+        self.load_button.setToolTip("load an Excel file")
+        self.load_button.clicked.connect(self._load_other)
+        row.addWidget(self.load_button)
+
         self.reload_button = QPushButton("Reload")
         self.reload_button.setStyleSheet(_btn)
         self.reload_button.setToolTip("Discard edits and reload the sheet from disk")
@@ -377,13 +386,15 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
 
     # ----------------------------------------------------------------- load
     def _load(self):
+        """Load self.path into the table. Returns True on success - the Load button
+        uses that to fall back to the previously shown workbook."""
         from openpyxl import load_workbook
         try:
             self._wb = load_workbook(self.path)   # keep styles (for colours + save)
         except Exception as e:
             QMessageBox.warning(self, self.sheet_name,
                                 f"Could not open the Excel file:\n{e}")
-            return
+            return False
         if self.release_button is not None:
             self.release_button.setEnabled(
                 self._release_sheet in self._wb.sheetnames)
@@ -392,7 +403,7 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
                 self, self.sheet_name,
                 f"The workbook has no sheet '{self.sheet_name}'.\n"
                 f"Sheets: {', '.join(self._wb.sheetnames)}")
-            return
+            return False
         self._ws = self._wb[self.sheet_name]
         self.model = ExcelSheetModel(self._ws, self)
         self.table.setModel(self.model)
@@ -405,6 +416,7 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
             self.table.horizontalHeader().setDefaultSectionSize(90)
         self.table.sync_frozen_columns()      # keep the frozen first row aligned
         self.info_label.setText(f"{nrows} rows × {ncols} columns   |   {self.path}")
+        return True
 
     # ----------------------------------------------------------------- save
     def _has_edits(self):
@@ -440,6 +452,35 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
             self.path = path
             self.setWindowTitle(f"{self.sheet_name} — {os.path.basename(path)}")
             self.info_label.setText(f"Saved: {path}")
+
+    def _load_other(self):
+        """Load button: pick another .xlsx and show ITS Crops / Reservoirs sheet in
+        this window. The settings file is untouched - Save then writes to the newly
+        loaded workbook, which is why unsaved edits are confirmed away first."""
+        if self._has_edits():
+            if QMessageBox.question(
+                    self, "Load",
+                    "Discard your edits and load another Excel file?") \
+                    != QMessageBox.Yes:
+                return
+        start = os.path.dirname(self.path) if self.path else ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, f"Load an Excel file ({self.sheet_name} sheet)", start,
+            "Excel files (*.xlsx);;All files (*)")
+        if not path:
+            return
+        previous = self.path
+        self.path = path
+        if self._load():
+            self.setWindowTitle(f"{self.sheet_name} — {os.path.basename(path)}")
+        elif previous and previous != path:
+            # Unreadable file or no such sheet: go back to what was on screen, so
+            # the window never ends up showing one workbook while self.path (what
+            # Save writes to) points at another.
+            self.path = previous
+            self._load()
+            self.setWindowTitle(
+                f"{self.sheet_name} — {os.path.basename(previous)}")
 
     def _reload(self):
         if self._has_edits():

@@ -77,8 +77,14 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self._notebook_id = self._settings.value("notebooklm/notebook_id", "", type=str)
         self._worker = None
         self._login_proc = None
+        # One-click auto-detect login state: walk a browser list, verify each
+        # session, stop at the first that actually works (see _start_auto_login).
+        self._auto_login_active = False
+        self._auto_browsers = []
+        self._auto_index = 0
+        self._auto_saw_decrypt = False
+        self._auto_verifier = None
         self._thinking = False        # a question is in flight (Send → Stop thinking)
-        self._pending_ctx = None      # a pending "→ Settings" section lookup
         # Answer length ("short"/"medium"/"long"); persisted. Medium = NotebookLM
         # default verbosity.
         self._length_key = self._settings.value(
@@ -160,21 +166,14 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self.transcript.setOpenExternalLinks(True)
         layout.addWidget(self.transcript, 1)
 
-        # Settings-bridge actions: insert the marked answer text into the settings
-        # file, or explain the settings editor's current line. (Also triggerable by
-        # typing "put this in the settings" / "explain this line".)
-        self.to_settings_button = QPushButton("→ Settings")
-        self.to_settings_button.setToolTip(
-            "Insert the marked part of the answer into the settings file "
-            "(validated first); then jump to that line")
-        self.to_settings_button.clicked.connect(self._cmd_put_in_settings)
+        # Settings-bridge action: explain the settings editor's current line.
+        # (Also triggerable by typing "explain this line".)
         self.explain_line_button = QPushButton("Explain current line")
         self.explain_line_button.setToolTip(
             "Ask NotebookLM to explain the line the cursor is on in the settings file")
         self.explain_line_button.clicked.connect(self._cmd_explain_line)
         tools_row = QHBoxLayout()
         tools_row.setSpacing(8)
-        tools_row.addWidget(self.to_settings_button)
         tools_row.addWidget(self.explain_line_button)
         tools_row.addStretch()
         layout.addLayout(tools_row)
@@ -196,9 +195,15 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         # Bottom button row
         self.login_button = QPushButton("Login…")
         self.login_button.setToolTip(
-            "Store a Google NotebookLM session once (reads cookies from your "
-            "signed-in browser)")
+            "One click: finds the browser you are signed in to Google with "
+            "(Firefox / Chrome / Edge / Opera) and stores its session")
         self.login_button.clicked.connect(self._on_login)
+        # Fallback: pick a specific browser / the Google login window by hand.
+        self.browser_button = QPushButton("Choose browser…")
+        self.browser_button.setToolTip(
+            "Pick a specific browser to read Google cookies from, or open the "
+            "Google login window (if available)")
+        self.browser_button.clicked.connect(self._on_choose_browser)
         self.notebook_button = QPushButton("Notebook…")
         self.notebook_button.setToolTip(
             "Set which NotebookLM notebook (or its URL) to ask")
@@ -227,6 +232,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
         btn_row.addWidget(self.login_button)
+        btn_row.addWidget(self.browser_button)
         btn_row.addWidget(self.notebook_button)
         btn_row.addSpacing(6)
         btn_row.addWidget(self.length_caption)
@@ -250,11 +256,53 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self.sub_label.setStyleSheet(
             "font-family: 'Segoe UI', sans-serif; font-size: 12px; "
             f"color: {theme.c('text_muted')}; padding: 2px 8px;")
-        self.transcript.setStyleSheet(
-            f"QTextBrowser {{ background-color: {theme.c('out_bg')}; "
-            f"color: {theme.c('out_text')}; border: 1px solid {theme.c('out_border')}; "
-            "border-radius: 8px; padding: 8px; "
-            "font-family: 'Segoe UI', sans-serif; font-size: 13px; }}")
+        # One triple-quoted f-string (do NOT concatenate f-strings with plain strings:
+        # a plain-string "}}" stays two braces and corrupts the QSS). Blue, round-edged
+        # scrollbar matching the main-window settings editor (accent handle, surface_bg
+        # groove) — vertical and horizontal.
+        self.transcript.setStyleSheet(f"""
+            QTextBrowser {{
+                background-color: {theme.c('out_bg')};
+                color: {theme.c('out_text')};
+                border: 1px solid {theme.c('out_border')};
+                border-radius: 8px;
+                padding: 8px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 13px;
+            }}
+            QScrollBar:vertical {{
+                background-color: {theme.c('surface_bg')};
+                width: 18px;
+                border-radius: 7px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {theme.c('accent')};
+                border-radius: 7px;
+                min-height: 28px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {theme.c('menu_sel_bg')};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
+            QScrollBar:horizontal {{
+                background-color: {theme.c('surface_bg')};
+                height: 18px;
+                border-radius: 7px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {theme.c('accent')};
+                border-radius: 7px;
+                min-width: 28px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {theme.c('menu_sel_bg')};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
+        """)
         self.input_box.setStyleSheet(
             f"QPlainTextEdit {{ background-color: {theme.c('field_bg')}; "
             f"color: {theme.c('field_text')}; border: 1px solid {theme.c('field_border')}; "
@@ -272,8 +320,8 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         grey = self._button_style(
             theme.c('btn_top'), theme.c('btn_bottom'), theme.c('btn_hover_top'),
             theme.c('btn_hover_bottom'), theme.c('btn_border'), theme.c('btn_text'))
-        for b in (self.notebook_button, self.clear_button, self.exit_button,
-                  self.to_settings_button, self.explain_line_button):
+        for b in (self.browser_button, self.notebook_button, self.clear_button,
+                  self.exit_button, self.explain_line_button):
             b.setStyleSheet(grey)
         self.length_caption.setStyleSheet(
             "font-family: 'Segoe UI', sans-serif; font-size: 12px; "
@@ -382,6 +430,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         if status == "ok":
             self._auth_verified = True
             self._refresh_login_state()
+            self._warm_worker()   # pre-connect so the first question is faster
         elif status == "auth":
             # Stored session is expired/invalid - show logged-out (red) and offer
             # to re-authenticate right away.
@@ -623,18 +672,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self._worker.ask(question)
 
     # ------------------------------------------------- settings-bridge commands
-    # Exact phrases (normalised) that trigger the two local actions in "Both" mode.
-    _PUT_CMDS = {
-        "put this in the settings", "put this into the settings",
-        "put this in settings", "put this into settings",
-        "put this in the settingsfile", "put this in the settings file",
-        "put in the settings", "put in settings", "put this to the settings",
-        "add this to the settings", "add this to settings",
-        "add this to the settingsfile", "add to settings", "add to the settings",
-        "insert this into the settings", "insert this in the settings",
-        "insert into settings", "copy this to the settings", "copy to settings",
-        "put that in the settings", "add that to the settings",
-    }
+    # Exact phrases (normalised) that trigger the local 'explain this line' action.
     _EXPLAIN_CMDS = {
         "explain this line", "explain me this line", "explain this",
         "explain me this", "explain the current line", "explain current line",
@@ -647,10 +685,6 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
     def _maybe_handle_command(self, text):
         """Return True (and act) if ``text`` is one of the local settings commands."""
         norm = re.sub(r"\s+", " ", text.strip().lower()).rstrip(".!?")
-        if norm in self._PUT_CMDS:
-            self._append_question(text)
-            self._cmd_put_in_settings()
-            return True
         if norm in self._EXPLAIN_CMDS:
             self._append_question(text)
             self._cmd_explain_line()
@@ -660,57 +694,9 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
     def _main_window(self):
         """Walk up to the main window (the object exposing the settings bridge)."""
         w = self.parent()
-        while w is not None and not hasattr(w, "ai_put_text_in_settings"):
+        while w is not None and not hasattr(w, "ai_current_settings_line"):
             w = w.parent() if hasattr(w, "parent") else None
         return w
-
-    def _marked_transcript_text(self):
-        return self.transcript.textCursor().selectedText().replace(
-            " ", "\n").strip()
-
-    def _cmd_put_in_settings(self):
-        mw = self._main_window()
-        if mw is None:
-            self._append_error("The settings editor is not available.")
-            return
-        marked = self._marked_transcript_text()
-        if not marked:
-            self._append_status(
-                "First mark (select) the part of the answer to insert, then use "
-                "'→ Settings' or say 'put this in the settings'.")
-            return
-        # If the marked block already names a [SECTION], insert there directly.
-        # Otherwise ask NotebookLM which heading the setting(s) belong under.
-        if re.search(r'(?m)^\s*\[[^\]]+\]\s*$', marked):
-            self._do_put_in_settings(marked)
-            return
-        question = (
-            "In a CWatM settings (.ini) file, under which section heading do the "
-            "following setting line(s) belong? Reply with ONLY the section name in "
-            "square brackets, e.g. [OPTIONS]. Setting(s):\n" + marked)
-        self._pending_ctx = {"marked": marked, "question": question}
-        self._append_label_line(
-            "Finding the best section for:", marked.replace("\n", " / "))
-        self._submit_question(question, echo=False)
-
-    def _do_put_in_settings(self, marked, section=None):
-        """Insert ``marked`` into the settings editor and report the result."""
-        mw = self._main_window()
-        if mw is None:
-            self._append_error("The settings editor is not available.")
-            return
-        try:
-            ok, msg = mw.ai_put_text_in_settings(marked)
-        except Exception as e:  # noqa: BLE001
-            log.warning("put-in-settings failed", exc_info=True)
-            self._append_error(f"Could not insert into the settings file: {e}")
-            return
-        if ok and section:
-            self._append_label_line(f"Placed under [{section}]:", msg)
-        elif ok:
-            self._append_status(msg)
-        else:
-            self._append_error(msg)
 
     def _cmd_explain_line(self):
         mw = self._main_window()
@@ -745,6 +731,18 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self._worker.busy.connect(self._on_busy)
         self._worker.start()
 
+    def _warm_worker(self):
+        """Pre-connect the NotebookLM worker in the background (once the session is
+        confirmed valid) so the first question skips the connect round-trips.
+        No-op while a question is in flight or an auto-login is running."""
+        if self._thinking or self._auto_login_active:
+            return
+        try:
+            self._ensure_worker()
+            self._worker.warm()
+        except Exception:
+            log.debug("worker warm-up failed", exc_info=True)
+
     def _reset_worker(self):
         """Drop the worker so the next question reconnects (after login/notebook
         change). Safe to call when there is no worker."""
@@ -757,26 +755,9 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
                 log.debug("worker stop failed", exc_info=True)
 
     def _on_reply(self, question, answer):
-        # A pending "→ Settings" section lookup: use the answer to pick the heading
-        # and insert there, instead of showing the raw answer.
-        ctx = self._pending_ctx
-        if ctx and question == ctx.get("question"):
-            self._pending_ctx = None
-            m = re.search(r'\[([^\]]+)\]', answer or "")
-            if m:
-                section = m.group(1).strip()
-                augmented = f"[{section}]\n" + ctx["marked"]
-                self._do_put_in_settings(augmented, section=section)
-            else:
-                self._append_status(
-                    "NotebookLM did not return a section — inserting at the end.")
-                self._do_put_in_settings(ctx["marked"])
-            return
         self._append_answer(answer or "(no answer returned)")
 
     def _on_worker_error(self, msg):
-        # A failed request cancels a pending section lookup so it can't mis-fire.
-        self._pending_ctx = None
         self._append_error(msg)
         # If the failure is an expired/invalid session, flip to the logged-out (red)
         # state and offer to re-authenticate.
@@ -848,11 +829,15 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
             return False
 
     def _on_login(self):
-        if self._login_proc is not None:
+        """One-click login: auto-detect the browser you are signed in to Google
+        with. Tries Firefox → Chrome → Edge → Opera, verifying each session, and
+        stops at the first that actually works. The old per-browser picker is the
+        'Choose browser…' fallback (``_on_choose_browser``)."""
+        if self._login_proc is not None or self._auto_login_active:
             QMessageBox.information(self, "Login", "A login is already running.")
             return
         # Already signed in? Re-login is unnecessary - offer to skip it.
-        if self._is_authenticated():
+        if self._is_authenticated() and self._auth_verified is not False:
             resp = QMessageBox.question(
                 self, "Login",
                 "You already have a working NotebookLM session - you can ask "
@@ -860,6 +845,121 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if resp != QMessageBox.Yes:
                 return
+        self._start_auto_login()
+
+    # ------------------------------------------------------ auto-detect login
+    def _start_auto_login(self):
+        """Begin the one-click browser auto-detect sequence."""
+        self._auto_login_active = True
+        self._auto_saw_decrypt = False
+        # Firefox first: its cookie store is readable without elevation, so it is
+        # the most likely to succeed on Windows. Chromium browsers follow.
+        self._auto_browsers = ["firefox", "chrome", "edge", "opera"]
+        self._auto_index = 0
+        self._append_status("Looking for a signed-in Google session in your browsers…")
+        self._auto_try_next()
+
+    def _auto_try_next(self):
+        """Attempt the next browser in the list, or finish if none are left."""
+        if self._auto_index >= len(self._auto_browsers):
+            self._auto_login_failed()
+            return
+        browser = self._auto_browsers[self._auto_index]
+        self._append_status(f"Trying {browser.capitalize()}…")
+        self._run_login_process(["login", "--browser-cookies", browser])
+
+    def _auto_after_login(self, exit_code, out):
+        """Handle a browser-cookie login process that finished during auto-detect."""
+        browser = self._auto_browsers[self._auto_index].capitalize()
+        low = out.lower()
+        # rookiepy missing is fatal for *every* browser path - stop the whole run.
+        if "rookiepy is not installed" in out or "no module named 'rookiepy'" in low:
+            self._auto_login_active = False
+            self._append_error(
+                "Reading browser cookies needs the 'rookiepy' package, which is "
+                "not installed. Install it once with:\n"
+                "    pip install rookiepy\n"
+                "(or  pip install \"notebooklm-py[cookies]\" ), then try Login again.")
+            self._refresh_login_state()
+            return
+        # Windows Chrome/Edge/Opera app-bound cookie encryption - note it so the
+        # final message can point at 'Run as administrator' / Firefox.
+        if ("could not decrypt" in low or "decrypt" in low or "app-bound" in low
+                or "appbound" in low or "as admin" in low):
+            self._auto_saw_decrypt = True
+        # This browser produced a session file - verify it really works before
+        # declaring success (cookies may exist but not authenticate NotebookLM).
+        if exit_code == 0 and self._is_authenticated():
+            self._append_status(f"Found a {browser} session — verifying…")
+            self._auto_verify()
+            return
+        # No usable session from this browser - move on.
+        self._auto_index += 1
+        self._auto_try_next()
+
+    def _auto_verify(self):
+        """Verify the just-stored session against NotebookLM (off the GUI thread)."""
+        self._auto_verifier = _AuthCheckWorker(parent=self)
+        self._auto_verifier.result.connect(self._auto_on_verify)
+        self._auto_verifier.finished.connect(
+            lambda: setattr(self, "_auto_verifier", None))
+        self._auto_verifier.start()
+
+    def _auto_on_verify(self, status, message):
+        browser = self._auto_browsers[self._auto_index].capitalize()
+        if status == "ok":
+            self._auto_login_active = False
+            self._append_status(f"Logged in via {browser}.")
+            self._auth_verified = True
+            self._refresh_login_state()
+            self._reset_worker()      # drop any stale worker…
+            self._warm_worker()       # …and pre-connect with the fresh session
+            return
+        if status == "error":
+            # Reached the server but it failed (network/proxy) - trying other
+            # browsers cannot help, so stop and report it.
+            self._auto_login_active = False
+            self._append_error(message)
+            self._refresh_login_state()
+            return
+        # "auth" / "no_session": these cookies don't authenticate - try the next.
+        self._append_status(f"{browser}: no valid NotebookLM session.")
+        self._auto_index += 1
+        self._auto_try_next()
+
+    def _auto_login_failed(self):
+        """No browser yielded a working session - explain and offer the picker."""
+        self._auto_login_active = False
+        self._refresh_login_state()
+        if self._auto_saw_decrypt:
+            self._append_error(
+                "Found Chrome / Edge / Opera but Windows encrypts their cookie "
+                "store (app-bound encryption), so CWatM cannot read it. Either "
+                "right-click CWatM and 'Run as administrator' and try Login again, "
+                "or sign in to Google in Firefox (its cookies are readable without "
+                "elevation).")
+        else:
+            self._append_error(
+                "Could not find a signed-in Google session in Firefox, Chrome, "
+                "Edge or Opera. Sign in to Google in one of them, then click Login "
+                "again.")
+        # Offer the manual picker (individual browsers / Google login window).
+        resp = QMessageBox.question(
+            self, "Login",
+            "Automatic login could not find a working session.\n\n"
+            "Choose a browser or the Google login window manually?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if resp == QMessageBox.Yes:
+            self._on_choose_browser()
+
+    # ---------------------------------------------------- manual browser picker
+    def _on_choose_browser(self):
+        """The explicit per-browser login dialog (Login…'s 'Choose browser…'
+        fallback): pick a specific browser to read cookies from, or open the
+        interactive Google login window."""
+        if self._login_proc is not None or self._auto_login_active:
+            QMessageBox.information(self, "Login", "A login is already running.")
+            return
         # The interactive Google window needs Playwright (source only). The
         # browser-cookie options only need rookiepy, which IS bundled, so they work
         # from the frozen exe too (the login command runs via the exe's own
@@ -970,8 +1070,15 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
     def _on_login_finished(self, exit_code):
         self._login_proc = None
         self.login_button.setEnabled(True)
-        self._refresh_login_state()   # recolour Login blue/red by the new state
         out = getattr(self, "_login_output", "")
+
+        # One-click auto-detect: this is one browser in the sequence - hand it to
+        # the auto handler (which chains to the next browser or verifies success).
+        if self._auto_login_active:
+            self._auto_after_login(exit_code, out)
+            return
+
+        self._refresh_login_state()   # recolour Login blue/red by the new state
 
         # Step 1 of the Google-login path: a Chromium download just finished.
         if getattr(self, "_login_is_chromium_install", False):
@@ -1065,12 +1172,14 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self.transcript.clear()
 
     def _stop_auth_check(self):
-        w, self._auth_checker = self._auth_checker, None
-        if w is not None:
-            try:
-                w.wait(3000)
-            except Exception:
-                log.debug("auth checker wait failed", exc_info=True)
+        for attr in ("_auth_checker", "_auto_verifier"):
+            w = getattr(self, attr, None)
+            setattr(self, attr, None)
+            if w is not None:
+                try:
+                    w.wait(3000)
+                except Exception:
+                    log.debug("auth checker wait failed", exc_info=True)
 
     def closeEvent(self, event):
         self._save_state()      # keep transcript + history for next open

@@ -202,8 +202,11 @@ class HiddenRunWindow(QDialog):
         self._append_output(
             "\n=== Running: %s ===\n" % self._settings_path, False)
 
+        # Independent of the main window (incl. its File > Change Working Dir):
+        # relative paths in THIS settings file resolve against ITS own folder.
         self._worker = CWatMProcessWorker(
-            self._settings_path, self, output_sink=self._append_output)
+            self._settings_path, self, output_sink=self._append_output,
+            working_dir=self._settings_dir() or None)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
         self._worker.start()

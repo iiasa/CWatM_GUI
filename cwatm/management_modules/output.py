@@ -36,24 +36,6 @@ class outputTssMap(object):
     and progress reporting. It handles various temporal aggregations (daily, monthly,
     annual) and spatial aggregations (point values, catchment averages/sums).
 
-    **Global variables**
-    
-    ===================================  ==========    ======================================================================  =====
-    Variable [self.var]                  Type          Description                                                             Unit 
-    ===================================  ==========    ======================================================================  =====
-    dirUp                                Array         river network in upstream direction                                     --   
-    meteo                                Array         store all meteo data in memeory for warm start (eg calibration)         compl
-    sampleAdresses                       List          outflowpoints as 1D index                                               --   
-    outpoints                            List          output points (Gauges)                                                  --   
-    noOutpoints                          Number        number of output points                                                 --   
-    evalCatch                            Array         indeces of a subbasin in the mask                                       --   
-    catcharea                            Array         catchment area of the subbaSIN                                          m2   
-    netcdfasindex                        Flag          save netcdf file in a compressed way - for splitting runs in several b  bool 
-    firstout                             Number        discharge of the first gauge                                            m3/s 
-    discharge                            Array         Channel discharge                                                       m3/s 
-    cellArea                             Array         Area of cell                                                            m2   
-    ===================================  ==========    ======================================================================  =====
-
     Attributes
     ----------
     var : object
@@ -74,6 +56,37 @@ class outputTssMap(object):
     - Month-end, monthly totals, monthly averages  
     - Annual outputs with various aggregations
     - Simulation-total aggregations
+
+
+
+
+
+
+
+
+
+
+    **Global variables**
+    ===================================  ==========    ======================================================================  =====
+    Variable [self.var]                  Type          Description                                                             Unit 
+    ===================================  ==========    ======================================================================  =====
+    dirUp                                Array         river network in upstream direction                                     --   
+    fracGlacierCover                     Array         Fraction of glacier cover in a grid cell                                %    
+    meteo                                Array         store all meteo data in memeory for warm start (eg calibration)         compl
+    sampleAdresses                       List          outflowpoints as 1D index                                               --   
+    outpoints                            List          output points (Gauges)                                                  --   
+    noOutpoints                          Number        number of output points                                                 --   
+    evalCatch                            Array         indeces of a subbasin in the mask                                       --   
+    catcharea                            Array         catchment area of the subbaSIN                                          m2   
+    watercycle                           List                                                                                  --   
+    netcdfasindex                        Flag          save netcdf file in a compressed way - for splitting runs in several b  bool 
+    elepoint                             Array                                                                                 --   
+    firstout                             Number        discharge of the first gauge                                            m3 s-
+    discharge                            Array         Channel discharge                                                       m3 s-
+    usepySnowClim                        Flag          Flag to use pySnowClim                                                  --   
+    numberSnowLayers                     Array         Number of snow layers (up to 10)                                        --   
+    cellArea                             Array         Area of cell                                                            m2   
+    ===================================  ==========    ======================================================================  =====
 
     """
 
@@ -738,28 +751,15 @@ class outputTssMap(object):
                 if flagCycle:
                     writeFileHeaderWaterCycle(outputFilename, expression)
                     if daymonthyear > 0:
+                        dates = pd.date_range(start=dateVar['dateStart1'], end=dateVar['dateEnd1'], freq="D")
                         # reformat expression: not the best solution
                         # expression: 1: timesteps 2: stations 3: 79 vars eg expression[3][211][0][78]
                         expression[3] = np.array(expression[3]).transpose(1, 0, 2)
-                        # One daily value is collected every timestep of the run,
-                        # INCLUDING the spin-up (the TSS sampling loop is not gated by
-                        # intSpin), so expression[3] holds intEnd-intStart+1 days - more
-                        # than the [dateStart1..dateEnd1] output window when SpinUp >
-                        # StepStart. Anchoring the index to the last collected day
-                        # (dateEnd1) and back-filling for the actual number of collected
-                        # steps gives the right daily dates in every case; the spin-up
-                        # days are then dropped before resampling. (Using a fixed
-                        # date_range(dateStart1..dateEnd1) assumed no spin-up and raised
-                        # a length mismatch, crashing the write after the whole run.)
-                        ncollected = expression[3].shape[1]
-                        alldates = pd.date_range(end=dateVar['dateEnd1'],
-                                                 periods=ncollected, freq="D")
                         totals = []
                         storage = []
 
                         for k in range(len(self.var.sampleAdresses)):
-                            df = pd.DataFrame(expression[3][k], index=alldates)
-                            df = df.loc[dateVar['dateStart1']:]  # drop spin-up days
+                            df = pd.DataFrame(expression[3][k], index=dates)
                             if daymonthyear == 1:
                                 totals.append(df.resample("ME").sum())
                                 storage.append(df.resample("ME").last())

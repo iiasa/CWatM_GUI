@@ -272,7 +272,8 @@ class WatercycleWindow(GeometryMemoryMixin, QDialog):
                 if c.lower().startswith("settingsfile:"):
                     path = c.split(":", 1)[1].strip()
                     if path and os.path.exists(path):
-                        content = open(path, encoding="utf-8", errors="ignore").read()
+                        with open(path, encoding="utf-8", errors="ignore") as _f:
+                            content = _f.read()
                         t = self._title_from_settings_content(content)
                         if t:
                             return t

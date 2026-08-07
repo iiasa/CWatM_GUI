@@ -181,8 +181,12 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
             lats_plot = lat_vals if lat_ascending else lat_vals[::-1]
 
             # Build the frames one timestep at a time from the lazily-read dataset,
-            # tracking zmin/zmax incrementally (no full-copy concatenate). The frame
-            # list itself is released after rendering (see _show_map, report §3.4).
+            # tracking zmin/zmax incrementally (no full-copy concatenate).
+            # NOTE: the frame list is NOT released after rendering - it is held for the
+            # window's lifetime (analysis_netcdf.py reads self.frames on every redraw
+            # and on every click). A stale comment here used to claim otherwise. Up to
+            # _MAX_FRAMES full grids therefore stay resident; see report §5.1 for the
+            # chunked / bbox-subset fix that would change this.
             frames = []
             time_labels = []
             zmin, zmax = math.inf, -math.inf
@@ -197,12 +201,13 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
                 stride = max(1, int(math.ceil(ntime / _MAX_FRAMES)))
                 time_indices = list(range(0, ntime, stride))
                 tvals = ds[time_name].values
-                point_time_labels = [self._fmt_time(tvals[i]) for i in range(ntime)]
+                point_time_labels = self._fmt_time_array(tvals)
                 for i in time_indices:
                     layer = _grid(da.isel({time_name: i})
                                   .transpose(lat_name, lon_name).values)
                     frames.append(layer)
-                    time_labels.append(self._fmt_time(tvals[i]))
+                    # same labels, already built above - index instead of re-formatting
+                    time_labels.append(point_time_labels[i])
                     finite = layer[np.isfinite(layer)]
                     if finite.size:
                         zmin = min(zmin, float(finite.min()))
@@ -246,6 +251,24 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
         except Exception:
             pass
         return str(v)
+
+    @classmethod
+    def _fmt_time_array(cls, tvals):
+        """Labels for a WHOLE time axis at once - same output as _fmt_time per element.
+
+        _fmt_time calls pandas.to_datetime once per value; over a full axis that is
+        ~0.43 s for a 30-year daily file, on the GUI thread, before the map appears.
+        np.datetime_as_string produces the identical 'YYYY-MM-DD' strings vectorised
+        in ~0.03 s (report §5.4). Object / cftime axes have no datetime64 dtype and
+        still take the per-element path.
+        """
+        arr = np.asarray(tvals)
+        try:
+            if np.issubdtype(arr.dtype, np.datetime64):
+                return list(np.datetime_as_string(arr, unit="D"))
+        except Exception:
+            pass
+        return [cls._fmt_time(v) for v in arr]
 
     def _guess_coord(self, ds, names):
         keys = list(ds.coords) + list(ds.variables)
@@ -326,8 +349,8 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
 
     # ----------------------------------------------------------------- UI
     def _point_series(self, lati, loni, full=True):
-        """Read one cell's series lazily from the file (the in-memory frame grids are
-        released after rendering - report §3.4). ``lati`` indexes the ascending
+        """Read one cell's series lazily from the file (re-read rather than taken from
+        the in-memory grids, which only cover the strided map frames). ``lati`` indexes the ascending
         self.lats axis; it is mapped back to the file's latitude order. NaN cells come
         back as None. ``full=True`` reads **every** timestep (Total Timeseries);
         ``full=False`` reads only the strided map-animation frames (Fast Display

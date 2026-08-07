@@ -18,6 +18,7 @@ import sys
 import json
 import base64
 import tempfile
+from collections import OrderedDict
 
 import numpy as np
 
@@ -33,6 +34,11 @@ from src.gui.utils import theme
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("analysis_netcdf")
+
+# Upper bound on the rendered-frame data-URI cache (report §5.2). Each entry is a
+# base64 PNG of one timestep (~30-100 KB), so an unbounded cache grows by a full
+# frame set per colour-scale / log-toggle combination the user plays through.
+_URI_CACHE_MAX = 64
 
 # The shared NetCDF data layer (file reading + point series) and the colour-scale /
 # play-speed tables live in analysis_netcdf_base.
@@ -55,6 +61,7 @@ except Exception as _e:  # pragma: no cover - import guard
 from src.gui.widgets.basin_viewer2 import (
     _B2_PROVIDERS, _B2_DEFAULT_LAYER, _strip_unused_assets, _inline_remote_assets,
 )
+from src.gui.widgets.basin_viewer import grid_is_latlon
 
 
 class _PointSeriesWorker(QThread):
@@ -107,6 +114,10 @@ def open_netcdf(parent=None):
         return
     try:
         win = NetcdfWindow(path, parent)
+        # Parenting transfers ownership to the C++ parent, so the dialog would
+        # outlive exec() and keep its frame list + _uri_cache + QWebEngine page
+        # alive until the main window closes (report §5.3).
+        win.setAttribute(Qt.WA_DeleteOnClose)
         win.exec()
     except Exception as e:
         import traceback
@@ -144,10 +155,18 @@ class NetcdfWindow(NetcdfDataBase):
         _t = max(0.0, min(1.0, _df.get_transparency() / 100.0))
         self._base_opacity = _t               # OSM basemap opacity (the slider)
         self._overlay_opacity = 1.0 - 0.5 * _t  # NetCDF overlay opacity
+        # Projected (non lat/lon) grid, e.g. Norway UTM33 with x/y coordinates:
+        # no OSM basemap (its tiles are lon/lat), map runs in Leaflet CRS.Simple
+        # on the raw x/y, data shown fully opaque on white.
+        self._projected = not grid_is_latlon(self.lats, self.lons)
+        if self._projected:
+            self._base_opacity = 0.0
+            self._overlay_opacity = 1.0
         self._log_scale = True                # logarithmic colour mapping (default)
         self._basemap_key = _B2_DEFAULT_LAYER
         self._lut_cache = {}                  # colorscale name -> (256,3) uint8
-        self._uri_cache = {}                  # (colorscale, log, ti) -> data URI
+        # (colorscale, log, ti) -> data URI, LRU-bounded to _URI_CACHE_MAX entries
+        self._uri_cache = OrderedDict()
         self._map_ready = False
         self._js_queue = []
         self._temp_html = None
@@ -230,9 +249,13 @@ class NetcdfWindow(NetcdfDataBase):
     def _frame_uri(self, ti):
         key = (self._colorscale_name, self._log_scale, ti)
         uri = self._uri_cache.get(key)
-        if uri is None:
-            uri = self._rgba_to_datauri(self._colorize(ti))
-            self._uri_cache[key] = uri
+        if uri is not None:
+            self._uri_cache.move_to_end(key)   # mark as most recently used
+            return uri
+        uri = self._rgba_to_datauri(self._colorize(ti))
+        self._uri_cache[key] = uri
+        while len(self._uri_cache) > _URI_CACHE_MAX:
+            self._uri_cache.popitem(last=False)   # evict the least recently used
         return uri
 
     def _grid_bounds(self):
@@ -362,6 +385,14 @@ class NetcdfWindow(NetcdfDataBase):
             self.basemap_combo.setCurrentIndex(_i)
         self.basemap_combo.currentIndexChanged.connect(self._on_basemap_changed)
         row2.addWidget(self.basemap_combo)
+        if self._projected:
+            # Projected (non lat/lon) grid: there is no OSM basemap to select/fade.
+            note = ("No OpenStreetMap basemap: the grid uses projected x/y "
+                    "coordinates (not lat/lon)")
+            self.basemap_combo.setEnabled(False)
+            self.basemap_combo.setToolTip(note)
+            self.opacity_slider.setEnabled(False)
+            self.opacity_slider.setToolTip(note)
 
         self.log_button = QPushButton("Log scale")
         self.log_button.setStyleSheet(_btn)
@@ -423,8 +454,12 @@ class NetcdfWindow(NetcdfDataBase):
     def _show_map(self):
         west, east, south, north = self._grid_bounds()
         bounds = [[south, west], [north, east]]
+        # Projected grid: Leaflet CRS.Simple treats "lat/lng" as raw y/x, so the
+        # overlay/markers/clicks all keep working on e.g. UTM coordinates; the
+        # (lon/lat-only) OSM basemap is skipped entirely (see _helper_js).
+        crs = "Simple" if self._projected else "EPSG4326"
         m = folium.Map(location=[(south + north) / 2.0, (west + east) / 2.0],
-                       zoom_start=8, crs="EPSG4326", tiles=None,
+                       zoom_start=8, crs=crs, tiles=None,
                        control_scale=True, zoom_control=True)
         ov = folium.raster_layers.ImageOverlay(
             image="https://cwatm.invalid/overlay.png", bounds=bounds,
@@ -520,9 +555,12 @@ class NetcdfWindow(NetcdfDataBase):
     def _helper_js(self, map_var, ov_var, bounds):
         tpl = r"""
         (function(){
-          var MAP=__MAP__; window._map=MAP; window._ov=__OV__;
+          var MAP=__MAP__; var PROJ=__PROJ__;
+          window._map=MAP; window._ov=__OV__;
           window._bounds=__BOUNDS__; window._op=__OP__; window._tile=null;
           window._baseOp=__BASEOP__;
+          if(PROJ){ // CRS.Simple: UTM extents need strongly negative zooms
+            MAP.setMinZoom(-30); MAP.options.zoomSnap=0.25; }
           function pin(color,label){return L.divIcon({className:'',
             html:'<div class="nc-pin" style="background:'+color+'">'
                  +'<span>'+(label||'')+'</span></div>',
@@ -536,6 +574,7 @@ class NetcdfWindow(NetcdfDataBase):
               L.marker([g[0],g[1]],{icon:gpin(String(i+1))}).addTo(window.gaugeGroup)
                .bindTooltip('Gauge '+(i+1));});};
           window.setBasemap=function(layer){
+            if(PROJ)return; // projected x/y grid: no lon/lat basemap
             if(window._tile){MAP.removeLayer(window._tile);}
             window._tile=L.tileLayer.wms('osmtile://wms/service',{layers:layer,
               format:'image/png',version:'1.1.1',transparent:false,maxZoom:19,
@@ -573,6 +612,7 @@ class NetcdfWindow(NetcdfDataBase):
         })();
         """
         return (tpl.replace("__MAP__", map_var)
+                   .replace("__PROJ__", "true" if self._projected else "false")
                    .replace("__OV__", ov_var)
                    .replace("__BOUNDS__", json.dumps(bounds))
                    .replace("__OP__", repr(float(self._overlay_opacity)))
@@ -720,8 +760,12 @@ class NetcdfWindow(NetcdfDataBase):
                 vmax = max(vmax, float(np.abs(fin).max()))
         if vmax == 0.0:
             vmax = 1.0
-        # Save A's state so Clear compare can restore it.
-        self._orig = dict(frames=self.frames, zmin=self.zmin, zmax=self.zmax,
+        # Save A's *view* state so Clear compare can restore it. Deliberately NOT
+        # A's frames: keeping them here meant two full frame lists were live at once
+        # for the whole compare session (400 grids each - GBs on a large grid,
+        # report §5.1). Clear compare re-reads A from disk instead, trading one
+        # file read on a rare action for half the memory.
+        self._orig = dict(zmin=self.zmin, zmax=self.zmax,
                           cs=self._colorscale_name, log=self._log_scale,
                           labels=self.time_labels, header=self.header_label.text(),
                           ti=self._ti)
@@ -743,11 +787,23 @@ class NetcdfWindow(NetcdfDataBase):
         self.compare_button.setText("Compare A−B")
         if not o:
             return
-        self.frames = o["frames"]
-        self.zmin, self.zmax = o["zmin"], o["zmax"]
+        # Re-read A from disk rather than holding a second frame list alive for the
+        # whole compare session (report §5.1). _load also restores A's _point_source,
+        # which _enter_compare had to save/restore explicitly.
+        try:
+            (_v, _lons, _lats, frames, labels,
+             zmin, zmax, _title) = self._load(self.nc_path)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Clear compare",
+                                f"Could not re-read the original file:\n{e}")
+            return
+        self.frames = frames
+        self.zmin, self.zmax = zmin, zmax
+        self.time_labels = labels
         self._colorscale_name = o["cs"]
         self._log_scale = o["log"]
-        self.time_labels = o["labels"]
         self._ti = min(o["ti"], len(self.frames) - 1)
         self._apply_data_swap(o["header"])
 
@@ -819,8 +875,9 @@ class NetcdfWindow(NetcdfDataBase):
         vtxt = "no data" if z is None else (
             display_format.fmt(z) + (f" {self.unit}" if self.unit else ""))
         step = f" | {self.time_labels[self._ti]}" if self.time_labels else ""
+        xl, yl = ("X", "Y") if self._projected else ("Lon", "Lat")
         self.info_label.setText(
-            f"Lon: {display_format.fmt(lonc)} | Lat: {display_format.fmt(latc)} | "
+            f"{xl}: {display_format.fmt(lonc)} | {yl}: {display_format.fmt(latc)} | "
             f"Value: {vtxt}{step}")
 
     # ------------------------------------------------- points / timeseries
@@ -836,7 +893,8 @@ class NetcdfWindow(NetcdfDataBase):
 
     def _point_name(self, pt):
         from src.gui.utils import display_format
-        return f"lon {display_format.fmt(pt[0])}, lat {display_format.fmt(pt[1])}"
+        xl, yl = ("x", "y") if self._projected else ("lon", "lat")
+        return f"{xl} {display_format.fmt(pt[0])}, {yl} {display_format.fmt(pt[1])}"
 
     def _series_for(self, pt, full=True):
         loni = int(np.argmin(np.abs(self.lons - pt[0])))

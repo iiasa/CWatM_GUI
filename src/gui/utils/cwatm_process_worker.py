@@ -26,6 +26,7 @@ import sys
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 from src.gui.utils.gui_log import get_logger
+from src.gui.utils import warning_filters
 
 log = get_logger("cwatm_process_worker")
 
@@ -87,9 +88,14 @@ class CWatMProcessWorker(QObject):
     error = Signal(str)              # error message
     progress = Signal(int)           # progress value 0-100
 
-    def __init__(self, file_path, gui_window=None, output_sink=None):
+    def __init__(self, file_path, gui_window=None, output_sink=None,
+                 working_dir=None):
         super().__init__(gui_window)
         self.file_path = file_path
+        # working_dir: the directory the child process is started in, so relative
+        # paths in the settings file resolve from there (File > Change Working Dir).
+        # None = _model_command's default (the exe/source root).
+        self._working_dir = working_dir
         # output_sink(text, is_error): if given, run output is delivered here instead
         # of being written to sys.stdout / sys.stderr. Used by the Hidden Run windows
         # so each one shows its run in its OWN output box (the default None keeps the
@@ -99,6 +105,12 @@ class CWatMProcessWorker(QObject):
         self._stdout_line = ""  # unterminated stdout line held back for display
         self._stderr_line = ""  # unterminated stderr line held back for display
         self._result = None     # (success, last_dis) from the RESULT marker
+        # Last net for the rasterio x numpy 2.5 shape deprecation: drops those
+        # lines if the child prints them regardless of the filters (a frozen
+        # CWatM_model.exe left over from an older build, a PYTHONWARNINGS the
+        # user set themselves, ...). One per stream - they interleave.
+        self._suppress = {"_stdout_line": warning_filters.LineSuppressor(),
+                          "_stderr_line": warning_filters.LineSuppressor()}
         self._stopped = False   # user pressed Stop - suppress signals
         self._reported = False  # finished/error already emitted
 
@@ -116,9 +128,16 @@ class CWatMProcessWorker(QObject):
     def start(self):
         """Spawn the model child process."""
         program, args, workdir = _model_command(self.file_path)
+        if self._working_dir and os.path.isdir(self._working_dir):
+            workdir = self._working_dir
         env = QProcessEnvironment.systemEnvironment()
         env.insert("PYTHONUNBUFFERED", "1")    # live output through the pipe
         env.insert("PYTHONIOENCODING", "utf-8")
+        # Silence the rasterio x numpy 2.5 shape deprecation from the child's
+        # interpreter start-up (a frozen child ignores this - it applies the
+        # filter itself; _suppress below is the final net for either).
+        env.insert("PYTHONWARNINGS",
+                   warning_filters.export_to_environment(dict(os.environ)))
         self.process.setProcessEnvironment(env)
         self.process.setWorkingDirectory(workdir)
         self.progress.emit(0)
@@ -213,7 +232,10 @@ class CWatMProcessWorker(QObject):
                 lines.append(tail)
             tail = ""
         setattr(self, line_attr, tail)
+        suppress = self._suppress[line_attr]
         for line in lines:
+            if suppress(line):
+                continue
             # A chunk can carry several '\r' progress prints - split them so each
             # becomes its own write (the box coalesces consecutive ones).
             for piece in re.split(r"(?=\r)", line):

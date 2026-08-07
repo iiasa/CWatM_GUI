@@ -47,7 +47,7 @@ from src.gui.utils.gui_log import get_logger
 # Reuse the classic viewer's display-agnostic helpers (marker sources, colour
 # rasters, gauge check plumbing) - they only touch data/fields, not the canvas.
 from src.gui.widgets.basin_viewer import (
-    BasinDataHelpers, BasinViewer, _parse_coord_pairs)
+    BasinDataHelpers, BasinViewer, _parse_coord_pairs, grid_is_latlon)
 
 log = get_logger("basin_viewer2")
 
@@ -216,10 +216,13 @@ def show_basin2(config_content, settings_file, parent=None,
     basin_data, lats, lons = viewer._load_netcdf_data(resolved)
     if basin_data is None:
         return
-    mask_data = viewer._load_mask_data(settings_file, basin_data.shape)
+    # lats/lons let a region MaskMap raster be pasted at its geographic position in
+    # the (often global) ups grid - see BasinViewer._load_mask_data
+    mask_data = viewer._load_mask_data(settings_file, basin_data.shape, lats, lons)
     title = viewer._find_title() or f"Basin: {os.path.basename(resolved)}"
     win = BasinWindow2(basin_data, lats, lons, title, mask_data,
                        settings_file, parent, default_basemap)
+    win.setAttribute(Qt.WA_DeleteOnClose)  # else the parent keeps it alive (report §5.3)
     win.exec()
 
 
@@ -250,6 +253,9 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self.lons = np.asarray(lons)
         self.mask_data = mask_data
         self.settings_file = settings_file
+        # Projected (non lat/lon) grid, e.g. Norway UTM33: no OSM basemap (its
+        # tiles are lon/lat), map runs in Leaflet CRS.Simple on the raw x/y.
+        self._projected = not grid_is_latlon(self.lats, self.lons)
         _keys = {k for _l, k in _B2_PROVIDERS}
         # The Configure-menu default is a Mercator XYZ key (e.g. "standard") that
         # does not apply to the WMS layers here -> fall back to plain OSM.
@@ -260,6 +266,10 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         _t = max(0.0, min(1.0, display_format.get_transparency() / 100.0))
         self._base_opacity = _t               # OSM basemap opacity (slider)
         self._overlay_opacity = 1.0 - 0.5 * _t  # ups.nc/mask overlay opacity
+        if self._projected:
+            # No basemap underneath -> show the data fully opaque on white.
+            self._base_opacity = 0.0
+            self._overlay_opacity = 1.0
         self.show_mask = True
         self._blue_pt = self._mask_start_point()
         # Working list of gauges (lon, lat) shown as numbered red pins; seeded from the
@@ -272,7 +282,8 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self._map_ready = False
         self._js_queue = []
 
-        self.setWindowTitle(f"🗺️ {title} — Basin (folium / EPSG:4326)")
+        crs_txt = "projected x/y" if self._projected else "folium / EPSG:4326"
+        self.setWindowTitle(f"🗺️ {title} — Basin ({crs_txt})")
         self.setModal(True)
         self.setWindowFlags(Qt.Dialog | Qt.WindowMinMaxButtonsHint
                             | Qt.WindowCloseButtonHint)
@@ -416,6 +427,14 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self.opacity_slider.setValue(int(self._base_opacity * 100))
         self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
         row2.addWidget(self.opacity_slider, 1)
+        if self._projected:
+            # Projected (non lat/lon) grid: there is no OSM basemap to select/fade.
+            note = ("No OpenStreetMap basemap: the grid uses projected x/y "
+                    "coordinates (not lat/lon)")
+            self.basemap_combo.setEnabled(False)
+            self.basemap_combo.setToolTip(note)
+            self.opacity_slider.setEnabled(False)
+            self.opacity_slider.setToolTip(note)
         lay.addLayout(row2)
 
     # ------------------------------------------------------------ map build
@@ -462,7 +481,11 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         # Leaflet lat/lon bounds: [[south, west], [north, east]]
         bounds = [[south, west], [north, east]]
 
-        m = folium.Map(location=[clat, clon], zoom_start=8, crs="EPSG4326",
+        # Projected grid: Leaflet CRS.Simple treats "lat/lng" as raw y/x, so the
+        # overlays/markers/clicks all keep working on e.g. UTM coordinates; the
+        # (lon/lat-only) OSM basemap is skipped entirely (see _helper_js).
+        crs = "Simple" if self._projected else "EPSG4326"
+        m = folium.Map(location=[clat, clon], zoom_start=8, crs=crs,
                        tiles=None, control_scale=True, zoom_control=True)
         # No folium tile layer: the WMS basemap is created in the helper JS
         # (setBasemap) so both the initial map and a basemap switch share one path.
@@ -542,11 +565,14 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
                             json.dumps(self._ups_text(*self._blue_pt))))
         tpl = r"""
         (function(){
-          var MAP=__MAP__;
+          var MAP=__MAP__; var PROJ=__PROJ__;
           window._map=MAP; window._ups=__UPS__; window._mask=__MASK__;
           window._tile=null; window._bounds=__BOUNDS__; window._op=__OP__;
           window._baseOp=__BASEOP__;
           window.maskVisible=true; var DEC=__DEC__;
+          if(PROJ){ // CRS.Simple: 1 zoom unit halves the scale; UTM extents of
+            // ~1e5 m need strongly negative zooms for fitBounds to work.
+            MAP.setMinZoom(-30); MAP.options.zoomSnap=0.25; }
           function pin(color,letter){return L.divIcon({className:'',
             html:'<div class="cwatm-pin" style="background:'+color+'">'
                  +'<span>'+(letter||'')+'</span></div>',
@@ -587,6 +613,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
                interactive:false}).addTo(MAP);}
             window._mask.setOpacity(window.maskVisible?window._op:0);};
           window.setBasemap=function(layer){
+            if(PROJ)return; // projected x/y grid: no lon/lat basemap
             if(window._tile){MAP.removeLayer(window._tile);}
             window._tile=L.tileLayer.wms('osmtile://wms/service',{layers:layer,
               format:'image/png',version:'1.1.1',transparent:false,maxZoom:19,
@@ -613,17 +640,22 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
           MAP.on('click',function(e){
             document.title='B2 '+e.latlng.lng+'|'+e.latlng.lat;});
           window.onerror=function(msg){document.title='B2ERR '+msg;return false;};
-          setTimeout(function(){MAP.invalidateSize();MAP.fitBounds(window._bounds);
+          setTimeout(function(){MAP.invalidateSize();MAP.fitBounds(__INITBOUNDS__);
             if(window._tile&&window._tile.bringToBack)window._tile.bringToBack();},300);
           window.setRedAll(__GAUGES__);
           __BLUEINIT__
         })();
         """
+        # Open zoomed to the mask (raster mask or a basin generated from MaskMap
+        # coordinates); only without a mask does the whole ups.nc grid fill the view.
+        init_bounds = self._mask_latlon_bounds() or bounds
         return (tpl.replace("__MAP__", map_var)
+                   .replace("__PROJ__", "true" if self._projected else "false")
                    .replace("__UPS__", ups_var)
                    .replace("__MASK__", mask_var)
                    .replace("__BASEKEY__", json.dumps(self._basemap_key))
                    .replace("__BOUNDS__", json.dumps(bounds))
+                   .replace("__INITBOUNDS__", json.dumps(init_bounds))
                    .replace("__OP__", repr(float(self._overlay_opacity)))
                    .replace("__BASEOP__", repr(float(self._base_opacity)))
                    .replace("__DEC__", str(int(dec)))
@@ -721,7 +753,14 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self.last_clicked_lon, self.last_clicked_lat = lon, lat
         self._js("if(window.setBlack) setBlack(%f,%f,%s);"
                  % (lat, lon, json.dumps(self._ups_text(lon, lat))))
-        # Same read-out as the classic viewer (global display decimals)
+        # Same read-out as the classic viewer (global display decimals);
+        # projected grids label the axes X/Y instead of Lon/Lat.
+        if self._projected:
+            coords = (f"Y: {display_format.fmt(lat)}"
+                      f" | X: {display_format.fmt(lon)}")
+        else:
+            coords = (f"Lat: {display_format.fmt(lat)}"
+                      f" | Lon: {display_format.fmt(lon)}")
         try:
             row = int(np.abs(self.lats - lat).argmin())
             col = int(np.abs(self.lons - lon).argmin())
@@ -733,12 +772,9 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
                 inmask = "yes" if np.asarray(self.mask_data)[row, col] == 1 else "no"
             else:
                 inmask = "-"
-            self.info_label.setText(
-                f"Lat: {display_format.fmt(lat)} | Lon: {display_format.fmt(lon)}"
-                f" | Basin area: {area} | Mask: {inmask}")
+            self.info_label.setText(f"{coords} | Basin area: {area} | Mask: {inmask}")
         except Exception:
-            self.info_label.setText(
-                f"Lat: {display_format.fmt(lat)} | Lon: {display_format.fmt(lon)}")
+            self.info_label.setText(coords)
 
     # -------------------------------------------------------------- actions
     def _toggle_mask(self):
@@ -783,18 +819,41 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self.info_label.setText(f"Loaded GeoJSON: {os.path.basename(path)}")
         self._js("if(window.addGeoJson) addGeoJson(%s);" % json.dumps(obj))
 
-    def _zoom_to_mask(self):
+    def _mask_latlon_bounds(self, pad_cells=1.0):
+        """Leaflet bounds [[south, west], [north, east]] of the mask==1 cells,
+        padded by ``pad_cells`` grid cells so the basin does not sit flush against
+        the window edge. None when there is no mask.
+
+        Used both by the "Zoom to Mask" button and for the map's INITIAL view - the
+        mask is what the user came to look at, whether it is a mask raster or a
+        basin generated from a MaskMap coordinate."""
         bbox = self._mask_bbox()
         if bbox is None:
+            return None
+        try:
+            r0, r1, c0, c1 = bbox
+            lats = np.asarray(self.lats, dtype=float)
+            lons = np.asarray(self.lons, dtype=float)
+            south = float(min(lats[r0], lats[r1]))
+            north = float(max(lats[r0], lats[r1]))
+            west = float(min(lons[c0], lons[c1]))
+            east = float(max(lons[c0], lons[c1]))
+            dlat = abs(float(lats[1] - lats[0])) if lats.size > 1 else 0.0
+            dlon = abs(float(lons[1] - lons[0])) if lons.size > 1 else 0.0
+            pad_lat, pad_lon = pad_cells * dlat, pad_cells * dlon
+            return [[south - pad_lat, west - pad_lon],
+                    [north + pad_lat, east + pad_lon]]
+        except Exception:
+            log.debug("mask bounds computation failed", exc_info=True)
+            return None
+
+    def _zoom_to_mask(self):
+        b = self._mask_latlon_bounds()
+        if b is None:
             self.info_label.setText("No mask to zoom to.")
             return
-        r0, r1, c0, c1 = bbox
-        south = float(min(self.lats[r0], self.lats[r1]))
-        north = float(max(self.lats[r0], self.lats[r1]))
-        west = float(min(self.lons[c0], self.lons[c1]))
-        east = float(max(self.lons[c0], self.lons[c1]))
         self._js("if(window.zoomBounds) zoomBounds(%f,%f,%f,%f);"
-                 % (south, west, north, east))
+                 % (b[0][0], b[0][1], b[1][0], b[1][1]))
 
     def _use_coordinates(self):
         """Copy Mask: write the clicked coordinate into the MaskMap box and re-run

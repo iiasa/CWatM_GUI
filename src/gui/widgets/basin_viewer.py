@@ -622,13 +622,81 @@ class BasinViewer:
             print(f"Error loading NetCDF data: {e}", file=sys.stderr)
             return None, None, None
             
-    def _load_mask_data(self, settings_file: str, upsshape):
-        """Load mask data if available."""
+    @staticmethod
+    def _paste_mask_on_ups(mask, transform, upsshape, ups_lats, ups_lons):
+        """Place a region MaskMap raster at its geographic position in the ups grid.
+
+        The offset is found by matching the mask's first cell CENTRE against the
+        ups lat/lon coordinate arrays (both grids are cell-centred and, for a CWatM
+        setup, share the resolution). Returns the mask unchanged when it cannot be
+        placed (no coordinates, different resolution, or no overlap) - callers
+        already guard on a shape mismatch.
+        """
+        try:
+            if ups_lats is None or ups_lons is None or transform is None:
+                return mask
+            lats = np.asarray(ups_lats, dtype=float)
+            lons = np.asarray(ups_lons, dtype=float)
+            if lats.ndim != 1 or lons.ndim != 1 or lats.size < 2 or lons.size < 2:
+                return mask
+            # Resolutions must match (cell-for-cell paste, no resampling)
+            ups_dlon = abs(float(lons[1] - lons[0]))
+            ups_dlat = abs(float(lats[1] - lats[0]))
+            m_dlon, m_dlat = abs(float(transform.a)), abs(float(transform.e))
+            if (abs(m_dlon - ups_dlon) > ups_dlon * 0.01
+                    or abs(m_dlat - ups_dlat) > ups_dlat * 0.01):
+                print("MaskMap resolution differs from ups.nc - mask not aligned",
+                      file=sys.stderr)
+                return mask
+            # Longitude always runs west->east (both grids), so columns need no
+            # direction handling. LATITUDE does vary: north->south is the common
+            # NetCDF/raster layout, but south->north occurs too (_orient flips the
+            # overlay for it). Pasting rows against the ups grid's direction would
+            # land the mask mirrored and a full mask-height off the basin, silently.
+            mask_n_to_s = float(transform.e) < 0        # raster row 0 is the north edge
+            ups_n_to_s = float(lats[0]) > float(lats[-1])
+            if mask_n_to_s != ups_n_to_s:
+                mask = mask[::-1]                       # flip rows to the ups direction
+            h, w = mask.shape
+            # Geographic centre of the row that is now first, and of column 0
+            first_row = 0 if mask_n_to_s == ups_n_to_s else h - 1
+            lat0 = float(transform.f) + float(transform.e) * (first_row + 0.5)
+            lon0 = float(transform.c) + float(transform.a) / 2.0
+            col0 = int(np.abs(lons - lon0).argmin())
+            row0 = int(np.abs(lats - lat0).argmin())
+            big = np.zeros(tuple(upsshape), dtype=mask.dtype)
+            # Clip to the ups grid in case the mask overhangs an edge
+            r1, c1 = min(row0 + h, big.shape[0]), min(col0 + w, big.shape[1])
+            if r1 <= row0 or c1 <= col0:
+                print("MaskMap lies outside the ups.nc grid - mask not aligned",
+                      file=sys.stderr)
+                return mask
+            big[row0:r1, col0:c1] = mask[:r1 - row0, :c1 - col0]
+            return big
+        except Exception as e:
+            print(f"Could not align MaskMap to the ups grid: {e}", file=sys.stderr)
+            return mask
+
+    def _load_mask_data(self, settings_file: str, upsshape,
+                        ups_lats=None, ups_lons=None):
+        """Load mask data if available, always returned on the ups.nc grid.
+
+        A MaskMap raster (.map/.tif/.nc) usually covers only the modelled region,
+        while ups.nc is often the full global grid - e.g. rhine5min.map is 68x77
+        against a 1800x4320 ups. Such a mask must be PASTED at its geographic
+        position in the ups grid (the coordinate branch below already does this
+        with mainwarm's x/y offsets); returned raw, its indices mean nothing on the
+        ups grid, which left the mask overlay invisible (shape guard in
+        _build_mask_rgba), the blue marker at the GLOBAL ups maximum instead of the
+        basin outlet, and "zoom to mask" pointing at the wrong place.
+        Pass ups_lats/ups_lons to enable the alignment; without them (or if the
+        resolutions differ) the raster is returned as read, as before.
+        """
         try:
             mask_path = self._find_mask_path()
             if not mask_path:
                 return None
-                
+
             coord = mask_path.split()
             if len(coord) < 2:
                 # File path - load with rasterio
@@ -636,7 +704,12 @@ class BasinViewer:
                 if resolved_path and os.path.exists(resolved_path):
                     with rasterio.open(resolved_path) as src:
                         mask = src.read(1)
-                    return np.where(mask > 1, 0, 1)
+                        transform = src.transform
+                    mask = np.where(mask > 1, 0, 1)
+                    if mask.shape != tuple(upsshape):
+                        mask = self._paste_mask_on_ups(
+                            mask, transform, upsshape, ups_lats, ups_lons)
+                    return mask
                 else:
                     print(f"Mask file not found: {resolved_path}", file=sys.stderr)
                     return None
@@ -687,6 +760,26 @@ class BasinViewer:
         except Exception as e:
             print(f"Error loading mask data: {e}", file=sys.stderr)
             return None
+
+
+def grid_is_latlon(lats, lons):
+    """True if the coordinate arrays look like geographic lon/lat (EPSG:4326).
+
+    Projected grids (e.g. Norway UTM33 in metres, with y around 6.9e6) have
+    values far outside the +-90 / +-360 degree ranges; those are shown without
+    an OSM basemap (Leaflet ``CRS.Simple``) by the map viewers."""
+    try:
+        la = np.asarray(lats, dtype=float)
+        lo = np.asarray(lons, dtype=float)
+        if la.size == 0 or lo.size == 0:
+            return True
+        lamax = float(np.nanmax(np.abs(la)))
+        lomax = float(np.nanmax(np.abs(lo)))
+        if not (np.isfinite(lamax) and np.isfinite(lomax)):
+            return True  # unusable coords -> keep the normal lat/lon path
+        return lamax <= 90.0001 and lomax <= 360.0001
+    except Exception:
+        return True
 
 
 def _parse_gauges(config_content: str):
@@ -776,7 +869,8 @@ def build_mask_context(settings_file: str, config_content: str):
             lons = np.asarray(lons)
             if lats.ndim != 1 or lons.ndim != 1:
                 return None
-            mask = viewer._load_mask_data(settings_file, basin_data.shape)
+            mask = viewer._load_mask_data(settings_file, basin_data.shape,
+                                          lats, lons)
             if mask is None:
                 return None
             return {

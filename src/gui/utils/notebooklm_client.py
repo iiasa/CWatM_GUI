@@ -144,6 +144,12 @@ class NotebookLMClientWrapper:
         self._current_future = None  # the in-flight future (for cross-thread cancel)
         self._conversation_id = None
         self._resolved_title = None
+        # Notebook source ids, fetched once at connect and passed to every ask.
+        # Without this, chat.ask() re-fetches the whole notebook (a network
+        # round-trip) on *every* question because source_ids defaults to None
+        # (notebooklm 0.7.3, _chat/api.py). A CWatM notebook's sources don't
+        # change during a session, so caching them is safe.
+        self._source_ids = None
         # Desired vs. already-applied answer length ("short"/"medium"/"long").
         self._response_length = response_length
         self._applied_length = None
@@ -202,7 +208,27 @@ class NotebookLMClientWrapper:
 
         if not self._notebook_id:
             self._notebook_id = self._resolve_notebook()
+        self._prefetch_source_ids()
         self._apply_response_length()
+
+    def _prefetch_source_ids(self):
+        """Fetch the notebook's source ids once so ``ask`` doesn't re-fetch the
+        whole notebook every question. Best-effort: on any failure leave it None
+        and let the library fetch per-ask (correctness over speed)."""
+        if not self._notebook_id:
+            return
+
+        async def _get():
+            return await self._client.notebooks.get_source_ids(self._notebook_id)
+        try:
+            ids = self._run(_get())
+        except Exception:
+            log.debug("source-id prefetch failed", exc_info=True)
+            return
+        # Only cache a *non-empty* list: passing [] to ask() would mean "query no
+        # sources" (the None default is what triggers the auto-fetch), so an empty
+        # result must fall back to None.
+        self._source_ids = list(ids) if ids else None
 
     # ------------------------------------------------------------ answer length
     def set_response_length(self, key):
@@ -270,6 +296,7 @@ class NotebookLMClientWrapper:
         async def _ask():
             return await self._client.chat.ask(
                 self._notebook_id, question,
+                source_ids=self._source_ids,   # cached → no per-ask notebook re-fetch
                 conversation_id=self._conversation_id)
         try:
             result = self._run(_ask())

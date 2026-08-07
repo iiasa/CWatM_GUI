@@ -20,15 +20,30 @@ class groundwater(object):
     This class manages groundwater processes including groundwater flow,
     storage changes, and interactions with surface water systems.
 
-    **Global variables**
+    Attributes
+    ----------
+    var : object
+        Model variables container
+    model : object
+        CWatM model instance
+        
 
+
+
+
+
+
+
+
+
+    **Global variables**
     ===================================  ==========    ======================================================================  =====
     Variable [self.var]                  Type          Description                                                             Unit 
     ===================================  ==========    ======================================================================  =====
     modflow                              Flag          True if modflow_coupling = True in settings file                        bool 
     load_initial                         Flag          Settings initLoad holds initial conditions for variables                bool 
     storGroundwater                      Array         Groundwater storage (non-fossil). This is primarily used when not usin  m    
-    specificYield                        Array         groundwater reservoir parameters (if ModFlow is not used) used to comp  m    
+    specificYield                        Array         Groundwater reservoir parameters (if ModFlow is not used) used to comp  m    
     recessionCoeff                       Array         groundwater storage times this coefficient gives baseflow               frac 
     readAvlStorGroundwater               Array         same as storGroundwater but equal to 0 when inferior to a treshold      m    
     loadInit                             Flag          If true initial conditions are loaded                                   bool 
@@ -38,13 +53,6 @@ class groundwater(object):
     nonFossilGroundwaterAbs              Array         Non-fossil groundwater abstraction. Used primarily without MODFLOW.     m    
     ===================================  ==========    ======================================================================  =====
 
-    Attributes
-    ----------
-    var : object
-        Model variables container
-    model : object
-        CWatM model instance
-        
     """
 
     def __init__(self, model):

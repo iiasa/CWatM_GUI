@@ -157,7 +157,10 @@ class RunControllerMixin:
         # Configure > "Run model in separate process" toggle falls back to the
         # old in-process QThread worker.
         if getattr(self, "_run_subprocess_enabled", True):
-            self.cwatm_worker = CWatMProcessWorker(file_path, self)
+            # Run from the working directory (File > Change Working Dir; by default
+            # the settings file's own folder) so relative paths resolve from there.
+            self.cwatm_worker = CWatMProcessWorker(
+                file_path, self, working_dir=self.working_dir() or None)
         else:
             self.cwatm_worker = CWatMWorker(file_path, ['-lg'], self)
         self.cwatm_worker.finished.connect(self.on_cwatm_finished)
@@ -252,6 +255,33 @@ class RunControllerMixin:
                 fh.close()
             except Exception:
                 log.debug("run-log close failed", exc_info=True)
+
+    def _open_output_file_note(self, label):
+        """Open the output-box log file (append) for a non-run note - e.g. the
+        Check settingsfile summary - so that, when Configure ▸ 'Write output box'
+        is on, whatever is printed via append_to_cwatminfo is also written to the
+        file. Writes the same header block as a run and returns True if a handle
+        was opened (the caller must call _finalize_output_file afterwards).
+
+        No-op (returns False) if a handle is already open (a run is writing the
+        file): append_to_cwatminfo then just appends to that active log."""
+        if self._output_file_handle is not None:
+            return False
+        self.output_file_path = self._output_file()
+        try:
+            os.makedirs(os.path.dirname(self.output_file_path), exist_ok=True)
+            self._output_file_handle = open(self.output_file_path, 'a', encoding='utf-8')
+            self._output_file_handle.write("=================================\n")
+            self._output_file_handle.write(
+                time.strftime('%Y-%m-%d %H:%M:%S') + f"  {label}\n")
+            self._output_file_handle.write("---------------------------------\n")
+            self._output_file_handle.flush()
+            return True
+        except Exception:
+            log.warning("could not open output file for note", exc_info=True)
+            self._close_output_file_handle()
+            self.output_file_path = None
+            return False
 
     def _finalize_output_file(self):
         """Append a trailing blank line to the output-box file after a run's content

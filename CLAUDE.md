@@ -58,29 +58,32 @@ top-level action — a button, not a dropdown — placed left of Help).
 | File | Save As | Ctrl+Alt+S | Save to a new file |
 | File | 1. … 6. (recent files) | — | Up to 6 recent settings files listed **directly** in the File menu between Save As and Exit (persisted via `QSettings`); rebuilt on open |
 | File | Exit | — | Quit (prompts Save/Discard/Cancel if there are unsaved changes) |
+| Settings | _(section headers)_ | — | The Settings menu is grouped into **five titled sections** — **View** · **Find & Replace** · **Edit** · **Bookmarks & Changes** · **Check & Compare** — rendered as bold, disabled header rows via `menu_builder._add_menu_section` (same helper as the Configure sections; **not** `QMenu.addSection`). The rows below follow that order |
 | Settings | Fold All | Alt+0 | Collapse all sections (was "Compress All") |
 | Settings | Unfold All | Alt+Shift+0 | Expand all sections (was "Expand All") |
 | Settings | Top | Alt+T | Jump to start of file |
 | Settings | Down | Alt+D | Jump to end of file |
-| Settings | Find | F5 | Prompt for text and find it in the editor |
-| Settings | Find next | Ctrl+F | Repeat the last Find (wraps around) |
-| Settings | Replace | Ctrl+H | Non-modal find & replace dialog (Find next / Replace / Replace all) |
+| Settings | Find | Ctrl+F | Combined non-modal **Find & Replace** window, opened on the **Find** tab: shared "Find:" box above the tabs, **Find Next / Count** (matches in the file, shown in the window's own status bar) **/ Close**; Enter = Find Next; opens 100 px left of centre |
+| Settings | Find next | F3 | Repeat the last Find (wraps around; also works while the Find window has focus) |
+| Settings | Find previous | Shift+F3 | Find the previous occurrence (backwards, wraps around) |
+| Settings | Replace | Ctrl+H | The same Find & Replace window, opened on the **Replace** tab (Replace with box + Find next / Replace / Replace all / Close). **Replace all in selection** checkbox: disabled+unchecked without an editor selection; auto-ticked when the Replace tab is entered with a selection; a selection made while the window is open enables it (user toggles) |
 | Settings | Undo | Ctrl+Z | Undo an editor change **or a left-window field change** (Date/PathOut/MaskMap/Gauges) |
 | Settings | Redo | Ctrl+Y | Redo an editor change **or a left-window field change** |
 | Settings | Toggle Bookmark | Ctrl+F2 | Toggle a bookmark on the editor's current line (orange dot in the gutter) |
 | Settings | Next Bookmark | F2 | Jump to the next bookmarked line (wraps; unfolds if hidden) |
 | Settings | Previous Bookmark | Shift+F2 | Jump to the previous bookmarked line (wraps) |
 | Settings | Clear all Bookmarks | Ctrl+Shift+F2 | Remove every bookmark |
-| Settings | Goto last change | F3 | Jump to the most recently changed line (after a separator; unfolds if hidden) |
-| Settings | Check settingsfile | F4 | Scan the editor content; every value identified as a filename/path whose file does not exist gets its line **marked red + bookmarked** (F2 to jump), **plus semantic checks** (StepStart ≤ SpinUp ≤ StepEnd date ordering, **option dependencies** e.g. modflow-on-without-its-keys, and the run window inside the **meteo forcing** NetCDF time coverage), and a summary is written to the output box — see Check settingsfile below |
-| Settings | Clear checking | Shift+F4 | Remove the red marks and the bookmarks that **Check settingsfile** added (the user's own bookmarks are kept) |
+| Settings | Goto last change | F5 | Jump to the most recently changed line (after a separator; unfolds if hidden) |
+| Settings | Check settingsfile / Clear checking | F4 | **One toggle item** (`toggle_check_settings`): when no marks are shown it scans the editor content — every value identified as a filename/path whose file does not exist gets its line **marked red + bookmarked** (F2 to jump), **plus semantic checks** (StepStart ≤ SpinUp ≤ StepEnd date ordering, **option dependencies** e.g. modflow-on-without-its-keys, and the run window inside the **meteo forcing** NetCDF time coverage), a summary is written to the output box, and the item **relabels to "Clear checking"**; pressing F4 again (now "Clear checking") removes the red marks + check-owned bookmarks (the user's own bookmarks are kept) and relabels back. The label is re-synced to the real state (`_error_rows`/`_inactive_rows`, via `_refresh_check_settings_label`) whenever the Settings menu opens — see Check settingsfile below |
 | Settings | Compare settings | — | (last item, separator above) Side-by-side diff of two settings files — left = the current settings (preloaded), right has a **Load** button; files aligned with gray filler, differing lines **orange**, one synced scrollbar on the right, Next/Previous Diff, File/History/Settings menus — see `CWatM_GUI_Internals.md` |
 | Excel | Crops | — | Open the **Crops** sheet of the settings `Excel_settings_file` (placeholders resolved) in an editable table that reproduces the sheet's cell colours; bottom buttons **Reload / Save / Save As** — see `CWatM_GUI_Internals.md` |
 | Excel | Reservoirs | — | Same as Crops but opens the **Reservoirs** sheet; adds a **Release** button (right of Save As) that opens the **Reservoirs_downstream** sheet in its own editor — greyed out when that sheet is absent |
-| Tools | Change Options | — | Open the Options window (tooltip: "Display a popup with the settingsfile [Options]") |
-| Tools | Show Basin | — | Open the basin viewer — the folium (Leaflet) **EPSG:4326** map (`basin_viewer2.py`); ups.nc/mask overlays in native lon/lat over an OSM WMS basemap. (This is the former "Show Basin2"; the classic native-canvas / Mercator viewer was removed.) |
+| Tools | _(section headers)_ | — | The Tools menu is grouped into **four titled sections** — **Basin & Gauges** · **Outputs** · **Setup & Data** · **Results & History** — rendered as bold, disabled header rows via `menu_builder._add_menu_section` (same helper as the Configure/Settings sections). The rows below are listed by section |
+| Tools | Change Options | — | _(Setup & Data)_ Open the Options window (tooltip: "Display a popup with the settingsfile [Options]") |
+| Tools | Show Basin | — | Open the basin viewer — the folium (Leaflet) **EPSG:4326** map (`basin_viewer2.py`); ups.nc/mask overlays in native lon/lat over an OSM WMS basemap. (This is the former "Show Basin2"; the classic native-canvas / Mercator viewer was removed.) **Projected (non lat/lon) grids** — x/y coordinates, e.g. Norway UTM33 (`grid_is_latlon` in `basin_viewer.py`) — are shown in Leaflet **CRS.Simple** on the raw x/y **without** an OSM basemap (basemap selector + OSM-transparency slider disabled, overlay fully opaque, read-outs labelled X/Y); everything else (mask, gauges, clicks, Copy Mask/Gauge) works unchanged |
 | Tools | Set Gauge | — | Set Gauges to the largest-upstream point inside the mask |
 | Tools | Add output Watercycle | — | Insert `OUT_TSS_AreaSum_MonthTot = WaterCycle` under `[OUTPUT]` if absent |
+| Tools | Add output variables | — | (separator below) Open a picker of the metaNetcdf.xml output variables that **fit the current `[OPTIONS]`** (glacier/modflow/small-lake/… vars hidden when their feature is off); shows only `priority="high"` vars by default, a **Load all Variable** toggle above the filter shows every fitting var; item tooltips show `unit:` + `Dimension:` (metaNetcdf `dim`); **left-click** inserts it at the editor cursor — only on an `OUT_TSS_…`/`OUT_MAP_…` line; **right-click** opens a type menu (Timeseries (TSS) ▸ time step / **upstream calculation** ▸ `AreaSum`\|`AreaAvg` ▸ time step, or Map (MAP) ▸ time step) that builds `OUT_<TSS\|MAP>_<selection>` and appends the variable to that line, creating the key under `[OUTPUT]` if absent — see `CWatM_GUI_Internals.md` |
 | Tools | Check Data | — | Open the Check Data window |
 | Tools | Create PathOut Folder | — | Create the resolved PathOut directory if missing |
 | Tools | Restore settingsfile | — | Open a CWatM output NetCDF (`dis*.nc`) and show its stored run metadata; **Restore settingsfile** re-creates the settings file from `version_settingsfile`, **Show Inputfiles** lists `version_inputfiles` — see `CWatM_GUI_Internals.md` |
@@ -88,23 +91,29 @@ top-level action — a button, not a dropdown — placed left of Help).
 | RUN CWATM | Run CWATM | Ctrl+R | Run / stop the CWatM model |
 | RUN CWATM | Hidden Run CWatM | — | Open a **separate, non-modal window** that runs CWatM in its **own OS process**, independent of the main run and main GUI — several can run in parallel — see `CWatM_GUI_Internals.md` |
 | RUN CWATM | Batch Run… | — | Run many scenarios from the loaded settings file — a table where each row overrides a few keys + its own PathOut → a temp `.ini` run in its own process, **up to N in parallel** — see `CWatM_GUI_Internals.md` |
-| Configure | Set output box file | — | Choose a custom output-box log file (kept in memory) |
+| Configure | _(section headers)_ | — | The Configure menu is grouped into **five titled sections** — **Output** · **Startup & Model** · **Display** · **Editor & Dates** · **Run History** — rendered as bold, disabled (non-clickable) header rows via `menu_builder._add_menu_section` (**not** `QMenu.addSection`, whose title text the native windows11 style does not draw). The rows below are listed by section |
+| Configure | _(item types)_ | — | Three visually distinct item kinds: **tick boxes** carry a ☐/☑ box (`_wire_checkbox_glyph`, kept in sync on toggle — so a toggle is obvious even unchecked), **dialog-openers** end with `…` (Set output box file… / Show Decimals… / Transparency… / Run history folder…/retention…), and **submenus** show `▸` (Mode / Default openstreet map / Select animal). A `_KeepMenuOpenFilter` on the Configure menu **keeps it open** after a tick box is clicked so the ☐→☑ change is visible |
+| Configure | Set output box file | — | _(Output)_ Choose a custom output-box log file (kept in memory) |
 | Configure | Write output box | — | Checkable; writes the run log (tooltip shows the current output path) |
 | Configure | Load previous settings at start | — | Checkable (persisted `startup/load_previous`, default OFF); when ticked, the most recently used settings file is re-opened automatically on the next startup (handled in `cwatm_gui.py main()` when no file is passed on the command line) |
 | Configure | Use Modflow | — | Checkable (persisted `modflow/enabled`, default OFF); when ON the GUI **pre-imports flopy** (the CWatM↔MODFLOW library — heavy, pulls the matplotlib stack) so in-process MODFLOW use is ready; when OFF flopy is never loaded, keeping startup fast (`src/gui/utils/modflow.py`, `_on_use_modflow_toggled`) |
 | _(hidden)_ | ~~Run model in separate process~~ | — | **No longer shown in Configure** but the functionality is kept: `run_subprocess_action` is created standalone (default ON, persisted `run/subprocess`) and still drives `_run_subprocess_enabled` (own OS process = real Stop, crash isolation). Re-add it to a menu to expose it again |
 | Configure | Default openstreet map | — | Submenu; pick the default basemap for **Show Basin** — its EPSG:4326 WMS layers (OSM / Topographic / Terrain / Dark), persisted via `QSettings` (`basin/default_basemap`) |
+| Configure | Skill of User | — | _(Editor & Dates, first item)_ Exclusive submenu — **Beginner / Advanced / Expert**; decides how much of the settings file is shown (hides the sections the level may not see). In sync with the colour-coded level button right of the editor's `-` button; persisted `editor/level`, default Expert (see the Skill of User behavioral note) |
 | Configure | Mode | — | Submenu; colour theme of the whole GUI: **Normal** (classic light), **Dark Mode**, **Mikhail** (black background, amber font); switches live, persisted via `QSettings` (`display/theme`) |
 | Configure | Bookmark Change | — | Checkable (persisted `editor/bookmark_change`); when ticked, a changed settings line is **auto-bookmarked** — but skipped if a bookmark already sits 1 or 2 lines above/below it |
 | Configure | Show Decimals | — | Set how many decimals numeric values show throughout all displays (default 3, range 0–12), persisted via `QSettings` (`display/decimals`) |
 | Configure | Transparency | — | Set the **initial** map transparency (0–100) the **NetCDF** and **Show Basin** viewers open with (start value of their transparency slider), default 100, persisted via `QSettings` (`display/transparency`) |
+| Configure | Web-style date picker | — | Checkable (persisted `display/date_picker_web`, default ON): Start/Spin/End dates picked via a 📅 button + frameless shadowed calendar popup; unticked = classic `QDateEdit` drop-down calendar (see the Date calendar popups behavioral note) |
+| Configure | Date timeline | — | Checkable (persisted `display/date_timeline`, default ON): show the three-handle **Start/Spin/End timeline** below the date fields — drag a handle (or click the track to jump the nearest one) to set the date; the light band behind the track is the meteo-forcing coverage (see the Date calendar popups behavioral note) |
+| Configure | Show Header | — | Checkable (persisted `display/show_header`, default ON): show the top **banner** (CWatM icon + title + "The Community Water Model User Interface" + IIASA logo). Unticked hides the banner (`self._banner_widget.setVisible(False)`) so everything below moves up; ticked looks like before (`_on_show_header_toggled`) |
 | Configure | Select animal | — | Exclusive submenu (below Transparency) — the cameo shown now and then on the live discharge sparkline: **Fish · Otter · Beaver · Sailboat**, persisted `display/animal` (default Fish); applied live via `discharge_sparkline.set_animal` (edit the `ANIMALS` registry to change the set) |
 | Configure | Run history folder… | — | Choose the general folder where the **Run Ledger** (`run_ledger.json`) is stored (`history/folder`, default `%LOCALAPPDATA%/CWatM_GUI`) |
 | Configure | Run history retention… | — | How many days of runs to keep in the Run Ledger (0 = keep forever), `history/retention_days`, default 60 |
 | Analyse | Open PathOut Folder | — | Open the resolved PathOut directory in the file explorer (first item, above a separator) |
 | Analyse | Output Explorer | — | Non-modal tree of the resolved PathOut; **double-click** a result opens the matching viewer — `*.nc`→NetCDF map, `*WaterCycle*.csv`→Watercycle sunburst, other `*.csv`→Timeseries, `*.html`/other→OS default — see `CWatM_GUI_Internals.md` |
 | Analyse | Timeseries | — | Open a CWatM result `.csv` and plot it (Plotly line chart) — see `CWatM_GUI_Internals.md` |
-| Analyse | NetCDF | — | Open a `.nc` file and show it as a Leaflet **ImageOverlay over an OSM WMS basemap** (EPSG:4326, like Show Basin) with an **OSM-transparency slider**, basemap selector, **Log scale** toggle, and clicked points shown as **numbered pin icons** coloured to match their Timeseries line — see `CWatM_GUI_Internals.md`. (The former Plotly heatmap "NetCDF" was removed; this folium viewer was "NetCDF2".) |
+| Analyse | NetCDF | — | Open a `.nc` file and show it as a Leaflet **ImageOverlay over an OSM WMS basemap** (EPSG:4326, like Show Basin) with an **OSM-transparency slider**, basemap selector, **Log scale** toggle, and clicked points shown as **numbered pin icons** coloured to match their Timeseries line — see `CWatM_GUI_Internals.md`. (The former Plotly heatmap "NetCDF" was removed; this folium viewer was "NetCDF2".) Like Show Basin, a **projected x/y grid** (e.g. UTM33) renders in **CRS.Simple without** the OSM basemap; x/y (or X/Y) NetCDF coordinates are handled and read-outs/point labels say X/Y |
 | Analyse | Watercycle | — | Open a `WaterCycle_areasum_monthtot.csv` and show the overall water balance as a Plotly **sunburst** (multi-station csvs get **Backward / Forward** buttons) — see `CWatM_GUI_Internals.md` |
 | Analyse | Flow Diagram | — | Open a `WaterCycle_areasum_monthtot.csv` (same file as Watercycle) and show the water balance as a Plotly **Sankey** flow diagram (multi-station csvs get **Backward / Forward** buttons) — see `CWatM_GUI_Internals.md` |
 | CWatM AI | (button) | — | Open the **CWatM AI** chat window — questions about CWatM answered by Google **NotebookLM** (Gemini) over a predefined CWatM notebook/PDF — see `CWatM_GUI_Internals.md` |
@@ -130,7 +139,10 @@ top-level action — a button, not a dropdown — placed left of Help).
   `python cwatm_gui.py <settings.ini>`) loads the file at startup — enables Windows
   file association / "Open with".
 - **Elapsed / remaining time**: shown **inside the progress-clock face** below the
-  percentage (`ProgressClock.set_time_lines`; clock diameter 150–220 px) as two
+  percentage (`ProgressClock.set_time_lines`; clock diameter 110–220 px, sized
+  with the run button / output box / sparkline from the screen height so the
+  left column fits a laptop screen — see the vertical-budget note in
+  `create_run_cwatm_button`) as two
   lines `elapsed h:mm:ss` / `remaining ~h:mm:ss` (linear estimate from the
   completed fraction), frozen as `run time` / `failed after` / `stopped after`
   when the run ends (`run_controller._update_run_time_label`). A 1-second QTimer keeps
@@ -151,6 +163,32 @@ top-level action — a button, not a dropdown — placed left of Help).
   still saved/searched, and Find/Replace/jump-to-bottom auto-unfold a hit inside
   a folded section (`reveal_cursor`). Fold a section by **double-clicking its
   `[SECTION]` header** or clicking the ▾/▸ marker in the gutter.
+- **Skill of User / experience level (Beginner / Advanced / Expert)**: a
+  **colour-coded button** right of the editor's `-` font button cycles
+  Beginner → Advanced → Expert → Beginner (`cycle_experience_level` /
+  `set_experience_level`, persisted `editor/level`, default **Expert**). It is
+  mirrored by **Configure ▸ Skill of User** (an exclusive radio submenu — the
+  **first item of the Editor & Dates section**, tooltip "The skill of the user
+  determines how much of the settingsfile is presented") — the two stay in sync
+  via `_sync_level_menu` /
+  `_level_menu_actions`. The button's background is the level colour at **50%
+  opacity** (`_LEVEL_COLORS`, `_level_button_style`): Beginner light **green**,
+  Advanced light **blue**, Expert **gray** (kept out of `_nav_buttons` so a
+  theme switch does not overwrite it; re-applied in `_retheme`). Each level
+  decides which `[SECTION]`s are **shown**; every other section is **fully
+  hidden** — both the `[SECTION]` header line and its content blocks are made
+  invisible (still saved via `toPlainText()` / searched, just not displayed) and
+  **non-unfoldable** (double-click / gutter click / Find-reveal / Unfold All all
+  skip it). **Beginner** shows `[FILE_PATHS]`, `[MASK_OUTLET]`,
+  `[TIME-RELATED_CONSTANTS]`, `[OUTPUT]`; **Advanced** adds `[OPTIONS]`,
+  `[INITITIAL CONDITIONS]`, `[METEO]`, `[EVAPORATION]`; **Expert** shows
+  everything (the pre-existing behaviour). Driven by
+  `main_window._apply_experience_level` (`_LEVEL_ALLOWED`) →
+  `SettingsEditor.set_locked_sections(names)` (hides locked sections;
+  `apply_folds` / `unfold_all` / `set_content_preserving` all skip locked
+  sections so `_folded` stays the user's own fold set); the locked set is
+  **recomputed from the current section list after every file load**, so it
+  stays correct across files.
 - **Editor extras**: a **line-number gutter** showing **file line numbers**
   (numbers jump across a folded section) plus the ▾/▸ fold markers
   (`src/gui/widgets/line_number_gutter.py`), and **hover
@@ -177,7 +215,7 @@ top-level action — a button, not a dropdown — placed left of Help).
   highlight) auto-bookmarks each changed row via `_auto_bookmark_changed_rows`, which
   **skips a row if a bookmark already sits ±1 or ±2 lines away** (so adjacent changes
   collapse to one mark). Turning it on bookmarks the already-changed lines.
-  Settings ▸ **Goto last change** (F3) → `SettingsEditor.goto_last_change`: jumps to
+  Settings ▸ **Goto last change** (F5) → `SettingsEditor.goto_last_change`: jumps to
   the block of the most recent edit (tracked via the document's `contentsChange`
   signal, reset to "none" on load), falling back to the bottom-most line that differs
   from `_saved_text` when no edit has been recorded.
@@ -192,11 +230,50 @@ top-level action — a button, not a dropdown — placed left of Help).
   (`_duplicate_key_rows` in `settings_editor.py`). Note: the stock Morava
   settings legitimately shows the `PathSoil` pair red — it *is* a real override.
   Priority (later wins) in `_recompute_change_highlights`: changed-line blue <
+  inactive-section/key missing file (`inactive_line`, dimmed orange — Check
+  settingsfile, gating option off) <
+  **wrong-extension** (`wrongext_line`, **light** orange — Check settingsfile: the file
+  exists under a different raster extension; **no bookmark**, `set_wrongext_rows`) <
   Check-settingsfile missing (`error_line`, light red) < duplicate key
   (`duplicate_line`, strong red) < Compare-settings **diff** (`diff_line`, orange —
   `set_diff_rows`) < alignment **filler** (`filler_line`, light gray —
   `set_filler_rows`) < **current** jumped-to diff (`current_diff_line`, darker orange —
   `set_current_diff_rows`). The last three are used only by the Compare settings window.
+- **Date calendar popups**: the Start/Spin/End date fields use `CWatMCalendar`
+  (`date_manager.py`, subclass of `QCalendarWidget` with a custom `paintCell`):
+  selected day = filled accent circle, today = thin accent ring, the **other two
+  date fields** shown as small dots (green = Start, orange = Spin, red = End;
+  side by side when equal), and days **outside the meteo-forcing time coverage
+  dimmed** — the coverage comes from `_forcing_time_range` (the same F4 semantic
+  check) via `main_window._forcing_range_for_calendar`, computed lazily on the
+  first popup open and cached in `DateManager` until the next file load
+  (`invalidate_forcing_range` in `set_dates_from_config`). All colours are theme
+  tokens read at paint time; the popup chrome (nav bar, headers, no grid/week
+  numbers) is styled by QSS in `DateManager.retheme()`. **Two picker styles**
+  (Configure ▸ **Web-style date picker**, persisted `display/date_picker_web`,
+  default ON): the fields are sized exactly to the date text
+  (`setFixedWidth(sizeHint)` in `retheme`); *web-style* = a calendar button
+  right of each field **carrying the field's handle colour** (background at 70%
+  transparency, border + `_calendar_icon` glyph in the full colour —
+  green/orange/red; the field's spin arrows are removed, `NoButtons`) opening a
+  frameless, rounded, drop-shadowed popup (`_CalendarPopup`, `Qt.Popup` — closes
+  on outside click/Esc; clicking a day sets the field); *classic* (unticked) =
+  the normal `QDateEdit` drop-down (arrows restored). Both use
+  the same `CWatMCalendar` cells; `set_web_picker` switches live. Below the
+  date row sits the **`DateTimeline`** (option 4, Configure ▸ **Date timeline**,
+  `display/date_timeline`): a custom-painted three-handle timeline — green =
+  Start, orange = Spin, red = End on an axis covering the dates + forcing
+  range, forcing coverage as a light band (`changed_line` token), Start→End as
+  an accent bar, a tick on today, year labels at the axis ends. The **date row,
+  output box and timeline share one width** — all end at the right edge of the
+  date row's last element (`_cap_output_box_width`, re-synced on resize and on
+  a picker-mode switch). Dragging a
+  handle writes the date into its field (fields stay the source of truth;
+  `dateChanged` repaints the timeline), **clamped between its neighbours** so
+  Start ≤ Spin ≤ End can never be violated by dragging; clicking the track
+  jumps the nearest handle; the dragged handle shows its date above the track.
+  The lazy forcing-coverage read is shared with the calendars
+  (`refresh_forcing_range`, triggered on popup open or first timeline click).
 - **Window geometry memory**: the Timeseries, NetCDF and Basin windows remember
   their size/position across sessions (QSettings `geometry/<key>`, keys
   `timeseries`, `timeseries_point`, `netcdf`, `basin` —
@@ -252,6 +329,9 @@ top-level action — a button, not a dropdown — placed left of Help).
   left-aligned with the progress clock centred/left **below** it. Its text is
   selectable and copyable (Ctrl+C, or right-click → standard menu + "Copy all
   output"). Errors appear in dark red; auto-scrolls only when already at the bottom.
+  Its scrollbars are the **blue rounded** theme-token style (`accent` handle,
+  `surface_bg` groove, radius 6) — the same look as the settings editor's, set in
+  `_output_box_style` (vertical **and** horizontal).
 - **Live progress line**: per-timestep "date + discharge" output (printed by CWatM
   with a leading `\r`) overwrites a single line in place instead of accumulating,
   mirroring the console.
@@ -263,9 +343,11 @@ top-level action — a button, not a dropdown — placed left of Help).
   <discharge>` line (`parse_progress`: date `dd/mm/yyyy`, discharge = last token) and
   calls `discharge_sparkline.add_from_progress_line`; cleared at the start of every run
   (`run_controller.run_cwatm`). Shows a **rolling ~3-month window** (`_WINDOW`, 92 days
-  by date; falls back to a point cap when dates are absent) and **fades older points
-  out** — each segment drawn at an opacity from `_MIN_ALPHA` (oldest) to full (newest),
-  by time when every visible point has a date, else by index. Bare trace + latest-point
+  by date; falls back to a point cap when dates are absent) and **fades out towards the
+  left** — each segment's opacity is `255 * frac**_FADE_GAMMA` where `frac` is its
+  **horizontal position** (0 = left edge → fully transparent, 1 = right = newest →
+  opaque; `_FADE_GAMMA` 1.5 biases the fade so the trace dissolves before the clock
+  rather than butting up against it). Bare trace + latest-point
   marker only (no frame, title, or corner read-outs); reads theme tokens at paint time
   (repainted by `_retheme`). The newest-point marker is usually a dot, but a slow random
   timer (`_tick_animal`, ~8%/0.6 s to appear, ~20%/tick to leave so it lingers ~3 s)
@@ -348,12 +430,74 @@ path (`X:\`, `\\`); coordinate pairs, dates (`DD/MM/YYYY`) and plain numbers are
 value heuristic) and **strictly** — plain `os.path.exists` only, with **no** NetCDF
 without-extension / date-suffix fallbacks. Placeholders are resolved with
 `basin_viewer._resolve_settings_placeholders` against a
-`ConfigParser(interpolation=None, strict=False)` of the same content (a value with an
-**unresolvable** placeholder is skipped, not flagged); relative paths resolve against the
-settings-file directory. For non-`path` keys existence is lenient — `glob` for `*`/`?`,
+`ConfigParser(interpolation=None, strict=False)` of the same content; a value whose
+placeholder stays **unresolvable** (the referenced key/section does not exist, e.g.
+`$(PathRott)` or `$(FILE_PATHS:NoSuchKey)`) is **flagged as its own problem category**
+("unresolved placeholder(s)" in the summary, line marked red + bookmarked) — only when
+the content failed to parse (no ConfigParser) is it skipped. Relative paths resolve
+against the settings-file directory. For non-`path` keys existence is lenient — `glob` for `*`/`?`,
 plus fallbacks for a NetCDF stored without `.nc` or with a date suffix (`glob(p+'*')`,
 `p+'.nc'`) — so it never
-false-flags. Every missing value's line is added to `SettingsEditor._error_rows` (drawn
+false-flags. **Wrong-extension (orange, no bookmark)**: before flagging a missing file
+red, `wrong_extension_alt` tries the same base name with the other interchangeable
+raster extensions (`.nc/.nc4/.tif/.tiff/.map`); if one of those **exists** (e.g. the
+value says `cellarea.map` but `cellarea.nc` is on disk) the line is drawn a **light orange**
+(`wrongext_line`, `set_wrongext_rows`) with **no bookmark** and a quiet
+"exists as …" note in the summary — a likely wrong-extension typo, not a hard miss.
+Only for non-`path` keys. **Disabled-section / disabled-key gating**: parts CWatM only reads when
+an `[OPTIONS]` switch is on. Two granularities, both mirrored read-only from the
+`checkOption(...)` / `returnBool(...)` guards in `cwatm/`:
+- **Whole sections** (`_SECTION_GATED_BY`): `GROUNDWATER_MODFLOW` ←
+  `modflow_coupling`, `GLACIER` ← `includeGlaciers`, `WATERDEMAND` ←
+  `includeWaterDemand`, `LAKES_RESERVOIRS` ← `includeWaterBodies`,
+  `RUNOFF_CONCENTRATION` ← `includeRunoffConcentration`, `INFLOW` ← `inflow`,
+  `ENVIRONMENTALFLOW` ← `calc_environflow`, `ROUTING` ← `includeRouting`.
+- **Individual keys** anywhere (`_KEY_GATED_BY`, finer than section): `initLoad` ←
+  `load_initial`, `initSave` ← `save_initial`, `albedoMaps` ← `albedo`,
+  `downscale_wordclim_*` (prefix rule → prec/tavg/tmin/tmax/… all covered) ←
+  `usemeteodownscaling` (**not** `meteomapssamescale`, which only rescales — it gates
+  no file), `initLoad_pySnowClim` ← `load_initial_pySnowClim`, `initSave_pySnowClim` ←
+  `save_initial_pySnowClim`, `smallLakesRes` & `smallwaterBodyDis` ← `useSmallLakes`,
+  `EnvironmentalFlowFile` ← `use_environflow` (a **separate** option from the
+  `[OPTIONS]` `calc_environflow` section gate), `irrNonPaddy_fracVegCover` ←
+  `static_irrigation_map`. All entries are **direct** (key active only when the
+  option is on).
+- **Value gates** (`_KEY_GATED_BY_VALUE`, `_value_gate_phrase`): a file key CWatM reads
+  only when another key's **numeric** value meets a condition (not a boolean on/off).
+  Currently `averageBaseflow` & `averageDischarge` ← `swAbstractionFrac < 0`
+  (`water_demand.py:719-724`: `loadmap` runs only inside `if swAbstractionFrac < 0`; a
+  `>= 0` value uses a fixed fraction and never reads the files). When the gate is **not
+  met** the missing file is dimmed (same inactive treatment, no bookmark) with a note
+  `skipped averageDischarge - swAbstractionFrac = 0.8 >= 0 (read only when < 0)`; an
+  unparseable/missing gate value is conservative (treated as active → flag a real miss).
+- **Groundwater-MODFLOW input is soft** (`_is_modflow_input`, a separate rule): a
+  `PathGroundwaterModflow*` path key, or any file routed through a
+  `$(PathGroundwaterModflow…)` placeholder (`modflow_basin`/`topo_modflow`/`chanRatio`/
+  `cwatm_modflow_indices`/…), is **dimmed light orange, no bookmark** when missing
+  instead of red — MODFLOW input is normally preprocessed/optional, not a hard error
+  (applies whether or not the `GROUNDWATER_MODFLOW` section is active; an off section is
+  already dimmed by the section gate). To stay consistent, the `_OPTION_REQUIRES`
+  dependency check treats `PathGroundwaterModflow` as **set-only** (`_REQUIRE_SET_ONLY`)
+  — a set-but-missing input dir no longer flags `modflow_coupling` red, though a missing
+  `path_mf6dll` (the solver DLL) still does.
+
+When the gating option is **explicitly** false (`false/0/no/off`; missing = active,
+conservative — via `_explicitly_off`), a missing **file** in that section / for that
+key is drawn **dimmed orange** (`inactive_line` token, `SettingsEditor.set_inactive_rows`)
+with **no bookmark**, and the summary gets one quiet note per section/key
+(`skipped [GLACIER] - includeGlaciers = False (…)` / `skipped albedoMaps - albedo = False (…)`).
+**Option roll-up (the reverse)**: when a **section-gated** option is **on** (enabled)
+and its section contains a red row (a missing file or an unresolved placeholder), the
+feature's `[OPTIONS]` **switch line itself** is also marked red + bookmarked — pointing
+the user at the option that pulled in the broken section (`gated_active_problem` →
+`options_rows` row → `rollup`; summary `… includeGlaciers = True -> see the red line(s)
+in [GLACIER]`). Only for the section-gated options (their switch lives in `[OPTIONS]`)
+and only when the switch line actually exists in the file.
+**Only file existence is gated** — unresolved placeholders and `out_*` key/value
+checks stay global, because CWatM resolves placeholders (`ExtParser` Error 116)
+and collects output keys (`configuration.py:272`) for *every* section at parse
+time regardless of options. Every missing value's line is added to
+`SettingsEditor._error_rows` (drawn
 a **light red** — its own `error_line` token, distinct from the stronger `duplicate_line`
 red so a missing file reads differently from a duplicate key — in
 `_recompute_change_highlights`, above the changed-line blue) **and bookmarked**
@@ -363,9 +507,13 @@ each: `line N: key = value` (+ `-> resolved` inline when it differs), in dark re
 `_error_rows` clears on file load.
 - **Bookmarks added by the check are tagged check-owned** (`_BlockMarks.check`), and each
   run first calls `clear_checking` so re-running doesn't accumulate stale marks.
-- **Settings ▸ Clear checking** (Shift+F4) (`main_window.clear_checking` → `SettingsEditor.clear_checking`)
+- **Clearing the check** (`main_window.clear_checking` → `SettingsEditor.clear_checking`)
   clears `_error_rows` (removes the red) and unsets **only the check-owned** bookmarks —
-  the user's own bookmarks survive — and logs a note to the output box.
+  the user's own bookmarks survive — and logs a note to the output box. It is reached by
+  pressing **F4 a second time**: Check settingsfile is a **single toggle** menu item
+  (`toggle_check_settings`) that runs the check when nothing is marked (relabelling itself
+  "Clear checking") and clears when marks are shown (relabelling back). There is no
+  separate Clear-checking item / Shift+F4 shortcut any more.
 - **Semantic checks** (`_semantic_settings_problems(content, config, base_dir)`, run after
   the file-existence pass): beyond "does the file exist", it validates
   - the **simulation date ordering** — `StepStart` must be a real date, and
@@ -376,7 +524,35 @@ each: `line N: key = value` (+ `-> resolved` inline when it differs), in dark re
     location (resolved + `os.path.exists`); the **option's own line** is flagged (so a bad
     dependency shows on the option, not only on the path line). Example:
     `modflow_coupling = True` needing `path_mf6dll` / `PathGroundwaterModflow` /
-    `nameModflowModel` / `Modflow_resolution`. Easy to extend with more options;
+    `nameModflowModel` / `Modflow_resolution`. Keys in `_REQUIRE_SET_ONLY` (e.g.
+    `PathGroundwaterModflow`) are checked only for **being set**, not for existence (see
+    the groundwater-MODFLOW soft rule above). Easy to extend with more options;
+  - **output keywords** — every `out_*` key (outside `[OPTIONS]`) is validated against
+    CWatM's output grammar (mirrored from `configuration.py` / `globals.py` /
+    `output.py appendinfo`, read-only): `OUT_..._Dir`, `OUT_TSS_<type>`,
+    `OUT_TSS_<AreaSum|AreaAvg>_<type>` (TSS types: daily, monthtot/avg/end,
+    annualtot/avg/end, totaltot/avg) and `OUT_MAP_<type>` (adds monthmid, totalend,
+    once, 12month; **no** AreaSum/AreaAvg for maps). Important because CWatM
+    **silently ignores** an invalid map key (e.g. `OUT_MAP_AreaSum_MonthTot`) — no
+    error, just no output; TSS typos at least raise Error 130/131 at run start.
+    The **values** of valid output keys (comma-separated variable names) are checked
+    against the `cwatm/metaNetcdf.xml` varname catalogue (`meta_netcdf.all_varnames`),
+    mirroring CWatM's runtime Error 132 (`output.py checkifvariableexists`):
+    case-sensitive (a case-insensitive hit gets a "wrong case — use 'X'" message),
+    `[index]` stripped, the special `WaterCycle` allowed, first item `None`/empty =
+    output disabled (skipped), unknown names get a difflib closest-match hint;
+    best-effort — non-identifier tokens or an unreadable xml flag nothing.
+    **Array dimensions** are checked too (`_dim_problem`): multi-dim variables need
+    an index (`actualET` → `actualET[1]`) — the sets are mirrored from the allocation
+    lists in `cwatm/hydrological_modules/` (read-only): per-land-cover `(6, cells)`
+    (`landcoverType.py landcoverAll+landcoverVars`, index 0..5 = forest, grassland,
+    irrPaddy, irrNonPaddy, sealed, water), per-soil-land-cover `(4, cells)`
+    (`landcoverVarsSoil` + `w1/w2/w3`, 0..3), `(soilLayers=3, 4, cells)` needing two
+    indices (`soilVars` e.g. `rootDepth[0][1]`), `soildepth` `(3, cells)`, and the
+    per-crop lists from `evaporation.py` (crop index, no upper bound). Flags a
+    missing/extra/non-numeric/out-of-range index; an index on a variable *not* in
+    these sets is never flagged (other modules allocate 2-D vars the GUI doesn't
+    track);
   - the **run window inside the meteo-forcing time coverage** (`_forcing_time_range`) —
     resolves the first readable forcing entry (`PrecipitationMaps` → `TavgMaps` →
     `E0Maps` → `ETMaps`), globs its NetCDFs and reads the **first & last** (name-sorted)
@@ -399,6 +575,13 @@ each: `line N: key = value` (+ `-> resolved` inline when it differs), in dark re
 - The file **handle is opened once per run and kept open** until finish/error/stop
   (`_close_output_file_handle`); lines are flushed by the ~150 ms display throttle,
   not per line (per-line open/append/flush was a real slowdown on network shares).
+- **Check settingsfile → log file**: when **Write output box** is on, running
+  **Check settingsfile** (F4) also writes its whole summary to the log file, not just
+  the output box. The check opens the file for the duration of the summary
+  (`_open_output_file_note("Check settingsfile")` — same `====`/date/`----` header
+  block as a run, then `_finalize_output_file`); `append_to_cwatminfo` writes to the
+  open handle, so the box and file get the same lines. No-op if a run is already
+  writing the log (the summary just appends to that active run's log instead).
 
 ### Secondary-window internals → `documentation/CWatM_GUI_Internals.md`
 The per-feature deep dives for the secondary windows live in
@@ -426,6 +609,7 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/widgets/settings_editor.py`**: `SettingsEditor` — the plain-text settings editor (`QPlainTextEdit` + `IniHighlighter` + section folding via block visibility; report §3.2)
 - **`src/gui/widgets/options_window.py`**: Options management window for boolean configurations
 - **`src/gui/widgets/check_data_window.py`**: Data validation window for CWatM configuration checking
+- **`src/gui/widgets/output_variables_window.py`**: Tools ▸ Add output variables — `OutputVariablesWindow`, an alphabetical, filterable picker of `meta_netcdf.output_varnames()` (metaNetcdf.xml data variables; no-type / `_`-prefixed / list-table / scalar-type vars excluded) narrowed to those that fit the loaded `[OPTIONS]` (`_FEATURE_VAR_PATTERNS`: glacier/modflow/small-lake/waterbody/water-demand/runoff-conc/environ vars hidden when their switch is off); by default only `priority="high"` vars are shown (`output_varnames(high_only=True)`), a checkable **Load all Variable** toggle above the filter box shows every fitting var; each item's tooltip carries `unit:` + `Dimension:` (the metaNetcdf `dim` attribute via `meta_netcdf.dim_of`); an item click **toggles** the varname on the settings-editor's current line — inserted at the cursor with auto comma separators if absent, removed if already present — but only on an `OUT_TSS_…`/`OUT_MAP_…` line (else it warns + beeps). **Removal deletes the whole output line** when the varname was the last one on it (`_remove_output`, shared by both click styles — so a line the right-click menu just created disappears again on a second pick). Note the shipped `cwatm/metaNetcdf.xml` carries **no `priority` attribute at all**, so the default high-priority view would be empty — `_available_varnames` detects that and falls back to the full list, noting it in the status line (`_priority_missing`); it starts filtering on its own once the xml gains `priority="high"` flags. A **right-click** needs no cursor position: `_on_context_menu` builds a two-level `QMenu` (`setToolTipsVisible`) — **Timeseries (TSS)** with the ten `_TIME_TYPES` plus an **upstream calculation** submenu that branches once more into `AreaSum` / `AreaAvg` (`_AREA_AGGS`), each listing the seven `_AREA_TIME_TYPES` (Daily/Month*/Annual* — TSS-only), and **Map (MAP)** with the same ten types; every entry's tooltip explains the time step (`_TYPE_TOOLTIPS`, the Area ones generated as "… summing up/averaging over all upstream cells") and shows the resulting line. `_add_output` then appends the variable to the existing `OUT_<TSS\|MAP>_<sel>` line (preferring a hit inside `[OUTPUT]`; a `None`/empty value is replaced rather than appended to) or creates the key at the end of `[OUTPUT]` (`_insert_output_line`, same placement as `add_output_watercycle`), written through `set_content_preserving` so it is **one undo step** that keeps folding, then jumps the cursor there (`_goto_row` + `reveal_cursor`). `OUT_TSS_TotalEnd` is shown **disabled** — `outputTypTss` (cwatm `globals.py`) has no `totalend`, it is map-only
 - **`src/gui/widgets/excel_sheet_window.py`**: `ExcelSheetWindow` — Excel ▸ Crops / Reservoirs: an editable `QTableWidget` view of one xlsx worksheet that reproduces the sheet's cell fill/font colours (openpyxl); Reload / Save / Save As write edits back preserving all other sheets and styling; optional **Release** button opens a companion sheet (Reservoirs → Reservoirs_downstream)
 - **`src/gui/widgets/basin_viewer.py`**: Basin **data loader** (`BasinViewer`: ups.nc/mask loading, placeholder resolution), the `BasinDataHelpers` mixin (ups/mask RGBA, gauge/mask field readers, gauge-in-mask check — shared with Show Basin), the app-lifetime `osmtile://` scheme handler + `_get_tile_handler`, and the module-level gauge-in-mask & PathOut checks (`build_mask_context`, `gauges_inside`, `pathout_exists`, `find_largest_ups_gauge`). The classic native-canvas / Mercator `BasinWindow`/`BasinCanvas` were **removed**.
 - **`src/gui/widgets/basin_viewer2.py`**: **Show Basin** — the folium (Leaflet) basin viewer in **EPSG:4326** (see the Basin Viewer section); `BasinWindow2(BasinDataHelpers, …)`
@@ -451,8 +635,9 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/utils/theme.py`**: Colour themes (Configure ▸ Mode: Normal / Dark / Mikhail) — token sets, app palette/QSS, persistence
 - **`src/gui/utils/assets.py`**: `asset_path()` — absolute asset resolution (source, `_internal/`, exe folder)
 - **`src/gui/utils/gui_log.py`**: Diagnostic logging — swallowed exceptions go to a rotating `%LOCALAPPDATA%/CWatM_GUI/gui.log` (UI behaviour unchanged)
+- **`src/gui/utils/warning_filters.py`**: The third-party warnings the GUI silences — currently only rasterio 1.5.0 × numpy 2.5 ("Setting the shape on a NumPy array has been deprecated", raised inside `rasterio._io.read()` but **attributed to the caller**, i.e. `cwatm/management_modules/data_handling.py:317/654`, so it looks like a CWatM problem). Three nets, because a user's machine may enable DeprecationWarnings (`PYTHONWARNINGS`, IDE, older build): `apply()` installs the message-matched filter **and** exports `PYTHONWARNINGS` (called at the top of `cwatm_gui.py` and of `cwatm_model_runner.py`, before numpy/rasterio/cwatm are imported; `cwatm_process_worker.start()` also puts it in the child's `QProcessEnvironment`), and `LineSuppressor` drops the warning's lines on the way to the output box (`cwatm_process_worker._forward` for every child run — main/Hidden/Batch — and `print_redirector` for in-process prints). Delete the module + its call sites once a fixed rasterio ships
 - **`src/gui/utils/window_geometry.py`**: `GeometryMemoryMixin` — persists window size/position of the Analyse/Basin windows via QSettings
-- **`src/gui/utils/meta_netcdf.py`**: Cached varname → (unit, long_name, description) lookup from `cwatm/metaNetcdf.xml` (editor hover tooltips)
+- **`src/gui/utils/meta_netcdf.py`**: Cached varname → (unit, long_name, description) lookup from `cwatm/metaNetcdf.xml` (editor hover tooltips); also `all_varnames()` (Check settingsfile output-name validation), `output_varnames(high_only=)` (Add output variables — data vars, excluding no-type / `_`-prefixed names, `list(...)` tables and Flag/Number/String scalar types; `high_only` keeps only `priority="high"`), and `dim_of()`/`priority_of()` (the metaNetcdf `dim`/`priority` attributes, parsed alongside the type)
 - **`src/gui/widgets/line_number_gutter.py`**: Line-number gutter widget for the settings editor
 - **`src/gui/widgets/notebooklm_window.py`**: CWatM AI — `NotebookLMWindow` (Gemini/NotebookLM chat: persistent transcript + question history, Up/Down recall, login-state colouring; see CWatM AI section)
 - **`src/gui/utils/notebooklm_worker.py`**: `NotebookLMWorker(QThread)` — off-thread NotebookLM questions (queue, lazy connect, `status/reply/error/busy` signals)
@@ -619,6 +804,32 @@ The application starts in maximized window mode for optimal viewing of configura
   root (older builds).
 - Build: `python -m PyInstaller cwatm_gui_dir.spec --noconfirm` (UPX disabled for faster builds).
 - Reference docs in this folder: **`cwtmexe.md`** (rasterio/xarray/GDAL packaging fixes), **`makeitfaster.md`** (PyInstaller speed), **`nuitka_plan.md`** (optional Nuitka build for faster runtime).
+
+### Installer (per-user, no admin) — `installer/CWatM_GUI.iss`
+An **Inno Setup 7** script packages the one-folder build into a single
+**`CWatM_GUI_Setup.exe`** that installs **without admin rights**
+(`PrivilegesRequired=lowest` → the `{auto*}` constants resolve to the current user's
+locations: `{autopf}` = `%LOCALAPPDATA%\Programs`, `{autoprograms}` = user Start menu,
+`{autodesktop}` = user desktop). A directory-picker page lets the user change the
+install folder. It copies **`dist\CWatM_GUI\*`** verbatim
+(`recursesubdirs createallsubdirs`) so `_internal\` (holding `CWatM_model.exe`) keeps
+its exact name/layout — the CLAUDE.md invariant. Optional **[Tasks]**: desktop shortcut,
+`.ini` **"Open with"** association (per-user `HKCU\Software\Classes` ProgID +
+`OpenWithProgids` — does *not* hijack the default `.ini` handler; passes the file as
+`"%1"`, the arg `cwatm_gui.py` reads at `sys.argv[1]`), and launch-after-install. The
+uninstaller removes the program files, shortcuts and the HKCU keys but **leaves user
+data** (QSettings, the `%LOCALAPPDATA%\CWatM_GUI` run ledger). Bump `MyAppVersion` in the
+`.iss` per release; keep the fixed `AppId` GUID so upgrades/uninstall track correctly.
+- **Build the installer**: first `python -m PyInstaller cwatm_gui_dir.spec --noconfirm`
+  (produces `dist\CWatM_GUI\`), then `ISCC installer\CWatM_GUI.iss` →
+  `installer\Output\CWatM_GUI_Setup.exe` (~260 MB, lzma2/max solid). `ISCC.exe` is the
+  Inno Setup 7 compiler; its location differs per machine — this box:
+  `%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe`, the other build box:
+  `C:\Apps\Inno Setup 7\ISCC.exe` (Inno Setup is installable per-user via its own
+  `/CURRENTUSER` flag). The script uses only 6-era directives, which 7 compiles
+  unchanged.
+- The setup is **unsigned**, so SmartScreen / FortiClient may warn on first run even
+  though it installs fine — Authenticode-sign the setup + both exes to avoid that.
 
 ### Watercycle template scripts (repo root — canonical balance computation)
 The two Analyse water-balance windows do **not** invent their own maths — each

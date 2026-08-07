@@ -31,6 +31,13 @@ import os
 import sys
 import traceback
 
+# Same rasterio-1.5.0 x numpy-2.5 deprecation filter as cwatm_gui.py - applied
+# here too because the model child (CWatM_model.exe) starts at this module and
+# never imports cwatm_gui, and the model does far more raster reads than the GUI.
+from src.gui.utils.warning_filters import apply as _apply_warning_filters
+
+_apply_warning_filters()
+
 # Marker protocol shared with cwatm_process_worker.py (keep in sync).
 MARKER = "@@CWATM_GUI:"
 MARKER_END = "@@"

@@ -113,6 +113,9 @@ class SettingsEditor(QPlainTextEdit):
         super().__init__(parent)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self._folded = set()   # section names currently folded
+        # Section names locked by the experience level (Beginner/Advanced): fully
+        # hidden (header + content) and non-unfoldable. Expert = empty set.
+        self._locked_sections = set()
         self._highlighter = IniHighlighter(self.document())
         # Baseline text at the last load/save; lines differing from it are drawn
         # with a light-blue background (changed but not yet saved).
@@ -129,6 +132,14 @@ class SettingsEditor(QPlainTextEdit):
         self._auto_bookmark_changed = False
         # Rows flagged red by Settings ▸ Check settingsfile (missing-file values).
         self._error_rows = set()
+        # Rows dimmed orange by Check settingsfile: missing files in a section whose
+        # gating [OPTIONS] switch is off (not important, no bookmark).
+        self._inactive_rows = set()
+        # Rows drawn a clear orange by Check settingsfile: the named file does not
+        # exist with the written extension, but the same base name DOES exist with a
+        # different known raster extension (e.g. .map written, .nc on disk). A likely
+        # wrong-extension typo, not a hard miss -> orange, NO bookmark.
+        self._wrongext_rows = set()
         # Rows drawn light-gray as alignment filler (Compare settings padding).
         self._filler_rows = set()
         # Rows drawn orange as a difference (Compare settings).
@@ -191,6 +202,20 @@ class SettingsEditor(QPlainTextEdit):
         self._error_rows = set(int(r) for r in rows)
         self._recompute_change_highlights()
 
+    def set_inactive_rows(self, rows):
+        """Mark these row numbers with a very dimmed orange background (Check
+        settingsfile: missing file in a section whose [OPTIONS] switch is off -
+        not important). Pass an empty set to clear."""
+        self._inactive_rows = set(int(r) for r in rows)
+        self._recompute_change_highlights()
+
+    def set_wrongext_rows(self, rows):
+        """Mark these row numbers with a clear orange background (Check settingsfile:
+        the file exists but with a different extension than written). No bookmark.
+        Pass an empty set to clear."""
+        self._wrongext_rows = set(int(r) for r in rows)
+        self._recompute_change_highlights()
+
     def set_filler_rows(self, rows):
         """Mark these row numbers with a light-gray background (Compare settings
         alignment filler). Pass an empty set to clear."""
@@ -213,6 +238,8 @@ class SettingsEditor(QPlainTextEdit):
         """Settings ▸ Clear checking: remove the red missing-file marks and the bookmarks
         that Check settingsfile added (the user's own bookmarks are left untouched)."""
         self._error_rows = set()
+        self._inactive_rows = set()
+        self._wrongext_rows = set()
         doc = self.document()
         block = doc.begin()
         changed = False
@@ -390,24 +417,67 @@ class SettingsEditor(QPlainTextEdit):
             doc = self.document()
 
             def _add(rows, color):
+                """Append extra selections painting `rows` with `color`.
+
+                Contiguous rows are merged into ONE selection spanning the whole run:
+                FullWidthSelection paints every line the cursor covers edge-to-edge,
+                so a multi-block cursor renders the same as the per-row selections it
+                replaces, while Qt re-scans a far shorter extra-selection list on every
+                viewport paint. Matters most in Compare settings, where diff+filler rows
+                can cover most of both panes - hundreds of selections collapse to tens
+                (report §4.3).
+
+                Merging happens WITHIN a category only: the documented colour priority
+                (changed < error < duplicate < diff < filler < current-diff) relies on
+                later categories being appended after earlier ones.
+                """
+                if not rows:
+                    return
                 fmt = QTextCharFormat()
                 fmt.setBackground(color)
                 fmt.setProperty(QTextFormat.FullWidthSelection, True)
-                for row in sorted(rows):
-                    block = doc.findBlockByNumber(row)
-                    if not block.isValid():
+                sorted_rows = sorted(rows)
+                runs = []                      # [(first_row, last_row), ...]
+                start = prev = sorted_rows[0]
+                for row in sorted_rows[1:]:
+                    if row == prev + 1:
+                        prev = row
                         continue
+                    runs.append((start, prev))
+                    start = prev = row
+                runs.append((start, prev))
+                for first, last in runs:
+                    b0 = doc.findBlockByNumber(first)
+                    if not b0.isValid():
+                        continue
+                    b1 = doc.findBlockByNumber(last)
+                    if not b1.isValid():
+                        b1 = b0
                     sel = QTextEdit.ExtraSelection()
                     sel.format = fmt
-                    cur = QTextCursor(block)
-                    cur.clearSelection()
+                    cur = QTextCursor(b0)
+                    if b1.blockNumber() > b0.blockNumber():
+                        # extend to the end of the last block in the run
+                        cur.setPosition(b1.position() + b1.length() - 1,
+                                        QTextCursor.KeepAnchor)
+                    else:
+                        cur.clearSelection()
                     sel.cursor = cur
                     selections.append(sel)
 
-            # Priority (later wins): changed (blue) < missing-file (light red) <
+            # Priority (later wins): changed (blue) < inactive-section missing file
+            # (very dimmed orange, not important) < missing-file (light red) <
             # duplicate key (STRONG red). A duplicate key is the most serious, so it is
             # drawn last and its stronger red stands out from the check-settingsfile red.
-            _add((changed_rows - dup_rows) - self._error_rows, theme.qcolor("changed_line"))
+            _add((changed_rows - dup_rows) - self._error_rows - self._inactive_rows
+                 - self._wrongext_rows,
+                 theme.qcolor("changed_line"))
+            _add((self._inactive_rows - dup_rows) - self._error_rows
+                 - self._wrongext_rows,
+                 theme.qcolor("inactive_line"))
+            # Wrong-extension (clear orange): above dimmed inactive, below missing red.
+            _add((self._wrongext_rows - dup_rows) - self._error_rows,
+                 theme.qcolor("wrongext_line"))
             _add(self._error_rows - dup_rows, theme.qcolor("error_line"))
             _add(dup_rows, theme.qcolor("duplicate_line"))
             # Compare settings: differing lines orange, alignment filler light-gray
@@ -428,6 +498,8 @@ class SettingsEditor(QPlainTextEdit):
         resets the undo stack (setPlainText) so you cannot undo past a load."""
         self._folded.clear()
         self._error_rows = set()   # a fresh file clears any Check-settingsfile flags
+        self._inactive_rows = set()  # and the dimmed inactive-section marks
+        self._wrongext_rows = set()  # and the wrong-extension orange marks
         self._filler_rows = set()  # and any Compare-settings alignment filler
         self._diff_rows = set()    # and any Compare-settings diff marks
         self._current_diff_rows = set()
@@ -435,6 +507,8 @@ class SettingsEditor(QPlainTextEdit):
         self.setPlainText(text)   # recreates blocks -> bookmarks/marks cleared
         self._last_change_block = -1   # a fresh load is not a "change" to jump to
         self._recompute_change_highlights()
+        # Note: the experience-level lock is re-applied by the main window after a
+        # load (it recomputes the locked set from the freshly loaded sections).
         self.foldingChanged.emit()
         self.bookmarksChanged.emit()
 
@@ -513,21 +587,70 @@ class SettingsEditor(QPlainTextEdit):
     def is_folded(self, name):
         return name in self._folded
 
+    def is_locked(self, name):
+        """True if ``name`` is locked by the experience level (fully hidden)."""
+        return name in self._locked_sections
+
+    def set_locked_sections(self, names):
+        """Set the sections locked by the experience level: locked sections are
+        **fully hidden** - both the ``[SECTION]`` header line and all its content
+        blocks are made invisible (still saved/searched, just not shown). Unlocked
+        sections are restored to visible, honouring the user's own fold state
+        (a user-folded section keeps its header visible + content hidden). Passing
+        an empty set (Expert) shows everything. Locked blocks are never counted as
+        'folded' - ``_folded`` stays the user's own fold set."""
+        self._locked_sections = set(names) & set(self.section_names())
+        doc = self.document()
+        changed = False
+        for sec, start, end in self._section_spans():
+            if sec in self._locked_sections:
+                # Hide the whole section (header + content).
+                for n in range(start, end + 1):
+                    blk = doc.findBlockByNumber(n)
+                    if blk.isValid() and blk.isVisible():
+                        blk.setVisible(False)
+                        changed = True
+            else:
+                # Unlocked: header always visible; content visible unless the user
+                # folded this section normally.
+                folded = sec in self._folded
+                for n in range(start, end + 1):
+                    blk = doc.findBlockByNumber(n)
+                    if not blk.isValid():
+                        continue
+                    want = True if n == start else (not folded)
+                    if blk.isVisible() != want:
+                        blk.setVisible(want)
+                        changed = True
+        if changed:
+            self._folds_updated()
+        else:
+            self.foldingChanged.emit()
+
     def toggle_section(self, name):
+        # A locked section is hidden entirely - never let it be toggled open.
+        if name in self._locked_sections:
+            return
         self._set_folded(name, name not in self._folded)
 
     def fold_all(self):
         self.apply_folds(set(self.section_names()))
 
     def unfold_all(self):
+        # Unfold every (non-locked) section; locked sections stay fully hidden.
         self.apply_folds(set())
 
     def apply_folds(self, names):
-        """Make exactly ``names`` the folded sections (others unfolded)."""
-        names = set(names)
+        """Make exactly ``names`` the folded sections (others unfolded).
+        Experience-level **locked** sections are skipped entirely - they stay
+        fully hidden (managed by ``set_locked_sections``) and are never counted
+        as 'folded'."""
+        names = set(names) - self._locked_sections
         doc = self.document()
         changed = False
         for sec, start, end in self._section_spans():
+            if sec in self._locked_sections:
+                continue  # fully hidden, not part of the fold set
             fold = sec in names
             for n in range(start + 1, end + 1):
                 blk = doc.findBlockByNumber(n)
@@ -586,7 +709,9 @@ class SettingsEditor(QPlainTextEdit):
             return
         no = block.blockNumber()
         for sec, start, end in self._section_spans():
-            if start < no <= end and sec in self._folded:
+            # Never unfold a locked section (experience level keeps it hidden).
+            if start < no <= end and sec in self._folded \
+                    and sec not in self._locked_sections:
                 self._set_folded(sec, False)
         self.ensureCursorVisible()
 
@@ -649,6 +774,10 @@ class SettingsEditor(QPlainTextEdit):
         cursor.insertText(text)
         cursor.endEditBlock()
         self.apply_folds(folds)
+        # The whole document was re-inserted (all blocks visible again) - re-hide
+        # the experience-level locked sections.
+        if self._locked_sections:
+            self.set_locked_sections(self._locked_sections)
         block = self.document().findBlockByNumber(min(line, self.blockCount() - 1))
         cursor = self.textCursor()
         cursor.setPosition(block.position())

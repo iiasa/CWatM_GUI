@@ -11,10 +11,10 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QPlainTextEdit, QStatusBar, QFrame,
     QLineEdit, QApplication, QScrollArea, QToolTip,
     QSizePolicy, QMessageBox, QDialog, QInputDialog, QFileDialog,
-    QSplitter, QTextBrowser
+    QSplitter, QTextBrowser, QTabWidget, QCheckBox
 )
-from PySide6.QtCore import Qt, QEvent, QTimer, QSettings, QUrl
-from PySide6.QtGui import QFont, QPixmap, QIcon, QTextCursor, QImage
+from PySide6.QtCore import Qt, QEvent, QTimer, QSettings, QUrl, QDate
+from PySide6.QtGui import QFont, QPixmap, QIcon, QTextCursor, QTextDocument, QImage
 import re
 import sys
 import os
@@ -45,6 +45,30 @@ from src.gui.components.output_box import OutputBoxMixin
 import cwatm.version as version
 
 log = get_logger("main_window")
+
+# Experience level (Beginner -> Advanced -> Expert -> Beginner). Each level
+# defines which settings sections may be unfolded; every other section is kept
+# folded, non-unfoldable and its header drawn gray. Expert unlocks everything.
+_EXPERIENCE_LEVELS = ["Beginner", "Advanced", "Expert"]
+_BEGINNER_SECTIONS = {
+    "[FILE_PATHS]", "[MASK_OUTLET]", "[TIME-RELATED_CONSTANTS]", "[OUTPUT]",
+}
+_ADVANCED_SECTIONS = _BEGINNER_SECTIONS | {
+    "[OPTIONS]", "[INITITIAL CONDITIONS]", "[METEO]", "[EVAPORATION]",
+}
+# Sections a given level is allowed to unfold (Expert = all -> None means "no
+# restriction").
+_LEVEL_ALLOWED = {
+    "Beginner": _BEGINNER_SECTIONS,
+    "Advanced": _ADVANCED_SECTIONS,
+    "Expert": None,
+}
+# Level button background (RGB; drawn at 50% transparency).
+_LEVEL_COLORS = {
+    "Beginner": "144, 238, 144",   # light green
+    "Advanced": "173, 216, 230",   # light blue
+    "Expert":   "180, 180, 180",   # gray
+}
 
 
 class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
@@ -117,6 +141,10 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.text_area = None
         self.text_display = None
         self.filename_label = None
+        self.workdir_label = None
+        # Working directory override (File > Change Working Dir). None = derive it
+        # from the settings file's own folder, which is the default.
+        self._working_dir_override = None
         self.pathout_field = None
         self.maskmap_field = None
         self.run_cwatm_button = None
@@ -145,13 +173,16 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.cwatm_worker = None
         self._run_start_time = None  # wall-clock start of the current run (elapsed/ETA)
         self._baseline_fields = {}   # field values at last load/save (changed-fields hint)
-        self._replace_dialog = None  # Settings > Replace dialog (created on demand)
+        # Combined Find & Replace dialog (non-modal, created on demand; Ctrl+F
+        # opens it on the Find tab, Ctrl+H on the Replace tab)
+        self._find_dialog = None
         self.output_file_path = None  # Path to the output file when checkbox is checked
         self._output_file_handle = None  # file handle kept open for the whole run
         self._output_file_override = None  # custom output-box file set via Configure menu
         self._pathout_warning = ""  # PathOut-missing warning (checked only on load/save)
         self._mask_context = None   # in-memory mask for gauge checks (built on load/save)
         self._mask_context_key = None  # MaskMap value the cached mask was built from
+        self._mask_context_built = False  # has a build been ATTEMPTED for that key?
         # Recent settings files (History menu), persisted across sessions
         self._settings = QSettings("IIASA", "CWatM_GUI")
         # Restore the global display-decimals setting (Configure > Show Decimals).
@@ -160,6 +191,14 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         # Restore the initial map-transparency setting (Configure > Transparency).
         display_format.set_transparency(
             self._settings.value("display/transparency", 100, type=int))
+        # Settings-editor font size in px ('+' / '-' buttons right of Down),
+        # persisted across sessions (editor/font_size)
+        self._editor_font_size = max(6, min(32,
+            self._settings.value("editor/font_size", 13, type=int)))
+        # Experience level (Beginner/Advanced/Expert) - restricts which settings
+        # sections can be unfolded; persisted across sessions (editor/level)
+        lvl = self._settings.value("editor/level", "Expert")
+        self._experience_level = lvl if lvl in _EXPERIENCE_LEVELS else "Expert"
         rf = self._settings.value("recent_files", [])
         if isinstance(rf, str):
             rf = [rf]
@@ -221,8 +260,12 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         Args:
             parent_layout: The parent layout to add the header to
         """
-        header_layout = QHBoxLayout()
-        
+        # The whole banner lives in a container widget so Configure ▸ Show Header
+        # can hide it (setVisible(False)) and everything below moves up.
+        banner_widget = QWidget()
+        header_layout = QHBoxLayout(banner_widget)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
         # CWatM icon
         try:
             icon_label = QLabel()
@@ -277,8 +320,15 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             iiasa_label = QLabel("IIASA")
             iiasa_label.setStyleSheet("color: blue; font-weight: bold;")
             header_layout.addWidget(iiasa_label)
-        
-        parent_layout.addLayout(header_layout)
+
+        self._banner_widget = banner_widget
+        parent_layout.addWidget(banner_widget)
+        # Apply the persisted Show Header state (default ON) at startup.
+        try:
+            show_header = self._settings.value("display/show_header", True, type=bool)
+        except Exception:
+            show_header = True
+        banner_widget.setVisible(bool(show_header))
 
     def _update_interface_font(self):
         """Size the banner interface text to the current window width so it shrinks
@@ -298,47 +348,265 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self._cap_output_box_width()
 
     def _cap_output_box_width(self):
-        """Cap the output box width at the right edge of the End Date field, so the
-        box ends where the calendar fields end."""
+        """One shared width for the date row, the output box and the date
+        timeline: everything ends at the right edge of the last element of the
+        date row (the End Date field, or its 'Pick a date' button when the
+        web-style picker is on)."""
         sa = getattr(self, "cwatminfo_box", None)
         dm = getattr(self, "date_manager", None)
         end = getattr(dm, "end_date_edit", None) if dm else None
         if sa is None or end is None:
             return
         right = end.geometry().right()
+        btn = getattr(dm, "_cal_buttons", {}).get('end')
+        if btn is not None and btn.isVisible():
+            right = max(right, btn.geometry().right())
         if right > 150:  # only once the date row has actually been laid out
             # Fixed width (not just a maximum) so the box keeps this width and the
             # trailing stretch in its container pins it to the left instead of centring.
             sa.setFixedWidth(right)
+            tl = getattr(dm, "timeline", None)
+            if tl is not None:
+                tl.setFixedWidth(right)
 
     def find_text(self):
-        """Prompt for a search string and find it in the settings (.ini) editor."""
+        """Settings > Find (Ctrl+F): the combined Find & Replace window, Find tab."""
+        self._open_find_dialog(0)
+
+    def _open_find_dialog(self, tab):
+        """Open (or raise) the combined, non-modal Find & Replace window on tab
+        0 = Find (Find Next / Count / Close) or 1 = Replace (Find next / Replace /
+        Replace all / Close). One shared "Find:" box above the tabs and one shared
+        status bar below them; F3 / Shift+F3 keep working while it is open."""
         if getattr(self, "text_area", None) is None:
             return
-        text, ok = QInputDialog.getText(self, "Find", "Find text:")
-        if ok and text:
-            self._last_search = text
-            self._find_in_editor(text)
+        if self._find_dialog is not None:
+            dlg = self._find_dialog
+            dlg._tabs.setCurrentIndex(tab)
+            if tab == 1:
+                # Entering the Replace tab with a selection auto-ticks
+                # "Replace all in selection" (currentChanged does not fire
+                # when the tab was already active).
+                dlg._sync_sel_check(auto_tick=True)
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
+            dlg._edit.setFocus()
+            dlg._edit.selectAll()
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Find & Replace")
+        lay = QVBoxLayout(dlg)
+
+        # Shared search box above the tabs (both tabs search the same text).
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Find:"))
+        find_edit = QLineEdit(getattr(self, "_last_search", ""))
+        find_edit.selectAll()
+        top.addWidget(find_edit, 1)
+        lay.addLayout(top)
+
+        tabs = QTabWidget()
+        lay.addWidget(tabs)
+
+        # --- Find tab: Find Next / Count / Close
+        find_tab = QWidget()
+        fgrid = QGridLayout(find_tab)
+        next_btn = QPushButton("Find Next")
+        count_btn = QPushButton("Count")
+        count_btn.setToolTip("Count the matches in the whole file")
+        close_btn = QPushButton("Close")
+        fgrid.addWidget(next_btn, 0, 0)
+        fgrid.addWidget(count_btn, 0, 1)
+        fgrid.addWidget(close_btn, 0, 2)
+        tabs.addTab(find_tab, "Find")
+
+        # --- Replace tab: the former Replace window (minus its own Find box)
+        rep_tab = QWidget()
+        rgrid = QGridLayout(rep_tab)
+        rgrid.addWidget(QLabel("Replace with:"), 0, 0)
+        replace_edit = QLineEdit()
+        rgrid.addWidget(replace_edit, 0, 1, 1, 3)
+        rfind_btn = QPushButton("Find next")
+        replace_btn = QPushButton("Replace")
+        all_btn = QPushButton("Replace all")
+        rclose_btn = QPushButton("Close")
+        rgrid.addWidget(rfind_btn, 1, 0)
+        rgrid.addWidget(replace_btn, 1, 1)
+        rgrid.addWidget(all_btn, 1, 2)
+        rgrid.addWidget(rclose_btn, 1, 3)
+        # Only checkable while the editor has a selection; auto-ticked when the
+        # Replace tab is entered with a selection already made.
+        sel_check = QCheckBox("Replace all in selection")
+        sel_check.setToolTip(
+            "Replace all only inside the current editor selection")
+        rgrid.addWidget(sel_check, 2, 0, 1, 4)
+        tabs.addTab(rep_tab, "Replace")
+
+        # The window's own status bar (match counts, "not found", replace results).
+        status = QLabel("")
+        status.setFrameStyle(QFrame.StyledPanel | QFrame.Sunken)
+        lay.addWidget(status)
+        dlg._tabs = tabs
+        dlg._edit = find_edit
+        dlg._status = status
+
+        # Keep _last_search in sync while typing, so the F3/Shift+F3 menu
+        # shortcuts search for what the box shows.
+        find_edit.textChanged.connect(
+            lambda text: setattr(self, "_last_search", text))
+
+        def _find_next():
+            text = find_edit.text()
+            if not text:
+                return
+            status.setText("" if self._find_in_editor(text)
+                           else f"'{text}' not found")
+
+        def _count():
+            text = find_edit.text()
+            if not text:
+                return
+            # Same case-insensitivity as the editor's find(); non-overlapping.
+            n = self.text_area.toPlainText().lower().count(text.lower())
+            status.setText(f"{n} match(es) in the file")
+
+        def _replace_one():
+            text = find_edit.text()
+            if not text:
+                return
+            cursor = self.text_area.textCursor()
+            if cursor.hasSelection() and cursor.selectedText().lower() == text.lower():
+                cursor.insertText(replace_edit.text())
+            _find_next()
+
+        def _replace_all():
+            text = find_edit.text()
+            if not text:
+                return
+            count = 0
+            rep = replace_edit.text()
+            if sel_check.isChecked():
+                # Replace only inside the current editor selection. Walk the
+                # document with QTextDocument.find (same default case-
+                # insensitivity as the widget's find) and shift the selection
+                # end by each replacement's length difference.
+                doc = self.text_area.document()
+                cursor = self.text_area.textCursor()
+                end = cursor.selectionEnd()
+                found = doc.find(text, cursor.selectionStart())
+                while not found.isNull() and found.selectionEnd() <= end:
+                    end += len(rep) - (found.selectionEnd()
+                                       - found.selectionStart())
+                    found.insertText(rep)
+                    count += 1
+                    found = doc.find(text, found.position())
+                self.text_area.reveal_cursor()
+                status.setText(f"Replaced {count} occurrence(s) in the selection")
+                return
+            cursor = self.text_area.textCursor()
+            cursor.movePosition(QTextCursor.Start)
+            self.text_area.setTextCursor(cursor)
+            while self.text_area.find(text):
+                found = self.text_area.textCursor()
+                found.insertText(rep)
+                count += 1
+            # The last replacement may sit in a folded section - unfold it
+            self.text_area.reveal_cursor()
+            status.setText(f"Replaced {count} occurrence(s)")
+
+        next_btn.clicked.connect(_find_next)
+        count_btn.clicked.connect(_count)
+        rfind_btn.clicked.connect(_find_next)
+        replace_btn.clicked.connect(_replace_one)
+        all_btn.clicked.connect(_replace_all)
+        for b in (close_btn, rclose_btn):
+            b.clicked.connect(dlg.close)
+        find_edit.returnPressed.connect(_find_next)
+        replace_edit.returnPressed.connect(_replace_one)
+
+        # --- "Replace all in selection" enable/tick rules:
+        # no selection -> unchecked and disabled; a selection made while the
+        # window is open -> enabled (user toggles); entering the Replace tab
+        # with a selection already made -> enabled AND auto-ticked.
+        def _sync_sel_check(auto_tick=False):
+            has = self.text_area.textCursor().hasSelection()
+            sel_check.setEnabled(has)
+            if not has:
+                sel_check.setChecked(False)
+            elif auto_tick:
+                sel_check.setChecked(True)
+
+        def _on_selection_changed():
+            _sync_sel_check(auto_tick=False)
+
+        def _on_tab_changed(index):
+            if index == 1:
+                _sync_sel_check(auto_tick=True)
+
+        self.text_area.selectionChanged.connect(_on_selection_changed)
+        tabs.currentChanged.connect(_on_tab_changed)
+        dlg._sync_sel_check = _sync_sel_check
+        # The menu shortcuts are window-scoped -> mirror them on the dialog so
+        # F3 / Shift+F3 also work while the Find window itself has focus.
+        from PySide6.QtGui import QShortcut, QKeySequence
+        QShortcut(QKeySequence("F3"), dlg, activated=self.find_next)
+        QShortcut(QKeySequence("Shift+F3"), dlg, activated=self.find_previous)
+
+        tabs.setCurrentIndex(tab)
+        _sync_sel_check(auto_tick=(tab == 1))   # initial checkbox state
+
+        def _on_closed(*_):
+            # Stop tracking the editor selection for this (closed) window.
+            try:
+                self.text_area.selectionChanged.disconnect(_on_selection_changed)
+            except Exception:
+                pass
+            self._find_dialog = None
+
+        self._find_dialog = dlg
+        dlg.finished.connect(_on_closed)
+        dlg.setModal(False)  # keep the editor reachable while searching
+        dlg.show()
+        # Shift 200 px left of the default (parent-centred) position so the
+        # window covers less of the editor text it is searching.
+        dlg.move(dlg.x() - 200, dlg.y())
+        find_edit.setFocus()
 
     def find_next(self):
-        """Find the next occurrence of the last searched text (re-runs Find if none)."""
+        """Find the next occurrence of the last searched text (opens Find if none)."""
         text = getattr(self, "_last_search", "")
         if text:
-            self._find_in_editor(text)
+            if not self._find_in_editor(text) and self._find_dialog is not None:
+                self._find_dialog._status.setText(f"'{text}' not found")
         else:
             self.find_text()
 
-    def _find_in_editor(self, text):
-        """Search forward from the cursor; wrap to the top if not found. Returns bool.
-        A match inside a folded section unfolds that section (reveal_cursor)."""
-        if self.text_area.find(text):
+    def find_previous(self):
+        """Find the previous occurrence of the last searched text (backwards, wraps)."""
+        text = getattr(self, "_last_search", "")
+        if text:
+            if not self._find_in_editor(text, backward=True) \
+                    and self._find_dialog is not None:
+                self._find_dialog._status.setText(f"'{text}' not found")
+        else:
+            self.find_text()
+
+    def _find_in_editor(self, text, backward=False):
+        """Search from the cursor (forward, or backward with ``backward=True``);
+        wrap around if not found. Returns bool. A match inside a folded section
+        unfolds that section (reveal_cursor)."""
+        flags = QTextDocument.FindFlag.FindBackward if backward \
+            else QTextDocument.FindFlags()
+        if self.text_area.find(text, flags):
             self.text_area.reveal_cursor()
             return True
-        # Wrap around: jump to the top and search again
+        # Wrap around: jump to the far end and search again
         cursor = self.text_area.textCursor()
-        cursor.movePosition(QTextCursor.Start)
+        cursor.movePosition(QTextCursor.End if backward else QTextCursor.Start)
         self.text_area.setTextCursor(cursor)
-        if self.text_area.find(text):
+        if self.text_area.find(text, flags):
             self.text_area.reveal_cursor()
             return True
         return False
@@ -412,6 +680,14 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.date_manager.start_date_edit.dateChanged.connect(self.on_field_changed)
         self.date_manager.spin_date_edit.dateChanged.connect(self.on_field_changed)
         self.date_manager.end_date_edit.dateChanged.connect(self.on_field_changed)
+        # The calendar popups dim days outside the meteo-forcing coverage
+        self.date_manager.set_forcing_provider(self._forcing_range_for_calendar)
+        # Web-style picker (Configure > Web-style date picker), persisted
+        self.date_manager.set_web_picker(
+            self._settings.value("display/date_picker_web", True, type=bool))
+        # Three-handle date timeline (Configure > Date timeline), persisted
+        self.date_manager.set_timeline_visible(
+            self._settings.value("display/date_timeline", True, type=bool))
         
         # PathOut controls
         self.create_pathout_controls(left_layout)
@@ -445,29 +721,45 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         """Create file loading controls"""
         load_layout = QHBoxLayout()
         load_layout.setSpacing(5)  # Minimal horizontal spacing
-        load_layout.setContentsMargins(0, 1, 0, 1)  # Minimal vertical margins
+        load_layout.setContentsMargins(0, 0, 0, 0)  # No vertical margins: keeps the
+        # "Working directory:" line tight under the "Loaded:" line
 
         self.filename_label = QLabel("No file loaded")
         self._filename_state = "none"  # none / loaded / saveas / error
-        self._apply_filename_state()
-        # 2pt larger font, kept via QFont so the later setStyleSheet calls (which set
-        # only colour/weight) do not reset the size.
-        _fl_font = self.filename_label.font()
-        if _fl_font.pointSize() > 0:
-            _fl_font.setPointSize(_fl_font.pointSize() + 2)
-            self.filename_label.setFont(_fl_font)
+        self.filename_label.setContentsMargins(0, 0, 0, 0)
         load_layout.addWidget(self.filename_label)
 
         # The settings "Title" value, shown right of "Loaded:" in the same colour
+        # and size, so the two read as one line.
         self.title_label = QLabel("")
-        _tl_font = self.title_label.font()
-        if _tl_font.pointSize() > 0:
-            _tl_font.setPointSize(_tl_font.pointSize() + 2)
-            self.title_label.setFont(_tl_font)
         load_layout.addWidget(self.title_label)
+
+        # Both parts of the "Loaded:" line 1 pt bigger than the default (kept via
+        # QFont so the setStyleSheet calls, which set only colour, do not reset it)
+        for _lbl in (self.filename_label, self.title_label):
+            _f = _lbl.font()
+            if _f.pointSize() > 0:
+                _f.setPointSize(_f.pointSize() + 1)
+                _lbl.setFont(_f)
+        self._apply_filename_state()
 
         load_layout.addStretch()
         parent_layout.addLayout(load_layout)
+
+        # Second line, under "Loaded: ...": the folder the settings file lives in.
+        # Hidden while no file is loaded. 1pt smaller than the Loaded line (kept via
+        # QFont so the later setStyleSheet calls, which set only colour, do not
+        # reset the size).
+        self.workdir_label = QLabel("")
+        _wd_font = self.workdir_label.font()
+        if _wd_font.pointSize() > 1:
+            _wd_font.setPointSize(_wd_font.pointSize() - 1)
+            self.workdir_label.setFont(_wd_font)
+        self.workdir_label.setContentsMargins(0, 0, 0, 0)
+        self.workdir_label.setToolTip("Folder of the loaded settings file")
+        self.workdir_label.setVisible(False)
+        parent_layout.addWidget(self.workdir_label)
+
         parent_layout.addSpacing(1)  # Minimal spacing after file controls
         
         
@@ -549,12 +841,16 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.cwatminfo_box.setPlaceholderText("CWatM output will appear here...")
         self.cwatminfo_box.setMaximumBlockCount(5000)  # scrollback limit (lines)
         self.cwatminfo_box.setLineWrapMode(QPlainTextEdit.WidgetWidth)
-        # Make height responsive to screen size. Kept deliberately compact so the
-        # whole left panel (output box + progress clock) fits on a laptop screen
-        # without scrolling.
+        # --- Vertical budget (laptop -> desktop): the run button (h/26, 28-38 px,
+        # set in create_run_cwatm_button above), output box (h/5, 100-260 px) and
+        # clock row (h/6, 110-220 px) are all sized from the screen height.
+        # Everything above the output box (banner, menu, file/date/path/gauge
+        # rows, run button) needs ~420-470 px, so on a ~700 px laptop screen the
+        # box and clock must shrink for the column to fit without scrolling,
+        # while a >=1000 px desktop screen gets the full sizes.
         screen_height = QApplication.primaryScreen().availableGeometry().height()
-        min_height = max(120, screen_height // 9)
-        max_height = min(260, screen_height // 4)
+        min_height = max(100, screen_height // 10)
+        max_height = min(260, screen_height // 5)
         self.cwatminfo_box.setMinimumHeight(min_height)
         self.cwatminfo_box.setMaximumHeight(max_height)
         # Output box: modest minimum width; the maximum is capped at the right edge of
@@ -585,7 +881,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         # Progress clock - right side with container for positioning (10px up)
         progress_container = QWidget()
         progress_container_layout = QVBoxLayout(progress_container)
-        progress_container_layout.setContentsMargins(0, 0, 0, 0)  # Shift 10px up (negative top margin, compensate bottom)
+        # Negative top margin pulls the clock close under the output box
+        # (the left panel's QWidget margin/padding cascade pushes it down)
+        progress_container_layout.setContentsMargins(0, -30, 0, 0)
         progress_container_layout.setSpacing(0)  # No spacing in container
         
         self.progress_clock = ProgressClock()
@@ -594,9 +892,10 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         # run time is drawn INSIDE the clock face (set_time_lines), so the
         # diameter is a bit larger than it was with the external label.
         screen_width = QApplication.primaryScreen().availableGeometry().width()
-        # Size by both screen width and height so a short laptop screen shrinks the
-        # clock enough for the whole left column to fit (still within 150-220px).
-        clock_size = max(150, min(220, screen_width // 8, screen_height // 4))
+        # Size by both screen width and height (see the vertical-budget note
+        # above): h/6 shrinks the clock to ~120 px on a laptop screen so the
+        # whole left column fits; capped at 220 px on big screens.
+        clock_size = max(110, min(220, screen_width // 8, screen_height // 6))
         self.progress_clock.setFixedSize(clock_size, clock_size)
 
         # Clock on the left, live discharge sparkline to its right (same row) so the
@@ -607,8 +906,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         clock_row.addWidget(self.progress_clock)
 
         self.discharge_sparkline = DischargeSparkline()
-        self.discharge_sparkline.setFixedHeight(clock_size)
-        self.discharge_sparkline.setMinimumWidth(max(220, clock_size + 40))
+        self.discharge_sparkline.setFixedHeight(max(60, clock_size - 40))
+        # 15% wider than before (previously max(220, clock_size + 40)).
+        self.discharge_sparkline.setMinimumWidth(int(max(220, clock_size + 40) * 1.15))
         clock_row.addWidget(self.discharge_sparkline)
         clock_row.addStretch()
         progress_container_layout.addLayout(clock_row)
@@ -643,7 +943,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.pathout_field.setPlaceholderText("Enter or edit path here...")
         # Use responsive height for input fields
         screen_height = QApplication.primaryScreen().availableGeometry().height()
-        input_height = max(26, min(30, screen_height // 28))
+        input_height = max(24, min(28, screen_height // 28))  # 2px tighter row
         self.pathout_field.setMinimumHeight(input_height)
         self.pathout_field.setMinimumWidth(120)  # Same width as MaskMap field
         self.pathout_field.setStyleSheet(self._field_style())
@@ -681,7 +981,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.maskmap_field.setPlaceholderText("Enter or edit mask map path here...")
         # Use responsive height for input fields
         screen_height = QApplication.primaryScreen().availableGeometry().height()
-        input_height = max(26, min(30, screen_height // 28))
+        input_height = max(24, min(28, screen_height // 28))  # 2px tighter row
         self.maskmap_field.setMinimumHeight(input_height)
         self.maskmap_field.setMinimumWidth(120)  # Same width as PathOut field
         self.maskmap_field.setStyleSheet(self._field_style())
@@ -710,7 +1010,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.gauges_field = QLineEdit()
         self.gauges_field.setPlaceholderText("Enter or edit gauges here...")
         screen_height = QApplication.primaryScreen().availableGeometry().height()
-        input_height = max(26, min(30, screen_height // 28))
+        input_height = max(24, min(28, screen_height // 28))  # 2px tighter row
         self.gauges_field.setMinimumHeight(input_height)
         self.gauges_field.setMinimumWidth(120)
         self.gauges_field.setStyleSheet(self._field_style())
@@ -733,7 +1033,8 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             try:
                 path = self.file_manager.get_current_file_path()
                 if path:
-                    content = open(path, encoding="utf-8", errors="ignore").read()
+                    with open(path, encoding="utf-8", errors="ignore") as _f:
+                        content = _f.read()
             except Exception:
                 content = ""
         updates = {}
@@ -773,12 +1074,19 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         entry has changed since the last build (on save)."""
         content = self._live_content()
         maskmap = self.maskmap_field.text().strip() if getattr(self, "maskmap_field", None) else ""
-        if not force and self._mask_context is not None and maskmap == self._mask_context_key:
-            return  # MaskMap unchanged - keep the cached mask
+        # Guard on "a build was attempted for this MaskMap", NOT on "a mask exists":
+        # build_mask_context returns None whenever the mask cannot be built (mid-typing
+        # a MaskMap value, missing ups.nc, ...), and keying off _mask_context would then
+        # never cache that outcome - so the full temp-.ini + `mainwarm -vgm` run repeated
+        # on every field edit (report §2.1). A failed build is cached like a successful
+        # one; Save / Save As / load pass force=True and retry it.
+        if not force and self._mask_context_built and maskmap == self._mask_context_key:
+            return  # MaskMap unchanged - keep the cached result (mask or None)
         settings_file = self.file_manager.get_current_file_path()
         from src.gui.widgets.basin_viewer import build_mask_context  # lazy (§4.1)
         self._mask_context = build_mask_context(settings_file, content)
         self._mask_context_key = maskmap
+        self._mask_context_built = True
         # Small hint when a MaskMap is defined but its mask could not be built
         # (e.g. coordinate MaskMap without a resolvable ups.nc, or missing mask file),
         # so the gauge check is silently skipped.
@@ -858,13 +1166,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             config = None
         from src.gui.widgets.basin_viewer import _resolve_settings_placeholders
 
-        base_dir = ""
-        try:
-            cur = self.file_manager.get_current_file_path()
-            if cur:
-                base_dir = os.path.dirname(cur)
-        except Exception:
-            base_dir = ""
+        # Relative paths resolve against the working directory (the settings file's
+        # folder unless File > Change Working Dir overrode it).
+        base_dir = self.working_dir()
 
         _EXT = (r'\.(nc|nc4|tif|tiff|map|txt|csv|xlsx?|geojson|json|asc|img|bil|'
                 r'hdf5?|h5|pcr|ldd|dat|bin)(\*|"|\b|$)')
@@ -904,21 +1208,179 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             except Exception:
                 return True   # never flag on a lookup error
 
+        # Interchangeable raster extensions in CWatM: a map named .map/.tif/.nc may
+        # actually be on disk under one of the others.
+        _ALT_EXTS = ('.nc', '.nc4', '.tif', '.tiff', '.map')
+
+        def wrong_extension_alt(p):
+            """If the exact file p is missing but the SAME base name exists with a
+            different known raster extension (e.g. .map written, .nc on disk), return
+            that existing alternative path; else None. Best-effort, never raises."""
+            p = p.strip().strip('"')
+            if not p or any(c in p for c in '*?'):
+                return None
+            if not os.path.isabs(p) and base_dir:
+                p = os.path.join(base_dir, p)
+            root, ext = os.path.splitext(p)
+            if not ext or ext.lower() not in _ALT_EXTS:
+                return None
+            try:
+                for alt in _ALT_EXTS:
+                    if alt == ext.lower():
+                        continue
+                    cand = root + alt
+                    if os.path.exists(cand) or _glob.glob(cand + '*'):
+                        return cand
+            except Exception:
+                return None
+            return None
+
         # Fresh run: drop any red/bookmarks from a previous check first.
         self.text_area.clear_checking()
+
+        # Sections whose keys CWatM only reads when their [OPTIONS] switch is on
+        # (mirrored from the checkOption(...) guards in cwatm/, read-only - e.g.
+        # run_cwatm.py:65 modflow, readmeteo.py glaciers, water_demand.py:423,
+        # lakes_reservoirs.py:303, cwatm_dynamic.py:229/255, inflow.py:129,
+        # environflow.py:67). A missing FILE in such a section while the option is
+        # explicitly off is dimmed, not flagged. Unresolved placeholders and out_*
+        # keys stay global: CWatM resolves/collects those for EVERY section at
+        # parse time (ExtParser Error 116, configuration.py:272) - option off or not.
+        _SECTION_GATED_BY = {
+            'GROUNDWATER_MODFLOW': 'modflow_coupling',
+            'GLACIER': 'includeGlaciers',
+            'WATERDEMAND': 'includeWaterDemand',
+            'LAKES_RESERVOIRS': 'includeWaterBodies',
+            'RUNOFF_CONCENTRATION': 'includeRunoffConcentration',
+            'INFLOW': 'inflow',
+            'ENVIRONMENTALFLOW': 'calc_environflow',
+            'ROUTING': 'includeRouting',
+        }
+        # Finer, KEY-level gating: an individual file key CWatM only reads when an
+        # [OPTIONS] switch is on (regardless of which section it sits in), mirrored
+        # read-only from the returnBool(...)/checkOption(...) guards in cwatm/. Maps
+        # the .ini key (lowercase) -> its gating option. All entries here are DIRECT
+        # (key active only when the option is on); if a future one is inverted,
+        # handle it explicitly. Refs:
+        #   initLoad             <- load_initial            (initcondition.py:453-455)
+        #   initSave             <- save_initial            (initcondition.py:463-466)
+        #   albedoMaps           <- albedo                  (evaporationPot.py:310)
+        #   initLoad_pySnowClim  <- load_initial_pySnowClim (snow_frost.py:260-261)
+        #   initSave_pySnowClim  <- save_initial_pySnowClim (snow_frost.py:269-271)
+        #   smallLakesRes        <- useSmallLakes           (lakes_res_small.py:110-119)
+        #   smallwaterBodyDis    <- useSmallLakes           (lakes_res_small.py:137)
+        #   EnvironmentalFlowFile<- use_environflow         (environmental_need.py:69-90;
+        #                           a separate option from the [OPTIONS] calc_environflow)
+        #   irrNonPaddy_fracVegCover <- static_irrigation_map (landcoverType.py:708-709)
+        _KEY_GATED_BY = {
+            'initload': 'load_initial',
+            'initsave': 'save_initial',
+            'albedomaps': 'albedo',
+            'initload_pysnowclim': 'load_initial_pySnowClim',
+            'initsave_pysnowclim': 'save_initial_pySnowClim',
+            'smalllakesres': 'useSmallLakes',
+            'smallwaterbodydis': 'useSmallLakes',
+            'environmentalflowfile': 'use_environflow',
+            'irrnonpaddy_fracvegcover': 'static_irrigation_map',
+        }
+        # Prefix gates: every key starting with the prefix is gated by the option -
+        # covers all downscale_wordclim_<var> (prec/tavg/tmin/tmax/...) at once
+        # (readmeteo.py:162-179; NOT meteomapssamescale - that only rescales maps).
+        _KEY_GATED_BY_PREFIX = {
+            'downscale_wordclim': 'usemeteodownscaling',
+        }
+        # VALUE gates: a file key CWatM reads only when another key's NUMERIC value
+        # meets a condition (not a boolean on/off). Mirrors, read-only:
+        #   averageBaseflow / averageDischarge  <- swAbstractionFrac < 0
+        #     (water_demand.py:719-724: loadmap only inside `if swAbstractionFrac<0`;
+        #      with swAbstractionFrac >= 0 a fixed fraction is used and the files are
+        #      never read). key (lower) -> (gate key, condition).
+        _KEY_GATED_BY_VALUE = {
+            'averagebaseflow': ('swAbstractionFrac', 'neg'),
+            'averagedischarge': ('swAbstractionFrac', 'neg'),
+        }
+        disabled = {}                # SECTION (upper) -> gating option name
+        # Gating-switch lookup, flattened across ALL sections (key lower -> raw value,
+        # later sections win). CWatM reads these switches by key name from its flat
+        # dicts - checkOption() from [OPTIONS], but returnBool() from `binding`, and
+        # most fine gating switches (load_initial, albedo, useSmallLakes,
+        # use_environflow, usemeteodownscaling, ...) live OUTSIDE [OPTIONS]
+        # (e.g. [INITITIAL CONDITIONS]/[EVAPORATION]/[LAKES_RESERVOIRS]/[WATERDEMAND]),
+        # so scanning only [OPTIONS] would miss them.
+        opts = {}
+        if config is not None:
+            for sec in config.sections():
+                try:
+                    for k, v in config.items(sec):
+                        opts[k.lower()] = v
+                except Exception:
+                    continue
+
+        def _explicitly_off(opt_name):
+            """True only when a gating switch is present and set false/0/no/off.
+            A missing switch is treated as active (conservative - never hides a real
+            missing-file error), same rule as the section gating."""
+            v = (opts.get(opt_name.lower()) or "").strip().lower()
+            return v in ('false', '0', 'no', 'off')
+
+        def _value_gate_phrase(key_lower):
+            """For a VALUE-gated key, return a short summary phrase when its gate is
+            NOT met (so the file is not read), else None. Conservative: an unparseable
+            or missing gate value counts as active (flag a real miss)."""
+            entry = _KEY_GATED_BY_VALUE.get(key_lower)
+            if not entry:
+                return None
+            gate_key, cond = entry
+            raw = (opts.get(gate_key.lower()) or "").strip()
+            if cond == 'neg':          # read only when gate value < 0
+                try:
+                    val = float(raw)
+                except (TypeError, ValueError):
+                    return None
+                if val >= 0:
+                    return f"{gate_key} = {raw} >= 0 (read only when < 0)"
+            return None
+
+        def _is_modflow_input(key_lower, raw_value):
+            """True for a groundwater-MODFLOW input path/file: a PathGroundwaterModflow*
+            key itself, or any value routed through a $(PathGroundwaterModflow...)
+            placeholder (modflow_basin/topo_modflow/chanRatio/cwatm_modflow_indices/...).
+            MODFLOW input is normally preprocessed/optional, so a missing one is soft
+            (light orange, no bookmark) rather than a hard red error - but only while
+            the GROUNDWATER_MODFLOW section is active (an off section is already dimmed)."""
+            if key_lower.startswith('pathgroundwatermodflow'):
+                return True
+            return 'pathgroundwatermodflow' in (raw_value or '').lower()
+
+        for sec_u, opt in _SECTION_GATED_BY.items():
+            if _explicitly_off(opt):
+                disabled[sec_u] = opt
 
         checked = 0
         missing = []
         missing_info = []            # (row, key, value, resolved)
+        wrongext_info = []           # (row, key, value, resolved, alt_path)
+        bad_placeholders = []        # (row, key, value, [placeholder, ...])
+        inactive_info = []           # (row, kind, name, gate); kind = section|key|valuekey|modflow
+        options_rows = {}            # [OPTIONS] key (lower) -> its line row
+        gated_active_problem = set() # gated SECTION (upper) that is ON and has a red row
+        cur_section = ""
         for r, line in enumerate(content.split('\n')):
             s = line.strip()
-            if not s or s[0] in '#;[':
+            if not s or s[0] in '#;':
+                continue
+            if s[0] == '[':
+                cur_section = s.strip('[]').strip()
                 continue
             eq = s.find('=')
             if eq <= 0:
                 continue
             key = s[:eq].strip()
             value = s[eq + 1:].strip()
+            # Remember where each [OPTIONS] switch line sits, so a problem inside an
+            # enabled feature's section can be rolled up onto its option line below.
+            if cur_section.strip().upper() == 'OPTIONS':
+                options_rows[key.lower()] = r
             # Keys starting with 'path' (PathRoot/PathOut/PathMaps/...) are directory
             # paths: always checked, and only for plain existence (strict).
             is_path_key = key[:4].lower() == "path"
@@ -930,27 +1392,120 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                     resolved = _resolve_settings_placeholders(value, config)
                 except Exception:
                     resolved = value
-            if not resolved.strip() or '$(' in resolved:  # empty / unresolved -> skip
+            if not resolved.strip():
+                continue
+            if '$(' in resolved:
+                # Placeholder(s) whose referenced key/section does not exist in the
+                # settings file (e.g. $(PathRoot) with no PathRoot entry, or a typo'd
+                # $(FILE_PATHS:PathRoot)): a real error - CWatM would fail on it too.
+                # Only flaggable when the content parsed (config is not None);
+                # otherwise resolution never ran, so skip as before.
+                if config is not None:
+                    bad = sorted(set(re.findall(r'\$\(([^)]+)\)', resolved)))
+                    bad_placeholders.append((r, key, value, bad))
+                    # A red row inside an ENABLED gated feature's section rolls up.
+                    sec_u = cur_section.upper()
+                    if sec_u in _SECTION_GATED_BY and sec_u not in disabled:
+                        gated_active_problem.add(sec_u)
                 continue
             checked += 1
             if not path_exists(resolved, strict=is_path_key):
-                missing.append(r)
-                missing_info.append((r, key, value, resolved))
+                gate = disabled.get(cur_section.upper())
+                key_gate = _KEY_GATED_BY.get(key.lower())
+                if key_gate is None:
+                    kl = key.lower()
+                    for _pref, _opt in _KEY_GATED_BY_PREFIX.items():
+                        if kl.startswith(_pref):
+                            key_gate = _opt
+                            break
+                alt = None if is_path_key else wrong_extension_alt(resolved)
+                vphrase = _value_gate_phrase(key.lower())
+                if gate:
+                    # Section's option is off - not important: dim, don't flag.
+                    inactive_info.append((r, 'section', cur_section, gate))
+                elif key_gate and _explicitly_off(key_gate):
+                    # This individual key's option is off - not read: dim, don't flag.
+                    inactive_info.append((r, 'key', key, key_gate))
+                elif vphrase is not None:
+                    # Value-gated key whose gate is not met (e.g. averageDischarge with
+                    # swAbstractionFrac >= 0): not read - dim, don't flag.
+                    inactive_info.append((r, 'valuekey', key, vphrase))
+                elif _is_modflow_input(key.lower(), value):
+                    # Groundwater-MODFLOW input path/file: preprocessed/optional - dim,
+                    # don't flag (separate rule from the section gate).
+                    inactive_info.append((
+                        r, 'modflow', key,
+                        'groundwater MODFLOW input (preprocessed/optional)'))
+                elif alt is not None:
+                    # The file exists but with a different known raster extension
+                    # (likely a wrong-extension typo): orange, NO bookmark.
+                    wrongext_info.append((r, key, value, resolved, alt))
+                else:
+                    missing.append(r)
+                    missing_info.append((r, key, value, resolved))
+                    # A missing file inside an ENABLED gated feature's section rolls
+                    # up onto that feature's [OPTIONS] switch line too.
+                    sec_u = cur_section.upper()
+                    if sec_u in _SECTION_GATED_BY and sec_u not in disabled:
+                        gated_active_problem.add(sec_u)
 
         # Semantic checks (date ordering, ...) - mark their rows too.
         semantic = self._semantic_settings_problems(content, config, base_dir)
         semantic_rows = [r for r, _ in semantic if r is not None]
 
-        mark_rows = missing + semantic_rows
+        placeholder_rows = [r for r, _k, _v, _b in bad_placeholders]
+        # Roll-up: an ENABLED feature whose section has a red row gets its [OPTIONS]
+        # switch line marked red + bookmarked too (points the user at the culprit
+        # option). Only when the option line actually exists in the file.
+        rollup = []                  # (option_row, option_name, section_upper)
+        for sec_u in sorted(gated_active_problem):
+            opt = _SECTION_GATED_BY.get(sec_u)
+            orow = options_rows.get(opt.lower()) if opt else None
+            if orow is not None:
+                rollup.append((orow, opt, sec_u))
+        rollup_rows = [orow for orow, _o, _s in rollup]
+        mark_rows = missing + placeholder_rows + semantic_rows + rollup_rows
         self.text_area.set_error_rows(mark_rows)
+        # Missing files in disabled sections / behind an off key-option:
+        # dimmed orange, NO bookmark.
+        self.text_area.set_inactive_rows([r for r, _k, _n, _g in inactive_info])
+        # Wrong-extension (file exists under another raster extension):
+        # clear orange, NO bookmark.
+        self.text_area.set_wrongext_rows([r for r, _k, _v, _res, _alt in wrongext_info])
         if mark_rows:
             self.text_area.bookmark_rows(mark_rows)
 
-        # Summary to the output box.
+        # Summary to the output box. When Configure ▸ 'Write output box' is on (and
+        # a run is not already writing the log), mirror this whole summary into the
+        # output-box file too - append_to_cwatminfo writes to the open handle.
+        _own_output_file = False
+        if getattr(self, "_write_output_enabled", False):
+            _own_output_file = self._open_output_file_note("Check settingsfile")
+        try:
+            self._write_check_summary(
+                checked, missing_info, inactive_info, wrongext_info,
+                bad_placeholders, semantic, rollup)
+        finally:
+            if _own_output_file:
+                self._finalize_output_file()
+        skip_note = (f", {len(inactive_info)} dimmed (option off)"
+                     if inactive_info else "")
+        rollup_note = f", {len(rollup)} enabled option(s) flagged" if rollup else ""
+        self.status_bar.showMessage(
+            f"Check settingsfile: {len(missing)} missing file(s), "
+            f"{len(bad_placeholders)} unresolved placeholder(s), "
+            f"{len(semantic)} settings problem(s){skip_note}{rollup_note} "
+            "- see the output box")
+
+    def _write_check_summary(self, checked, missing_info, inactive_info,
+                             wrongext_info, bad_placeholders, semantic, rollup):
+        """Emit the Check settingsfile summary via append_to_cwatminfo (output box +,
+        when opened by the caller, the output-box log file)."""
         self.append_to_cwatminfo("==== Check settingsfile ====")
         if not missing_info:
+            extra = " (except disabled sections/keys, see below)" if inactive_info else ""
             self.append_to_cwatminfo(
-                f"Checked {checked} filename value(s) - all files exist.")
+                f"Checked {checked} filename value(s) - all files exist{extra}.")
         else:
             self.append_to_cwatminfo(
                 f"{len(missing_info)} of {checked} file value(s) missing "
@@ -961,6 +1516,44 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 extra = f"   ->  {resolved}" if resolved.strip() != value.strip() else ""
                 self.append_to_cwatminfo(
                     f"  line {r + 1}: {key} = {value}{extra}", is_error=True)
+        # Missing files whose gating option is off: one quiet note per section/key
+        # (the lines are dimmed orange in the editor, not red/bookmarked).
+        if inactive_info:
+            per = {}
+            for _r, kind, name, gate in inactive_info:
+                per[(kind, name, gate)] = per.get((kind, name, gate), 0) + 1
+            for (kind, name, gate), n in per.items():
+                if kind in ('valuekey', 'modflow'):
+                    # gate is already a full phrase (e.g. "swAbstractionFrac = 0.8 >= 0 …"
+                    # or "groundwater MODFLOW input …").
+                    self.append_to_cwatminfo(
+                        f"skipped {name} - {gate} "
+                        f"({n} missing file value(s) dimmed, not flagged)")
+                    continue
+                label = f"[{name}]" if kind == 'section' else name
+                self.append_to_cwatminfo(
+                    f"skipped {label} - {gate} = False "
+                    f"({n} missing file value(s) dimmed, not flagged)")
+        # Wrong-extension: the file exists under a different raster extension
+        # (marked orange, NOT bookmarked - a likely typo, not a hard miss).
+        if wrongext_info:
+            self.append_to_cwatminfo(
+                f"{len(wrongext_info)} wrong extension (file exists as another "
+                "type; marked orange, not bookmarked):")
+            for r, key, value, resolved, alt in wrongext_info:
+                self.append_to_cwatminfo(
+                    f"  line {r + 1}: {key} = {value}   ->  exists as "
+                    f"{os.path.basename(alt)}")
+        # Unresolvable placeholders (marked red + bookmarked, like missing files).
+        if bad_placeholders:
+            self.append_to_cwatminfo(
+                f"{len(bad_placeholders)} unresolved placeholder(s) - the referenced "
+                "key does not exist in the settings file:")
+            for r, key, value, bad in bad_placeholders:
+                names = ', '.join(f'$({b})' for b in bad)
+                self.append_to_cwatminfo(
+                    f"  line {r + 1}: {key} = {value}   ->  {names} not defined",
+                    is_error=True)
         # Semantic problems (marked red + bookmarked, like missing files).
         if semantic:
             self.append_to_cwatminfo(
@@ -970,9 +1563,15 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 self.append_to_cwatminfo(f"  {where}{msg}", is_error=True)
         elif not missing_info:
             self.append_to_cwatminfo("Date order (StepStart/SpinUp/StepEnd) OK.")
-        self.status_bar.showMessage(
-            f"Check settingsfile: {len(missing)} missing file(s), "
-            f"{len(semantic)} settings problem(s) - see the output box")
+        # Enabled options flagged because their feature's section has a problem.
+        if rollup:
+            self.append_to_cwatminfo(
+                f"{len(rollup)} enabled option(s) flagged - a problem exists in the "
+                "section they switch on (marked red + bookmarked):")
+            for orow, opt, sec_u in rollup:
+                self.append_to_cwatminfo(
+                    f"  line {orow + 1}: {opt} = True   ->  see the red line(s) "
+                    f"in [{sec_u}]", is_error=True)
 
     def _semantic_settings_problems(self, content, config=None, base_dir=""):
         """Semantic (not just file-existence) checks on the settings content. Returns a
@@ -1040,6 +1639,11 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             "modflow_coupling": ["path_mf6dll", "PathGroundwaterModflow",
                                  "nameModflowModel", "Modflow_resolution"],
         }
+        # Required keys checked only for "is it set" (NOT "does the path exist"):
+        # the MODFLOW input dir is preprocessed/optional (same separate rule as
+        # _is_modflow_input), so a set-but-missing PathGroundwaterModflow must not
+        # flag its option red. path_mf6dll (the solver DLL) still must exist.
+        _REQUIRE_SET_ONLY = {"pathgroundwatermodflow"}
         from src.gui.widgets.basin_viewer import _resolve_settings_placeholders
 
         def _looks_path(v):
@@ -1070,13 +1674,199 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 vk = (_find(k)[1] or "").strip()
                 if not vk:
                     issues.append(f"{k} (not set)")
-                elif _looks_path(vk):
+                elif _looks_path(vk) and k.lower() not in _REQUIRE_SET_ONLY:
                     miss, resolved = _path_missing(vk)
                     if miss:
                         extra = f" -> {resolved}" if resolved != vk else ""
                         issues.append(f"{k}{extra} (missing)")
             if issues:
                 problems.append((r_opt, f"{opt} = True but: {'; '.join(issues)}."))
+
+        # Output keywords: every `out_*` key (outside [OPTIONS]) must follow CWatM's
+        # output grammar, mirrored from cwatm/management_modules/ (do not edit there):
+        #   configuration.py: `out_*` = output key; `out_*_dir` = output directory;
+        #     `out_tss_*` = timeseries; anything else = map;
+        #   globals.py: outputTypMap / outputTypTss / outputTypTss2 (the valid types);
+        #   output.py appendinfo: maps only match `out_map_<type>` exactly - a bad map
+        #     key (e.g. OUT_MAP_AreaSum_MonthTot: AreaSum is TSS-only) is **silently
+        #     ignored** by CWatM, so F4 is the only place the user learns about it.
+        _TSS_TYPES = ('daily', 'monthtot', 'monthavg', 'monthend', 'annualtot',
+                      'annualavg', 'annualend', 'totaltot', 'totalavg')
+        _MAP_TYPES = _TSS_TYPES + ('monthmid', 'totalend', 'once', '12month')
+        _AGG = ('areasum', 'areaavg')
+
+        def _out_key_problem(key):
+            """Error message for an invalid `out_*` key, or None if it is valid."""
+            k = key.lower()
+            if k.endswith('_dir'):
+                return None                      # out_*_dir = output directory, valid
+            rest = k[4:]                          # after 'out_'
+            if rest.startswith('tss_'):
+                parts = rest[4:].split('_')
+                if parts[-1] not in _TSS_TYPES:
+                    return (f"'{parts[-1]}' is not a valid TSS time step - use one "
+                            f"of: {', '.join(_TSS_TYPES)}.")
+                if len(parts) == 1:
+                    return None                   # out_tss_<type>
+                if len(parts) == 2 and parts[0] in _AGG:
+                    return None                   # out_tss_<areasum|areaavg>_<type>
+                return (f"'{'_'.join(parts[:-1])}' is not a valid TSS aggregation - "
+                        "use OUT_TSS_<type> (point value), or "
+                        "OUT_TSS_AreaSum_<type> / OUT_TSS_AreaAvg_<type>.")
+            if rest.startswith('map_'):
+                parts = rest[4:].split('_')
+                if parts[0] in _AGG:
+                    return (f"'{parts[0]}' is only available for timeseries "
+                            "(OUT_TSS_AreaSum_... / OUT_TSS_AreaAvg_...), not for "
+                            "maps - CWatM silently ignores this key.")
+                if len(parts) == 1 and parts[0] in _MAP_TYPES:
+                    return None                   # out_map_<type>
+                return (f"'{rest[4:]}' is not a valid map time step - use "
+                        f"OUT_MAP_<type> with one of: {', '.join(_MAP_TYPES)}.")
+            return ("output keys must be OUT_TSS_..., OUT_MAP_... or OUT_..._Dir - "
+                    "CWatM silently ignores this key.")
+
+        # Output values: each comma-separated variable name of a (valid) out_* key is
+        # checked against the metaNetcdf.xml catalogue (cached in meta_netcdf.py).
+        # Mirrors CWatM's runtime check (output.py checkifvariableexists, Error 132):
+        # case-sensitive, `[index]` stripped, the special 'WaterCycle' allowed; a
+        # first item of "None" (or empty) means "output disabled" (configuration.py
+        # splitout) and is skipped. Best-effort: if the xml is unreadable, or a token
+        # is not a plain identifier, nothing is flagged.
+        import difflib
+        from src.gui.utils.meta_netcdf import all_varnames
+        _known = all_varnames()
+        _known_lower = {k.lower(): k for k in _known}
+
+        # Multi-dimensional model variables that need an index in an output value
+        # (e.g. actualET -> actualET[1]) - mirrored from the allocation lists in
+        # cwatm/hydrological_modules/ (read-only, per the hard rule):
+        #   landcoverType.py landcoverAll+landcoverVars -> (6, cells)  [_DIM6]
+        #   landcoverType.py landcoverVarsSoil + w1/w2/w3 -> (4, cells) [_DIM4]
+        #   landcoverType.py soilVars -> (soilLayers=3, 4, cells)       [_DIM3X4]
+        #   soil.py soilDepthLayer -> (soilLayers=3, cells)             [_DIM3]
+        #   evaporation.py crop lists -> (len(Crops), cells)            [_DIMCROP]
+        _DIM6 = frozenset((
+            'fracVegCover', 'interceptStor', 'availWaterInfiltration', 'interceptEvap',
+            'directRunoff', 'openWaterEvap', 'irrTypeFracOverIrr', 'fractionArea',
+            'totAvlWater', 'cropKC', 'cropKC_landCover', 'effSatAt50',
+            'effPoreSizeBetaAt50', 'rootZoneWaterStorageMin',
+            'rootZoneWaterStorageRange', 'totalPotET', 'potTranspiration',
+            'soilWaterStorage', 'infiltration', 'actBareSoilEvap', 'landSurfaceRunoff',
+            'actTransTotal', 'gwRecharge', 'gwRecharge2', 'interflow', 'actualET',
+            'pot_irrConsumption', 'act_irrConsumption', 'irrDemand', 'topWaterLayer',
+            'perc3toGW', 'capRiseFromGW', 'netPercUpper', 'netPerc', 'prefFlow'))
+        _DIM4 = frozenset((
+            'arnoBeta', 'rootZoneWaterStorageCap', 'rootZoneWaterStorageCap12',
+            'perc1to2', 'perc2to3', 'theta1', 'theta2', 'theta3', 'w1', 'w2', 'w3'))
+        _DIM3X4 = frozenset(('adjRoot', 'perc', 'capRise', 'rootDepth', 'storCap'))
+        _DIM3 = frozenset(('soildepth',))
+        _DIMCROP = frozenset((
+            'irrM3_Paddy_month_segment', 'irr_Paddy_month', 'irr_crop',
+            'irr_crop_month', 'irrM3_crop_month_segment', 'ratio_a_p_nonIrr',
+            'ratio_a_p_Irr', 'fracCrops_IrrLandDemand', 'fracCrops_Irr',
+            'areaCrops_Irr_segment', 'areaCrops_nonIrr_segment',
+            'fracCrops_nonIrrLandDemand', 'fracCrops_nonIrr', 'activatedCrops',
+            'monthCounter', 'currentKC', 'totalPotET_month', 'PET_cropIrr_m3',
+            'actTransTotal_month_Irr', 'actTransTotal_month_nonIrr', 'currentKY',
+            'Yield_Irr', 'Yield_nonIrr', 'actTransTotal_crops_Irr',
+            'actTransTotal_crops_nonIrr', 'PotET_crop', 'PotETaverage_crop_segments',
+            'totalPotET_month_segment', 'ET_crop_nonIrr', 'ET_crop_Irr',
+            'ratio_a_p_nonIrr_daily', 'ratio_a_p_Irr_daily'))
+        _HINT6 = "0..5 = forest, grassland, irrPaddy, irrNonPaddy, sealed, water"
+        _HINT4 = "0..3 = forest, grassland, irrPaddy, irrNonPaddy"
+        _HINT3 = "0..2 = soil layer"
+
+        def _num(s):
+            try:
+                return int(s.strip())
+            except ValueError:
+                return None
+
+        def _dim_problem(base, idx):
+            """Message when the index/indices of ``base`` don't match its dimension,
+            or None. Unknown variables with an index are NOT flagged (other modules
+            allocate 2-D vars we don't track)."""
+            if base in _DIM6 or base in _DIM4 or base in _DIM3:
+                n, hint = ((6, _HINT6) if base in _DIM6 else
+                           (4, _HINT4) if base in _DIM4 else (3, _HINT3))
+                kind = "per-soil-layer" if base in _DIM3 else "per-land-cover"
+                if len(idx) != 1:
+                    return (f"'{base}' is a {kind} array - it needs one index, "
+                            f"e.g. '{base}[1]' ({hint}).")
+                i = _num(idx[0])
+                if i is None or not 0 <= i < n:
+                    return f"index '[{idx[0]}]' is invalid for '{base}' - use {hint}."
+            elif base in _DIM3X4:
+                if len(idx) != 2:
+                    return (f"'{base}' is a (soil layer x land cover) array - it "
+                            f"needs two indices, e.g. '{base}[0][1]'.")
+                i0, i1 = _num(idx[0]), _num(idx[1])
+                if i0 is None or not 0 <= i0 < 3:
+                    return (f"first index '[{idx[0]}]' is invalid for '{base}' "
+                            f"({_HINT3}).")
+                if i1 is None or not 0 <= i1 < 4:
+                    return (f"second index '[{idx[1]}]' is invalid for '{base}' "
+                            f"({_HINT4}).")
+            elif base in _DIMCROP:
+                if len(idx) != 1 or _num(idx[0]) is None or _num(idx[0]) < 0:
+                    return (f"'{base}' is a per-crop array - it needs a crop index, "
+                            f"e.g. '{base}[0]'.")
+            return None
+
+        def _out_value_problems(value):
+            """List of messages for unknown output-variable names in ``value``."""
+            if not _known:
+                return []
+            items = [v.strip() for v in value.split(',')]
+            if not items or items[0] in ("", "None"):
+                return []
+            msgs = []
+            for it in items:
+                m = re.match(r'^([A-Za-z_]\w*)((?:\[[^\]]*\])*)$', it)
+                if not m:
+                    continue
+                base = m.group(1)
+                idx = re.findall(r'\[([^\]]*)\]', m.group(2))
+                if base == 'WaterCycle':
+                    continue
+                if base not in _known:
+                    hit = _known_lower.get(base.lower()) or (
+                        'WaterCycle' if base.lower() == 'watercycle' else None)
+                    if hit:
+                        msgs.append(f"'{base}' has the wrong case - CWatM is "
+                                    f"case-sensitive, use '{hit}'.")
+                    else:
+                        closest = difflib.get_close_matches(base, _known, n=1)
+                        extra = f" (closest: '{closest[0]}')" if closest else ""
+                        msgs.append(f"variable '{base}' is not in "
+                                    f"cwatm/metaNetcdf.xml{extra}.")
+                    continue
+                dmsg = _dim_problem(base, idx)
+                if dmsg:
+                    msgs.append(dmsg)
+            return msgs
+
+        section = ""
+        for i, line in enumerate(content.split('\n')):
+            s = line.strip()
+            if not s or s[0] in '#;':
+                continue
+            if s.startswith('['):
+                section = s.strip('[]').strip().upper()
+                continue
+            eq = s.find('=')
+            if eq <= 0:
+                continue
+            key = s[:eq].strip()
+            if section == "OPTIONS" or key.lower()[:4] != "out_":
+                continue
+            msg = _out_key_problem(key)
+            if msg:
+                problems.append((i, f"{key}: {msg}"))
+            elif not key.lower().endswith('_dir'):
+                for vmsg in _out_value_problems(s[eq + 1:].strip()):
+                    problems.append((i, f"{key}: {vmsg}"))
 
         # Forcing coverage: is [StepStart..StepEnd] inside the meteo forcing time axis?
         # Only when StepStart is a real date; StepEnd checked only if it is a date too.
@@ -1185,15 +1975,81 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 return name, row, tmin, tmax
         return None
 
+    def _forcing_range_for_calendar(self):
+        """(QDate, QDate) meteo-forcing coverage for the Start/Spin/End calendar
+        popups (CWatMCalendar dims days outside it), or None when unknown. Uses the
+        same _forcing_time_range as the F4 semantic check; called lazily by the
+        DateManager cache the first time a popup opens after a file load."""
+        try:
+            content = self.text_area.toPlainText()
+            if not content.strip():
+                return None
+            config = configparser.ConfigParser(interpolation=None, strict=False)
+            try:
+                config.read_string(content)
+            except Exception:
+                return None
+            rng = self._forcing_time_range(content, config, self.working_dir())
+            if rng is None:
+                return None
+            _key, _row, tmin, tmax = rng
+            return (QDate(tmin.year, tmin.month, tmin.day),
+                    QDate(tmax.year, tmax.month, tmax.day))
+        except Exception:
+            log.debug("forcing range for calendar failed", exc_info=True)
+            return None
+
     def clear_checking(self):
-        """Settings ▸ Clear checking (Shift+F4): remove the red marks and the bookmarks
-        that Settings ▸ Check settingsfile (F4) added (leaves the user's own bookmarks)."""
+        """Remove the red marks and the check-owned bookmarks that Check settingsfile
+        added (leaves the user's own bookmarks). Reached via the Check settingsfile
+        toggle (F4 a second time); see toggle_check_settings."""
         try:
             self.text_area.clear_checking()
         except Exception:
             log.debug("clear_checking failed", exc_info=True)
         self.append_to_cwatminfo("==== Clear checking: removed Check settingsfile marks ====")
         self.status_bar.showMessage("Cleared Check settingsfile marks and bookmarks")
+
+    def _checking_active(self):
+        """True when Check settingsfile marks (red / dimmed-orange rows) are currently
+        shown in the editor - i.e. there is something for Clear checking to remove."""
+        ed = getattr(self, "text_area", None)
+        if ed is None:
+            return False
+        try:
+            return bool(getattr(ed, "_error_rows", None)
+                        or getattr(ed, "_inactive_rows", None)
+                        or getattr(ed, "_wrongext_rows", None))
+        except Exception:
+            return False
+
+    def _refresh_check_settings_label(self):
+        """Flip the single Check/Clear toggle action's label + tooltip to match the
+        current state (marks shown -> 'Clear checking', else -> 'Check settingsfile')."""
+        act = getattr(self, "check_settings_action", None)
+        if act is None:
+            return
+        try:
+            if self._checking_active():
+                act.setText("Clear checking")
+                act.setToolTip("Remove the red marks and bookmarks set by Check "
+                               "settingsfile. Press again (F4) to re-check.")
+            else:
+                act.setText("Check settingsfile")
+                act.setToolTip("Check every filename value in the settings; mark + "
+                               "bookmark lines whose file does not exist. Press again "
+                               "(F4) to clear the marks.")
+        except RuntimeError:
+            pass  # the QAction's C++ object was deleted
+
+    def toggle_check_settings(self):
+        """Settings ▸ Check settingsfile (F4): a single toggle. When no check marks are
+        shown, run the check; when they are, clear them - then relabel the menu item."""
+        if self._checking_active():
+            self.clear_checking()
+        else:
+            self.check_settingsfile()
+        self._refresh_check_settings_label()
 
     def open_excel_sheet(self, sheet_name, release_sheet=None):
         """Excel menu: open ``sheet_name`` of the settings Excel_settings_file in an
@@ -1230,7 +2086,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 self, sheet_name, f"Could not resolve the Excel path:\n{excel}")
             return
         if not os.path.isabs(resolved):
-            base = os.path.dirname(self.file_manager.get_current_file_path() or "")
+            base = self.working_dir()
             if base:
                 resolved = os.path.join(base, resolved)
         if not os.path.exists(resolved):
@@ -1356,6 +2212,21 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self._set_save_dirty(True)
         self.status_bar.showMessage("Added WaterCycle output under [OUTPUT] (not saved)")
 
+    def add_output_variables(self):
+        """Tools ▸ Add output variables: open the picker of metaNetcdf.xml [Array]
+        output variables that fit the current [OPTIONS]. Clicking one inserts it at the
+        editor cursor (only on an OUT_TSS_… / OUT_MAP_… line)."""
+        if not self.file_manager.has_file_loaded():
+            self.status_bar.showMessage("Load a settings file first")
+            return
+        try:
+            from src.gui.widgets.output_variables_window import open_output_variables
+            self._output_variables_window = open_output_variables(self)
+        except Exception:
+            from src.gui.utils.gui_log import get_logger
+            get_logger("main_window").debug("Add output variables failed", exc_info=True)
+            self.status_bar.showMessage("Could not open the output-variables picker")
+
     def _default_output_file(self):
         """Default output-box file: <PathOut>/cwatm_out.txt (placeholders resolved).
         Falls back to the settings-file directory if PathOut cannot be resolved."""
@@ -1378,54 +2249,32 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         return self._output_file_override or self._default_output_file()
 
     def _on_write_output_toggled(self, checked):
-        """Mirror the 'Write output box' state to a bool and update the ☐/☑ tick glyph
-        so the toggle state is visually obvious."""
+        """Mirror the 'Write output box' state to a bool (the native checkmark shows
+        the toggle state, like Show Header and the other toggles)."""
         self._write_output_enabled = checked
-        try:
-            self.write_output_action.setText(
-                ("☑" if checked else "☐") + "  Write output box")
-        except RuntimeError:
-            log.debug("write-output action already deleted")
 
     def _on_run_subprocess_toggled(self, checked):
         """Mirror the 'Run model in separate process' state to a bool (read by
-        run_controller.run_cwatm), persist it, and update the ☐/☑ tick glyph."""
+        run_controller.run_cwatm) and persist it."""
         self._run_subprocess_enabled = checked
         self._settings.setValue("run/subprocess", checked)
-        try:
-            self.run_subprocess_action.setText(
-                ("☑" if checked else "☐") + "  Run model in separate process")
-        except RuntimeError:
-            log.debug("run-subprocess action already deleted")
 
     def _on_load_previous_toggled(self, checked):
-        """Mirror the 'Load previous settings at start' state, persist it, and update
-        the ☐/☑ tick glyph. When on, cwatm_gui.py re-opens the last settings file at
-        the next startup."""
+        """Persist the 'Load previous settings at start' state. When on, cwatm_gui.py
+        re-opens the last settings file at the next startup."""
         try:
             self._settings.setValue("startup/load_previous", bool(checked))
         except Exception:
             log.debug("persist load_previous failed", exc_info=True)
-        try:
-            self.load_previous_action.setText(
-                ("☑" if checked else "☐") + "  Load previous settings at start")
-        except RuntimeError:
-            log.debug("load-previous action already deleted")
 
     def _on_use_modflow_toggled(self, checked):
-        """Mirror the 'Use Modflow' state, persist it, update the ☐/☑ tick glyph, and
-        pre-warm flopy in the background when on (heavy import kept off the GUI thread).
-        Called at menu build with the persisted value, so 'on from the beginning' warms
-        flopy at startup too."""
+        """Persist the 'Use Modflow' state and pre-warm flopy in the background when on
+        (heavy import kept off the GUI thread). Called at menu build with the persisted
+        value, so 'on from the beginning' warms flopy at startup too."""
         try:
             self._settings.setValue("modflow/enabled", bool(checked))
         except Exception:
             log.debug("persist modflow/enabled failed", exc_info=True)
-        try:
-            self.use_modflow_action.setText(
-                ("☑" if checked else "☐") + "  Use Modflow")
-        except RuntimeError:
-            log.debug("use-modflow action already deleted")
         if checked:
             try:
                 from src.gui.utils import modflow
@@ -1434,22 +2283,56 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 log.debug("flopy pre-warm failed", exc_info=True)
 
     def _on_bookmark_change_toggled(self, checked):
-        """Mirror the 'Bookmark Change' state to the editor, persist it, and update
-        the ☐/☑ tick glyph. When on, changed lines get auto-bookmarked."""
+        """Mirror the 'Bookmark Change' state to the editor and persist it. When on,
+        changed lines get auto-bookmarked."""
         try:
             self._settings.setValue("editor/bookmark_change", bool(checked))
         except Exception:
             pass
         try:
-            self.bookmark_change_action.setText(
-                ("☑" if checked else "☐") + "  Bookmark Change")
-        except RuntimeError:
-            log.debug("bookmark-change action already deleted")
-        try:
             if getattr(self, "text_area", None) is not None:
                 self.text_area.set_auto_bookmark_changed(bool(checked))
         except Exception:
             log.debug("set_auto_bookmark_changed failed", exc_info=True)
+
+    def _on_web_picker_toggled(self, checked):
+        """Configure > Web-style date picker: switch the Start/Spin/End fields
+        between the frameless 📅 popup (on) and the classic drop-down (off)."""
+        try:
+            self._settings.setValue("display/date_picker_web", bool(checked))
+        except Exception:
+            pass
+        try:
+            self.date_manager.set_web_picker(bool(checked))
+        except Exception:
+            log.debug("web picker toggle failed", exc_info=True)
+        # Button visibility changed the date row's width -> re-sync the shared
+        # width once the layout has settled
+        QTimer.singleShot(0, self._cap_output_box_width)
+
+    def _on_date_timeline_toggled(self, checked):
+        """Configure > Date timeline: show/hide the three-handle date timeline."""
+        try:
+            self._settings.setValue("display/date_timeline", bool(checked))
+        except Exception:
+            pass
+        try:
+            self.date_manager.set_timeline_visible(bool(checked))
+        except Exception:
+            log.debug("date timeline toggle failed", exc_info=True)
+
+    def _on_show_header_toggled(self, checked):
+        """Configure > Show Header: show/hide the top banner (CWatM icon + title +
+        interface text + IIASA logo). Off = everything below moves up."""
+        try:
+            self._settings.setValue("display/show_header", bool(checked))
+        except Exception:
+            pass
+        try:
+            if getattr(self, "_banner_widget", None) is not None:
+                self._banner_widget.setVisible(bool(checked))
+        except Exception:
+            log.debug("show header toggle failed", exc_info=True)
 
     def _update_output_tooltip(self):
         """Refresh the 'Write output box' tooltip: what it does, plus the current
@@ -1604,71 +2487,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
 
     # ------------------------------------------------------------ search & replace
     def replace_text(self):
-        """Settings > Replace (Ctrl+H): find & replace in the settings editor."""
-        if self._replace_dialog is not None:
-            self._replace_dialog.show()
-            self._replace_dialog.raise_()
-            self._replace_dialog.activateWindow()
-            return
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Replace")
-        grid = QGridLayout(dlg)
-        grid.addWidget(QLabel("Find:"), 0, 0)
-        find_edit = QLineEdit()
-        grid.addWidget(find_edit, 0, 1, 1, 3)
-        grid.addWidget(QLabel("Replace with:"), 1, 0)
-        replace_edit = QLineEdit()
-        grid.addWidget(replace_edit, 1, 1, 1, 3)
-
-        find_btn = QPushButton("Find next")
-        replace_btn = QPushButton("Replace")
-        all_btn = QPushButton("Replace all")
-        close_btn = QPushButton("Close")
-        grid.addWidget(find_btn, 2, 0)
-        grid.addWidget(replace_btn, 2, 1)
-        grid.addWidget(all_btn, 2, 2)
-        grid.addWidget(close_btn, 2, 3)
-
-        def _find_next():
-            text = find_edit.text()
-            if text and not self._find_in_editor(text):
-                self.status_bar.showMessage(f"'{text}' not found")
-
-        def _replace_one():
-            text = find_edit.text()
-            if not text:
-                return
-            cursor = self.text_area.textCursor()
-            if cursor.hasSelection() and cursor.selectedText().lower() == text.lower():
-                cursor.insertText(replace_edit.text())
-            _find_next()
-
-        def _replace_all():
-            text = find_edit.text()
-            if not text:
-                return
-            count = 0
-            cursor = self.text_area.textCursor()
-            cursor.movePosition(QTextCursor.Start)
-            self.text_area.setTextCursor(cursor)
-            while self.text_area.find(text):
-                found = self.text_area.textCursor()
-                found.insertText(replace_edit.text())
-                count += 1
-            # The last replacement may sit in a folded section - unfold it
-            self.text_area.reveal_cursor()
-            self.status_bar.showMessage(f"Replaced {count} occurrence(s)")
-
-        find_btn.clicked.connect(_find_next)
-        replace_btn.clicked.connect(_replace_one)
-        all_btn.clicked.connect(_replace_all)
-        close_btn.clicked.connect(dlg.close)
-
-        self._replace_dialog = dlg
-        dlg.finished.connect(lambda *_: setattr(self, "_replace_dialog", None))
-        dlg.setModal(False)  # keep the editor reachable while replacing
-        dlg.show()
+        """Settings > Replace (Ctrl+H): the combined Find & Replace window,
+        Replace tab (see _open_find_dialog)."""
+        self._open_find_dialog(1)
 
     # --------------------------------------------------- metaNetcdf hover tooltips
     def _show_meta_tooltip(self, event):
@@ -1753,9 +2574,35 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         down_button.clicked.connect(self.jump_to_bottom)
         save_controls.addWidget(down_button)
 
+        font_plus_button = QPushButton("+")
+        font_plus_button.setStyleSheet(modern_button_style)
+        font_plus_button.setToolTip("Increase font size")
+        font_plus_button.clicked.connect(self.increase_editor_font_size)
+        save_controls.addWidget(font_plus_button)
+
+        font_minus_button = QPushButton("-")
+        font_minus_button.setStyleSheet(modern_button_style)
+        font_minus_button.setToolTip("Decrease font size")
+        font_minus_button.clicked.connect(self.decrease_editor_font_size)
+        save_controls.addWidget(font_minus_button)
+
+        # Experience-level button: Beginner -> Advanced -> Expert -> Beginner.
+        # Restricts which settings sections are shown (see cycle_experience_level).
+        # Coloured per level (light green/blue/red) so it is styled separately from
+        # the plain nav buttons - kept OUT of self._nav_buttons.
+        level_button = QPushButton(self._experience_level)
+        level_button.setToolTip(
+            "The skill of the user determines how much of the settingsfile is presented.\n"
+            "Click to cycle: Beginner → Advanced → Expert.")
+        level_button.clicked.connect(self.cycle_experience_level)
+        save_controls.addWidget(level_button)
+        self.level_button = level_button
+        self._apply_level_button_style()
+
         # kept so a theme switch can re-style them (_retheme)
         self._nav_buttons = [save_button, save_as_button, compress_all_button,
-                             expand_all_button, top_button, down_button]
+                             expand_all_button, top_button, down_button,
+                             font_plus_button, font_minus_button]
         
         
         save_controls.addStretch()
@@ -1825,7 +2672,8 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                                 f"{doc_name} was not found in the documentation folder.")
             return
         try:
-            md = open(doc_path, encoding="utf-8").read()
+            with open(doc_path, encoding="utf-8") as _f:
+                md = _f.read()
         except Exception as e:
             QMessageBox.warning(self, "Documentation", f"Could not read documentation:\n{e}")
             return
@@ -1948,6 +2796,19 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         info_text.setWordWrap(True)
         info_text.setAlignment(Qt.AlignJustify)
         
+        # CWatM GUI version (shown above the CWatM model version)
+        gui_version_header = QLabel("CWatM GUI version 1.02")
+        gui_version_header.setStyleSheet(f"""
+            QLabel {{
+                font-family: 'Segoe UI', sans-serif;
+                font-weight: 700;
+                font-size: 14px;
+                color: {theme.c('accent')};
+                margin-top: 0px;
+                margin-bottom: 0px;
+            }}
+        """)
+
         # Version header
         version_header = QLabel("CWatM Version")
         version_header.setStyleSheet(f"""
@@ -1994,6 +2855,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         
         # Add content to scroll area
         content_layout.addWidget(info_text)
+        content_layout.addWidget(gui_version_header)
         content_layout.addWidget(version_header)
         content_layout.addWidget(version_info_label)
         content_layout.addStretch()
@@ -2068,6 +2930,35 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self._mark_clean()
         self.status_bar.showMessage(f"Reloaded: {self.file_manager.get_current_file_path()}")
 
+    def reload_after_external_save(self, path=None):
+        """Refresh the main editor after the file it has open was written elsewhere
+        (currently: saved from the Compare settings window). Reloads from disk so the
+        editor shows the saved version. Prompts before discarding unsaved edits in the
+        main window; if the user declines, the on-disk change is left un-shown."""
+        cur = self.file_manager.get_current_file_path()
+        if not cur:
+            return
+        if getattr(self, "_is_dirty", False):
+            reply = QMessageBox.question(
+                self,
+                "File changed",
+                "This settings file was just saved in the Compare settings window.\n\n"
+                "Reload it here and discard your unsaved changes in the main window?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                self.status_bar.showMessage(
+                    "File changed on disk (Compare settings) - not reloaded, "
+                    "unsaved changes kept")
+                return
+        # Drop any pending auto-apply so it cannot re-introduce old field values.
+        self._field_update_timer.stop()
+        self.file_parsed = False
+        self.parse_file(load=True, show_status=True)
+        self._mark_clean()
+        self.status_bar.showMessage(f"Reloaded after Compare-settings save: {cur}")
+
     def _get_settings_title(self, content):
         """Return the 'Title' value from the settings content, or '' if absent."""
         if not content:
@@ -2080,6 +2971,94 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             if key.strip().lower() == 'title':
                 return value.strip()
         return ""
+
+    def _has_excel_settings_file(self, content=None):
+        """Whether the settings content defines an 'Excel_settings_file' key with a
+        non-empty value (commented-out lines do not count)."""
+        if content is None:
+            content = self.original_content or ""
+        if not content:
+            return False
+        for line in content.split('\n'):
+            s = line.strip()
+            if s.startswith('#') or s.startswith(';') or '=' not in s:
+                continue
+            key, value = s.split('=', 1)
+            if key.strip().lower() == 'excel_settings_file':
+                return bool(value.strip())
+        return False
+
+    def _update_excel_menu_enabled(self, content=None):
+        """Grey out the Excel menu's items (Crops / Reservoirs) when the settings
+        file has no 'Excel_settings_file' key - there is nothing for them to open.
+        The Excel menu itself stays enabled, so it can still be opened to see why."""
+        actions = getattr(self, "_excel_actions", None)
+        if not actions:
+            return
+        enabled = self._has_excel_settings_file(content)
+        for act in actions:
+            try:
+                act.setEnabled(enabled)
+            except RuntimeError:
+                # QAction already deleted on the C++ side - nothing to update.
+                log.debug("Excel action gone while updating enabled state",
+                          exc_info=True)
+
+    def working_dir(self):
+        """The current working directory: the folder of the loaded settings file,
+        unless File > Change Working Dir has overridden it.
+
+        This is the base every relative path in the settings file is resolved
+        against, and the directory the model child process is started in.
+        Returns "" when nothing is loaded and no override is set."""
+        override = getattr(self, "_working_dir_override", None)
+        if override:
+            return override
+        try:
+            path = self.file_manager.get_current_file_path()
+            if path:
+                return os.path.dirname(os.path.abspath(path))
+        except Exception:
+            log.warning("working_dir lookup failed", exc_info=True)
+        return ""
+
+    def _update_workdir_label(self, loaded=True):
+        """Show 'Working directory: <dir>' under the Loaded line (hidden when no
+        file is loaded and no override is set)."""
+        if getattr(self, "workdir_label", None) is None:
+            return
+        folder = self.working_dir() if (
+            loaded or getattr(self, "_working_dir_override", None)) else ""
+        self.workdir_label.setText(f"Working directory: {folder}" if folder else "")
+        self.workdir_label.setVisible(bool(folder))
+
+    def change_working_dir(self):
+        """File > Change Working Dir - pick the directory relative paths in the
+        settings file resolve against, and that the model runs from.
+
+        Beyond the label and the GUI-side path resolution (working_dir()), this
+        also chdir's the GUI process, so the checks that test a relative path with
+        a plain os.path.exists (PathOut / basin viewer / Check settingsfile) and an
+        in-process run resolve from the same place the model child does."""
+        start = self.working_dir() or os.getcwd()
+        folder = QFileDialog.getExistingDirectory(
+            self, "Change Working Directory", start)
+        if not folder:
+            return
+        folder = os.path.abspath(folder)
+        try:
+            os.chdir(folder)
+        except Exception as e:
+            QMessageBox.warning(self, "Change Working Dir",
+                                f"Could not change to this directory:\n{folder}\n\n{e}")
+            return
+        self._working_dir_override = folder
+        self._update_workdir_label()
+        self.status_bar.showMessage(f"Working directory: {folder}")
+        self.append_to_cwatminfo(f"Working directory changed to: {folder}\n")
+        # Relative paths now resolve elsewhere - re-check the mask/gauges and PathOut
+        self._rebuild_mask_cache(force=True)
+        self._update_warnings()
 
     def load_file(self):
         """Handle file loading (via file dialog)"""
@@ -2106,11 +3085,24 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 self._filename_state = "error"
                 self._apply_filename_state()
                 self.title_label.setText("")
+                self._update_workdir_label(loaded=False)
+                self._update_excel_menu_enabled("")
                 self.status_bar.showMessage(filename)
             else:
                 self.filename_label.setText(f"Loaded: {filename}")
                 # Settings "Title" value, right of "Loaded:" in the same colour
                 self.title_label.setText(self._get_settings_title(content))
+                # A newly loaded file defines the working directory afresh - drop any
+                # File > Change Working Dir override and chdir there.
+                self._working_dir_override = None
+                _wd = self.working_dir()
+                if _wd:
+                    try:
+                        os.chdir(_wd)
+                    except Exception:
+                        log.warning("chdir to settings folder failed", exc_info=True)
+                self._update_workdir_label()
+                self._update_excel_menu_enabled(content)
                 self._filename_state = "loaded"
                 self._apply_filename_state()
                 self.status_bar.showMessage(f"Loaded: {self.file_manager.get_current_file_path()}")
@@ -2171,6 +3163,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             # scroll and undo history and leaves the edited lines marked changed.
             if expand_all:
                 self.text_area.load_text(content)
+                # A fresh load recreated all blocks (clearing folds); re-apply the
+                # experience-level lock computed from the new file's sections.
+                self._apply_experience_level()
             else:
                 self.text_area.set_content_preserving(content)
 
@@ -2259,7 +3254,135 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 font-size: {self._cwatm_font_size}px;
                 color: {theme.c('out_text')};
             }}
+            QScrollBar:vertical {{
+                background-color: {theme.c('surface_bg')};
+                width: 16px;
+                border-radius: 6px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: {theme.c('accent')};
+                border-radius: 6px;
+                min-height: 28px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: {theme.c('menu_sel_bg')};
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+                background: none;
+            }}
+            QScrollBar:horizontal {{
+                background-color: {theme.c('surface_bg')};
+                height: 16px;
+                border-radius: 6px;
+                margin: 2px;
+            }}
+            QScrollBar::handle:horizontal {{
+                background-color: {theme.c('accent')};
+                border-radius: 6px;
+                min-width: 28px;
+            }}
+            QScrollBar::handle:horizontal:hover {{
+                background-color: {theme.c('menu_sel_bg')};
+            }}
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+                width: 0px;
+            }}
+            QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+                background: none;
+            }}
         """
+
+    def increase_editor_font_size(self):
+        """'+' button: grow the settings-editor font by 1 px (capped)."""
+        self._set_editor_font_size(self._editor_font_size + 1)
+
+    def decrease_editor_font_size(self):
+        """'-' button: shrink the settings-editor font by 1 px (floored)."""
+        self._set_editor_font_size(self._editor_font_size - 1)
+
+    def _set_editor_font_size(self, size):
+        self._editor_font_size = max(6, min(32, size))
+        self._settings.setValue("editor/font_size", self._editor_font_size)
+        self.text_area.setStyleSheet(self._editor_style())
+        # The gutter derives its font from the editor's - repaint so the
+        # numbers keep lining up with the (re-laid-out) text rows.
+        self.line_number_gutter.update()
+
+    # ---------------------------------------------------- experience level
+    def cycle_experience_level(self):
+        """Level button: Beginner -> Advanced -> Expert -> Beginner."""
+        idx = _EXPERIENCE_LEVELS.index(self._experience_level)
+        nxt = _EXPERIENCE_LEVELS[(idx + 1) % len(_EXPERIENCE_LEVELS)]
+        self.set_experience_level(nxt)
+
+    def set_experience_level(self, level):
+        """Set the experience level (from the button or the Configure ▸ Skill of
+        User menu) and apply it. Keeps the menu radio group in sync."""
+        if level not in _EXPERIENCE_LEVELS or level == self._experience_level:
+            # Still re-sync the menu check state (the QActionGroup may have toggled).
+            self._sync_level_menu()
+            return
+        self._experience_level = level
+        self._settings.setValue("editor/level", self._experience_level)
+        self.level_button.setText(self._experience_level)
+        self._apply_level_button_style()
+        self._sync_level_menu()
+        self._apply_experience_level()
+
+    def _sync_level_menu(self):
+        """Tick the matching Configure ▸ Skill of User radio item."""
+        actions = getattr(self, "_level_menu_actions", None)
+        if not actions:
+            return
+        for lvl, act in actions.items():
+            try:
+                act.setChecked(lvl == self._experience_level)
+            except RuntimeError:
+                pass
+
+    def _apply_experience_level(self):
+        """Hide the settings sections the current level may not see: locked
+        sections are fully hidden (header + content) and cannot be unfolded.
+        Expert shows everything. Recomputed from the editor's current section list
+        so it stays correct after loading a different file."""
+        allowed = _LEVEL_ALLOWED.get(self._experience_level)
+        if allowed is None:   # Expert - no restriction
+            locked = set()
+        else:
+            locked = {s for s in self.text_area.section_names() if s not in allowed}
+        self.text_area.set_locked_sections(locked)
+
+    def _level_button_style(self):
+        """Stylesheet for the level button: the level's colour at 50% opacity."""
+        rgb = _LEVEL_COLORS.get(self._experience_level, "200, 200, 200")
+        return f"""
+            QPushButton {{
+                background-color: rgba({rgb}, 0.5);
+                border: 1px solid {theme.c('btn_border')};
+                border-radius: 5px;
+                color: {theme.c('btn_text')};
+                font-weight: 600;
+                font-size: 11px;
+                padding: 2px 8px;
+                min-height: 16px;
+            }}
+            QPushButton:hover {{ background-color: rgba({rgb}, 0.7);
+                                 border-color: {theme.c('btn_hover_border')}; }}
+            QPushButton:pressed {{ background-color: rgba({rgb}, 0.85);
+                                   border-color: {theme.c('btn_press_border')}; }}
+        """
+
+    def _apply_level_button_style(self):
+        btn = getattr(self, "level_button", None)
+        if btn is not None:
+            try:
+                btn.setStyleSheet(self._level_button_style())
+            except RuntimeError:
+                pass
 
     def _editor_style(self):
         return f"""
@@ -2269,7 +3392,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 border-radius: 12px;
                 padding: 16px;
                 font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
-                font-size: 13px;
+                font-size: {self._editor_font_size}px;
                 line-height: 1.5;
                 color: {theme.c('editor_text')};
                 selection-background-color: {theme.c('sel_bg')};
@@ -2382,16 +3505,25 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         st = getattr(self, "_filename_state", "none")
         colors = {"loaded": theme.c("ok_color"), "saveas": theme.c("link_color"),
                   "error": theme.c("warn_color")}
+        # margin/padding 0 overrides the left panel's bare "QWidget {margin/padding}"
+        # cascade, keeping "Working directory:" tight under the "Loaded:" line.
+        _tight = " margin: 0px; padding: 0px;"
         if st == "none":
             self.filename_label.setStyleSheet(
-                f"color: {theme.c('text_gray')}; font-style: italic;")
+                f"color: {theme.c('text_gray')}; font-style: italic;" + _tight)
             if getattr(self, "title_label", None) is not None:
-                self.title_label.setStyleSheet("")
+                self.title_label.setStyleSheet(_tight)
         else:
-            style = f"color: {colors[st]}; font-weight: bold;"
+            style = f"color: {colors[st]}; font-weight: bold;" + _tight
             self.filename_label.setStyleSheet(style)
             if st != "error" and getattr(self, "title_label", None) is not None:
                 self.title_label.setStyleSheet(style)
+        # The Working-directory line stays neutral in every state, 2 px under
+        # the Loaded line
+        if getattr(self, "workdir_label", None) is not None:
+            self.workdir_label.setStyleSheet(
+                f"color: {theme.c('text_gray')}; "
+                "margin: 2px 0px 0px 0px; padding: 0px;")
 
     def _apply_gauges_field_color(self):
         """Colour the Gauges box text by the remembered gauge-in-mask result
@@ -2427,6 +3559,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             self._save_dirty_style = self._build_save_dirty_style()
             for b in getattr(self, "_nav_buttons", []):
                 b.setStyleSheet(self._modern_button_style)
+            self._apply_level_button_style()
             self._set_save_dirty(getattr(self, "_is_dirty", False))
             if getattr(self, "_run_btn_state", "idle") == "idle":
                 self.run_cwatm_button.setStyleSheet(self._run_button_idle_style())
@@ -2477,6 +3610,8 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             content = self.text_area.toPlainText()
             self.original_content = content
             self.text_display.set_original_content(content)
+            # Adding/removing the Excel_settings_file line enables/greys the Excel menu
+            self._update_excel_menu_enabled(content)
         except Exception:
             log.debug("editor->original_content sync failed", exc_info=True)
 
@@ -2713,167 +3848,6 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             return cur.selectedText().replace(' ', '\n').strip()
         return cur.block().text().strip()
 
-    def ai_put_text_in_settings(self, marked_text):
-        """Validate ``marked_text`` as CWatM settings lines and insert/update them in
-        the editor, then jump to the last affected line. Returns (ok, message)."""
-        if not self.file_manager.has_file_loaded():
-            return False, "Load a settings file first, then try again."
-        entries, error = self._parse_settings_block(marked_text)
-        if error:
-            return False, error
-        if not any(e[0] == 'kv' for e in entries):
-            return False, "No 'key = value' line found in the selected text."
-        # Apply any pending (debounced) left-window field edit first so we merge
-        # into the current content, not a stale snapshot.
-        self._flush_pending_field_changes()
-        new_text, last_line, summary = self._apply_settings_entries(entries)
-        if new_text is None:
-            return False, summary
-        self.text_area.set_content_preserving(new_text)   # one undoable step
-        self._sync_fields_from_editor()                    # fields/dirty/warnings
-        QTimer.singleShot(0, lambda ln=last_line: self._goto_editor_line(ln))
-        self.raise_()
-        self.activateWindow()
-        return True, summary
-
-    def _parse_settings_block(self, text):
-        """Parse marked text into ordered entries. Returns (entries, error).
-        entries: ('section', name) | ('kv', key, value) | ('comment', raw).
-        error is non-empty if any non-blank line is not valid settings syntax."""
-        import re
-        text = (text or "").replace(' ', '\n').replace('\r\n', '\n').replace('\r', '\n')
-        entries, bad = [], []
-        for raw in text.split('\n'):
-            line = raw.strip()
-            if not line:
-                continue
-            if line.startswith('#'):
-                entries.append(('comment', line))
-                continue
-            m = re.match(r'^\[([^\]]+)\]$', line)
-            if m:
-                entries.append(('section', m.group(1).strip()))
-                continue
-            if '=' in line:
-                key, _, value = line.partition('=')
-                key, value = key.strip(), value.strip()
-                if key and re.match(r'^[A-Za-z0-9_.\-]+$', key):
-                    entries.append(('kv', key, value))
-                    continue
-            bad.append(line)
-        if bad:
-            preview = "; ".join(bad[:3])
-            return [], ("That selection is not valid CWatM settings syntax "
-                        "([SECTION] or key = value). Problem line(s): " + preview)
-        return entries, ""
-
-    def _apply_settings_entries(self, entries):
-        """Merge entries into the editor content. Returns (new_text, last_line,
-        summary); new_text is None if nothing changed. Existing keys are updated in
-        place; new keys go under their [SECTION] (created if needed) or at the end."""
-        import re
-        lines = self.text_area.toPlainText().split('\n')
-
-        def find_key_line(key):
-            kl = key.lower()
-            for i, ln in enumerate(lines):
-                s = ln.strip()
-                if not s or s.startswith('#') or s.startswith('['):
-                    continue
-                if '=' in s and s.split('=', 1)[0].strip().lower() == kl:
-                    return i
-            return None
-
-        def find_section_insert(name):
-            header = None
-            for i, ln in enumerate(lines):
-                m = re.match(r'^\s*\[([^\]]+)\]\s*$', ln)
-                if m and m.group(1).strip().lower() == name.lower():
-                    header = i
-                    break
-            if header is None:
-                return None, None
-            end = len(lines)
-            for j in range(header + 1, len(lines)):
-                if re.match(r'^\s*\[[^\]]+\]\s*$', lines[j]):
-                    end = j
-                    break
-            while end - 1 > header and lines[end - 1].strip() == '':
-                end -= 1
-            return header, end
-
-        target_section = None
-        pending_comments = []
-        added = updated = 0
-        last_line = 0
-        for e in entries:
-            if e[0] == 'section':
-                target_section = e[1]
-                pending_comments = []
-            elif e[0] == 'comment':
-                pending_comments.append(e[1])
-            elif e[0] == 'kv':
-                key, value = e[1], e[2]
-                idx = find_key_line(key)
-                if idx is not None:
-                    left = lines[idx].split('=', 1)[0].rstrip()
-                    lines[idx] = f"{left} = {value}"
-                    last_line = idx
-                    updated += 1
-                    pending_comments = []
-                else:
-                    block = list(pending_comments) + [f"{key} = {value}"]
-                    pending_comments = []
-                    if target_section:
-                        _h, ins = find_section_insert(target_section)
-                        if ins is None:      # create the section at EOF
-                            if lines and lines[-1].strip() != '':
-                                lines.append('')
-                            lines.append(f"[{target_section}]")
-                            start = len(lines)
-                            lines.extend(block)
-                            last_line = start + len(block) - 1
-                        else:
-                            for off, b in enumerate(block):
-                                lines.insert(ins + off, b)
-                            last_line = ins + len(block) - 1
-                    else:
-                        if lines and lines[-1].strip() != '':
-                            lines.append('')
-                        start = len(lines)
-                        lines.extend(block)
-                        last_line = start + len(block) - 1
-                    added += 1
-
-        new_text = '\n'.join(lines)
-        if new_text == self.text_area.toPlainText():
-            return None, last_line, "No change — the setting already had that value."
-        parts = []
-        if added:
-            parts.append(f"added {added}")
-        if updated:
-            parts.append(f"updated {updated}")
-        return new_text, last_line, (
-            f"Settings {' and '.join(parts)}; jumped to line {last_line + 1}.")
-
-    def _goto_editor_line(self, line_index):
-        """Move the settings editor cursor to ``line_index`` and centre it."""
-        ed = getattr(self, "text_area", None)
-        if ed is None:
-            return
-        doc = ed.document()
-        n = max(0, min(int(line_index), doc.blockCount() - 1))
-        block = doc.findBlockByNumber(n)
-        cur = ed.textCursor()
-        cur.setPosition(block.position())
-        ed.setTextCursor(cur)
-        try:
-            ed.reveal_cursor()   # unfold if the line is inside a folded section
-        except Exception:
-            pass
-        ed.centerCursor()
-        ed.setFocus()
-
     def open_compare_settings(self):
         """Tools ▸ Compare settings: side-by-side diff of the current settings file
         and another one (loaded in the window)."""
@@ -2967,6 +3941,19 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 self.filename_label.setText(f"Saved: {filename}")
                 # Keep the Title label in the same colour as the filename label
                 self.title_label.setText(self._get_settings_title(content))
+                # Save As can move the settings file to another folder. Without an
+                # explicit override that folder IS the working directory, so follow
+                # it with a chdir too - otherwise working_dir() reports the new
+                # folder while the process CWD (what the plain os.path.exists checks
+                # in basin_viewer resolve against) still points at the old one.
+                if not getattr(self, "_working_dir_override", None):
+                    _wd = self.working_dir()
+                    if _wd:
+                        try:
+                            os.chdir(_wd)
+                        except Exception:
+                            log.warning("chdir after Save As failed", exc_info=True)
+                self._update_workdir_label()
                 self._filename_state = "saveas"
                 self._apply_filename_state()
                 self.status_bar.showMessage(f"File saved: {self.file_manager.get_current_file_path()}")

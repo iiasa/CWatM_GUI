@@ -20,8 +20,9 @@
   only happens on Save / Save As.
 - **Section Management** (Settings menu): **Fold All** (Alt+0) collapses all sections;
   **Unfold All** (Alt+Shift+0) expands them.
-- **Navigation** (Settings menu): **Top** (Alt+T), **Down** (Alt+D), **Find** (F5) /
-  **Find next** (Ctrl+F), **Undo** (Ctrl+Z) / **Redo** (Ctrl+Y). Undo/redo cover both
+- **Navigation & search** (Settings menu): **Top** (Alt+T), **Down** (Alt+D),
+  **Find** (Ctrl+F), **Find next / previous** (F3 / Shift+F3), **Replace** (Ctrl+H),
+  **Goto last change** (F5), **Undo** (Ctrl+Z) / **Redo** (Ctrl+Y). Undo/redo cover both
   manual editor edits and left-window field changes (Date/PathOut/MaskMap/Gauges).
 - **Bookmarks** (Settings menu): **Toggle Bookmark** (Ctrl+F2) — or click a line's
   number in the gutter — marks the current line with an orange dot; **Next /
@@ -143,18 +144,26 @@ retention…**.
 ![Check Data](figures/screenshot_checkdata.png)
 
 ### Check settingsfile (Settings menu)
-- **Check settingsfile** (F4): scans the settings and flags every value that is a
-  filename/path (a `$(…)` placeholder, a data-file extension, or an absolute path) whose
-  file **does not exist** — the line is marked **red** and **bookmarked** (jump with
-  F2 / Shift+F2). Keys starting with `path` are checked as **directories**. It also runs
-  **semantic checks**: the simulation date ordering `StepStart ≤ SpinUp ≤ StepEnd`, whether
-  an option that is **on** has its required keys and their paths exist (e.g. MODFLOW
-  coupling with a missing or bad `path_mf6dll` marks the `modflow_coupling` line),
-  and whether the run window fits inside the **meteo forcing** data's time range (catches
-  the common "StepEnd is past my forcing data" crash before you waste a run). A summary of
-  only the problem lines is written to the output box.
-- **Clear checking** (Shift+F4): removes the check's red marks and bookmarks (your own
-  bookmarks are kept).
+- **Check settingsfile** (F4) is a **toggle**: it scans the settings and flags every
+  value that is a filename/path (a `$(…)` placeholder, a data-file extension, or an
+  absolute path), then the menu item relabels to **Clear checking** — press **F4** again
+  to remove all the marks (your own bookmarks are kept). Lines are colour-coded by
+  severity:
+  - **Red + bookmarked** — the file/folder **does not exist** (jump with F2 / Shift+F2).
+    Keys starting with `path` are checked as **directories**.
+  - **Light orange, no bookmark — wrong extension**: the file exists under a different
+    raster extension than written (e.g. `cellarea.map` written, `cellarea.nc` on disk).
+  - **Dimmed light orange, no bookmark — not read**: a missing file CWatM won't actually
+    read, e.g. a section whose `[OPTIONS]` switch is off, a value-gated file
+    (`averageDischarge`/`averageBaseflow` with `swAbstractionFrac ≥ 0`), or the
+    preprocessed/optional groundwater-MODFLOW input.
+- It also runs **semantic checks**: the date ordering `StepStart ≤ SpinUp ≤ StepEnd`,
+  whether an option that is **on** has its required keys/paths (e.g. MODFLOW coupling with
+  a missing `path_mf6dll` marks the `modflow_coupling` line), the validity of every
+  `OUT_…` output key and its variable names, and whether the run window fits inside the
+  **meteo forcing** data's time range (catches the common "StepEnd is past my forcing
+  data" crash before you waste a run). A summary of only the problem lines is written to
+  the output box.
 
 ## Maps, Excel and Result Analysis
 
@@ -214,13 +223,20 @@ The same water balance as a **Sankey** flow diagram.
 
 ### CWatM AI (CWatM AI button)
 Ask questions about CWatM in a chat window answered by Google **NotebookLM** (Gemini),
-grounded on the CWatM documentation. Answers are formatted, the transcript/history
-persist between sessions, and a **Short / Medium / Long** selector sets the answer
-length. Sign in **once** via **Login…** — **From Firefox** (no admin), or **From
-Chrome / Edge / Opera** (run CWatM **as administrator** first, because Windows encrypts
-those cookies), or the interactive **Google login window** (source-run only). Two
-bridge buttons connect the chat to the editor: **→ Settings** and **Explain current
-line**. Full guide: `documentation/CWatM_AI_NotebookLM.md`.
+grounded on a notebook that holds the CWatM documentation. Answers are formatted, the
+transcript/history persist between sessions, and a **Short / Medium / Long** selector
+sets the answer length (Short = fastest).
+
+- **Prepare once:** at *notebooklm.google.com* create a notebook whose title contains
+  **"CWatM"** and upload the CWatM docs as sources (the GUI ships
+  `documentation/CWATM_shorter.pdf`); CWatM AI auto-selects that notebook.
+- **Login is one click:** **Login…** auto-detects the browser you're signed in to Google
+  with (Firefox → Chrome → Edge → Opera) and verifies the session. Firefox needs no admin;
+  Chrome/Edge/Opera need CWatM **run as administrator** (Windows encrypts their cookies).
+  **Choose browser…** is the manual fallback (and the source-only Google login window).
+- **Explain current line** asks NotebookLM to explain the settings line at the cursor.
+
+Full guide: `documentation/CWatM_AI_NotebookLM.md`.
 
 ## Usage
 
@@ -301,8 +317,9 @@ line**. Full guide: `documentation/CWatM_AI_NotebookLM.md`.
 ## Execution Internals (progress, errors, cleanup)
 
 ### Real-time Progress Tracking
-- **Progress Clock**: circular 240×240 px indicator; blue arc (`#0066CC`) on a light
-  gray background circle, blue percentage text, no border/ticks/center dot.
+- **Progress Clock**: a circular indicator sized responsively to the screen
+  (~110–220 px); blue arc (`#0066CC`) on a light-gray background circle, blue percentage
+  text, and the elapsed / remaining run time drawn inside the face; no border/ticks.
 - **Percentage**: `progress = (current_day - start_day + 1) / total_days * 100`, clamped
   to 0–100%.
 - **Live Updates**: the clock updates each model timestep. This is driven by a GUI hook
