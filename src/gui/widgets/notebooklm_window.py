@@ -307,7 +307,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
             f"QPlainTextEdit {{ background-color: {theme.c('field_bg')}; "
             f"color: {theme.c('field_text')}; border: 1px solid {theme.c('field_border')}; "
             "border-radius: 6px; padding: 6px; "
-            "font-family: 'Segoe UI', sans-serif; font-size: 13px; }}")
+            "font-family: 'Segoe UI', sans-serif; font-size: 13px; }")
         # Blue gradient action buttons like the NetCDF window (Send stands out); a
         # lighter blue variant is used while a question is in flight ("Stop thinking").
         blue = self._button_style(

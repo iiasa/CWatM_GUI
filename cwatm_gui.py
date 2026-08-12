@@ -13,6 +13,7 @@ Requirements:
     - PySide6 (see requirements.txt for the pinned runtime stack)
 """
 
+import logging
 import os
 import sys
 import threading
@@ -151,8 +152,11 @@ def _bring_to_front(window):
     PyInstaller splash screen closes, the main window otherwise stays behind other
     windows and is not the active app. No-op on failure."""
     try:
-        window.setWindowState(
-            (window.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive)
+        # Un-minimize only. Qt 6 rejects Qt.WindowActive in setWindowState(s)
+        # ("QWindow::setWindowStates does not accept Qt::WindowActive") - it is a
+        # query-only flag; activation is done by activateWindow() + the Win32
+        # calls below.
+        window.setWindowState(window.windowState() & ~Qt.WindowMinimized)
         window.show()
         window.raise_()
         window.activateWindow()
@@ -279,10 +283,58 @@ def handle_exception(exc_type, exc_value, exc_traceback):
     _err("=" * 50)
 
 
+def _install_qt_message_handler():
+    """Record Qt's own messages in gui.log, with the Python stack for warnings.
+
+    Qt prints things like "QFont::setPointSize: Point size <= 0 (-1)" or
+    "QWindow::setWindowStates does not accept Qt::WindowActive" to the console with
+    no hint of WHICH widget caused them, which makes them unfixable when they only
+    show up on a user's machine. Logging the Python call stack alongside the
+    message names the call site (when the trigger came from Python at all -
+    Chromium/QtWebEngine messages arrive from C++ callbacks with an empty stack).
+
+    The message is still written to the REAL console (``sys.__stderr__``), not to
+    the redirected ``sys.stderr``, so running from a terminal looks exactly as
+    before and Qt chatter never lands in the CWatM output box. Never raises: a
+    message handler that throws during Qt shutdown takes the process with it.
+    """
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    levels = {
+        QtMsgType.QtDebugMsg: logging.DEBUG,
+        QtMsgType.QtInfoMsg: logging.INFO,
+        QtMsgType.QtWarningMsg: logging.WARNING,
+        QtMsgType.QtCriticalMsg: logging.ERROR,
+        QtMsgType.QtFatalMsg: logging.CRITICAL,
+    }
+
+    def _handler(mode, context, message):
+        try:
+            level = levels.get(mode, logging.INFO)
+            if level >= logging.WARNING:
+                import traceback
+                # [:-1] drops this handler's own frame
+                stack = "".join(traceback.format_stack()[:-1]).rstrip()
+                log.log(level, "Qt: %s\n--- Python stack ---\n%s", message, stack)
+            else:
+                log.log(level, "Qt: %s", message)
+            stream = sys.__stderr__      # None under pythonw.exe
+            if stream is not None:
+                stream.write(message + "\n")
+                stream.flush()
+        except Exception:
+            pass
+
+    qInstallMessageHandler(_handler)
+
+
 def _create_app():
     """QApplication + Windows taskbar identity + colour theme + app icon."""
     # Set the Windows taskbar identity before any window exists
     _set_windows_app_id()
+
+    # Qt's own warnings -> gui.log (with the Python stack that triggered them)
+    _install_qt_message_handler()
 
     # Required for QtWebEngine (OpenStreetMap view in the basin viewer)
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)

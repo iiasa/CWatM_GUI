@@ -9,34 +9,358 @@
 
 ## Secondary-window internals
 
-### Excel sheet editor (Excel menu)
-**Excel ▸ Crops** / **Excel ▸ Reservoirs** (`main_window.open_excel_sheet(sheet_name)`)
-resolve the settings `Excel_settings_file` value (placeholders via
-`_resolve_settings_placeholders`, made absolute against the settings-file dir) and open
-that worksheet in `ExcelSheetWindow` (`src/gui/widgets/excel_sheet_window.py`). The two
-menu items are the same generic handler with a different sheet name; adding another
-sheet is one more `excel_menu.addAction(...)` → `open_excel_sheet("<Sheet>")`.
-- The sheet is read with **openpyxl** (keeping styles) into an **editable
-  `QTableWidget`** with Excel A1-style headers (column letters / row numbers). Each
-  cell reproduces the workbook's **fill** and **font** colour (solid `rgb` fills →
-  `QBrush`; `_argb_to_qcolor` converts `FF00A87C`-style ARGB; theme/indexed colours
-  are left uncoloured), plus bold/italic.
-- **Save / Save As** push only the **changed** cells back into the loaded workbook
-  (`_flush_to_wb`: unchanged cells - including the `\xa0` spacers - are left untouched
-  so their type/formatting survives; numbers are re-parsed to int/float) and
-  `wb.save()`, so **every other sheet and all styling is preserved**; a merged
-  non-anchor cell is skipped, and a file open in Excel reports a friendly error.
-  **Reload** re-reads from disk (confirming if there are unsaved edits). The window
-  is modal, geometry remembered via QSettings key `excel_<sheet>`.
-- **Release button** (`release_sheet` arg → `_open_release`): Reservoirs is opened with
-  `open_excel_sheet("Reservoirs", release_sheet="Reservoirs_downstream")`, which adds a
-  **Release** button to the right of Save As (with a gap). It is **enabled only when the
-  companion sheet exists** in the workbook (checked in `_load`), otherwise greyed out;
-  clicking it opens that sheet in its own `ExcelSheetWindow` (same colours/buttons).
-  Crops passes no `release_sheet`, so it has no Release button.
+### Excel workbook editor (Tools ▸ Excel Crops/Reservoirs)
+**Tools ▸ Excel Crops/Reservoirs** — in the *Setup & Data* section, directly below
+*Change Options* (it used to be a top-level **Excel** menu with this as its only item;
+that menu is gone, the action and `_excel_actions`/`_update_excel_menu_enabled` moved
+into Tools unchanged) — (`main_window.open_excel_workbook()`) resolves the settings
+`Excel_settings_file`
+value (placeholders via `_resolve_settings_placeholders`, made absolute against the
+settings-file dir) and opens **the whole workbook** in `ExcelSheetWindow`
+(`src/gui/widgets/excel_sheet_window.py`). There is no per-sheet menu item any more:
+every worksheet the file contains is reachable from the window's own tab bar.
+- **Sheet tabs (Excel-like)**: a `QTabBar` with `QTabBar.RoundedSouth` shape sits
+  **below the table and above the "N rows × M columns" info line** — the position
+  Excel puts its sheet tabs in. `_rebuild_tabs(current)` fills it from
+  `wb.sheetnames` (signals blocked while filling) and `_on_tab_changed` →
+  `_show_sheet(name)` swaps the table's model. The sheet is looked up **by tab
+  position**, never by tab text, because `_refresh_tab_labels` appends a `*` to the
+  tabs of sheets with unsaved edits. Tab colours come from theme tokens
+  (`surface_bg`/`panel_bg`/`accent`/`border`), like every other secondary window.
+- **One model per sheet**: `_show_sheet` builds an `ExcelSheetModel` on a tab's first
+  visit and caches it in `self._models`, so **edits on one sheet survive switching to
+  another** and Save writes them all. Column widths live on the *view*, so
+  `_show_sheet` re-sizes columns on every switch (`resizeColumnsToContents` for
+  ≤ 60 columns — cheap thanks to `setResizeContentsPrecision(40)` — else a 90 px
+  default) and re-syncs the frozen first row.
+- The sheets are read with **openpyxl** (keeping styles) into a **lazy `QTableView` +
+  `ExcelSheetModel`** (`QAbstractTableModel`) with Excel A1-style headers (column
+  letters / row numbers): only the cells actually on screen are queried, so a
+  300k+-cell sheet opens instantly. Each cell reproduces the workbook's **fill** and
+  **font** colour (solid `rgb` fills → `QBrush`; `_argb_to_qcolor` converts
+  `FF00A87C`-style ARGB; theme/indexed colours are left uncoloured), plus bold/italic.
+  `_FrozenRowTableView` keeps row 0 pinned below the column-letter header.
+- **Save / Save As** flush **every cached model** (`_write` loops `self._models`), each
+  pushing only its **changed** cells back into the loaded workbook
+  (`ExcelSheetModel.flush_to_wb`: unchanged cells — including the `\xa0` spacers — are
+  left untouched so their type/formatting survives; numbers are re-parsed to
+  int/float), then `wb.save()`, so **every unvisited sheet and all styling is
+  preserved**; a merged non-anchor cell is skipped, and a file open in Excel reports a
+  friendly error. **Reload** re-reads the workbook from disk and **Load** opens a
+  different `.xlsx` in the same window (both confirm once if *any* sheet has unsaved
+  edits, and both rebuild the tabs — staying on the current sheet when the new
+  workbook also has it, else falling back to its first sheet). The window is modal,
+  geometry remembered via the QSettings key `excel_workbook`.
+- **Never measure or enumerate the whole sheet** — the rule that keeps a wide sheet
+  usable, and the one to keep in mind when touching this window. The Morava workbook's
+  `Reservoirs_downstream` is **367 × 1021** cells; before these three fixes, opening
+  that tab froze the whole GUI for **~165 s** and a Ctrl+A left it unusable
+  (~4 s *per repaint*). All three were quadratic, and all three are now O(visible) or
+  O(ranges) — verified at 0.05 s per tab switch and 0.00 s per Select All:
+  - `resizeRowToContents`/`sizeHintForRow` ask the model for **every column** of the
+    row (~8000 `data()` calls on that sheet), and `_sync_frozen` ran **once per column**
+    while a sheet was laid out (`setDefaultSectionSize` emits one `sectionResized` per
+    section, and `sync_frozen_columns` bounced each width back through the strip's own
+    header). Now: syncs are coalesced by `_frozen_timer` (single-shot, 0 ms),
+    `sync_frozen_columns` blocks the strip header's signals while copying widths, and
+    heights come from `_row_height_hint` over `_visible_columns` only.
+  - `_visible_columns` measures a sheet of at most `_MAX_HINT_COLS` (120) columns
+    **whole**, so the normal sheet keeps Qt's exact heights; only a wider one is
+    narrowed to the columns on screen, and `_on_hscroll` re-measures **only** for such
+    a sheet (a whole-measured sheet cannot change when other columns scroll in).
+  - `_row_height_hint` reproduces `resizeRowToContents` to the pixel (verified against
+    it) by asking the **delegate** with `WrapText` set and a **valid** option rect the
+    width of the column. Both details matter: `sizeHintForIndex` never wraps, and a
+    zero-height rect is not "valid", so Qt measures the text on one line and a wrapped
+    cell comes out too short.
+  - Row heights are **remembered** (`_fitted_rows` / `_fitted_span`): a row measured
+    against the current columns and widths is not measured again while scrolling back
+    and forth. The cache is dropped by `_forget_fitted_rows` on a new model, a column
+    resize, an insert/delete and the model's `dataChanged` (edited text can need
+    another line). Sideways scrolling re-measures **only the strip** — re-fitting every
+    visible row per scroll step cost ~900 delegate measurements and was felt as lag,
+    while the header row is the one whose long text has to wrap.
+  - `selected_block` reads the selection's **ranges**, not `selectedIndexes()`
+    (375 000 index objects on a Select All — and `paintEvent` calls it for the fill
+    handle on every repaint), and `_full_lines` answers "which columns/rows are fully
+    selected" from the ranges too, replacing
+    `QItemSelectionModel.selectedColumns()/selectedRows()` — those walk every line of
+    the sheet (>3 s per call there) and are asked on every selection change and by
+    every header menu. The range test is equivalent for every selection the GUI can
+    make (checked against Qt's answers for header clicks, ctrl-clicked lines, cell
+    blocks and Select All); only a full line stitched from several partial ranges
+    would differ.
+- **The workbook is read off the GUI thread** (`_WorkbookLoader(QThread)` →
+  `_load(on_done)` → `_on_loaded`). openpyxl needs ~1.5 s for the ~1 MB Morava workbook
+  from a local disk but **tens of seconds when the file sits cold on a network share**,
+  and doing that in the constructor greyed the whole application out. While it runs,
+  `_set_busy(True)` shows `Loading <file> …` in the info line, puts up a busy cursor and
+  disables the table, the tabs and the four buttons; the window itself stays alive.
+  Details that matter:
+  - The `done` signal is connected to **`self._on_loaded`, a bound method of the
+    window** — never to a bare lambda. A lambda has no receiver QObject, so Qt makes
+    the connection **direct** and the slot would run *in the loader thread* and touch
+    widgets from there (it deadlocked the first time round). With a QObject receiver
+    living in the GUI thread the connection is queued, which is the point of the
+    exercise. The per-load callback travels in `self._load_callback` instead of being
+    bound into the connection.
+  - The loader is **parentless** and holds itself in `_WorkbookLoader._running` until
+    it finishes, so closing the window mid-load cannot destroy a running QThread.
+    `closeEvent` disconnects it and clears the busy state; the thread finishes into the
+    void.
+  - `_load_other` passes an `on_done` callback: an unreadable file warns and **loads
+    the previous workbook back** (path and title with it), so the window never shows
+    one workbook while `self.path` — what Save writes to — points at another.
+- **Symbol toolbar** (`_build_toolbar`, the **only** thing in the header row and hard
+  **left** — the sheet's name is not repeated there, it is on its tab and in the window
+  title; built after `self.table` exists because it wires its own connections):
+  `QToolButton`s carrying plain glyphs — ⧉ copy, ✂ cut, 📋 paste, 🗑 delete │ **B** bold
+  │ ↶ undo, ↷ redo (a `QLabel` "│" as the separator) — so **no icon files are shipped**;
+  the stretch is added *after* the buttons, which is what keeps them left. Styling
+  is theme tokens only (`text`/`surface_bg`/`border`/`text_gray`), like the rest of the
+  window. Every button is connected straight to the **view's existing** method
+  (`copy_selection`, `copy_selection(cut=True)`, `paste_clipboard`, `clear_selection`,
+  `undo`, `redo`) — the buttons are a second *face* on the shortcuts, never a second
+  implementation. `_update_toolbar` greys out what cannot be done right now: copy/cut/
+  delete need `selected_block()`, paste needs `clipboard_block()`, undo/redo follow
+  `model.can_undo()`/`can_redo()`. It is re-run on `selectionChanged` (re-connected in
+  `_show_sheet`, since a new model brings a new selection model), on the clipboard's
+  `dataChanged`, and on the model's `undoStateChanged` signal; a `RuntimeError` from a
+  deleted C++ object while the window closes is swallowed.
+- **Bold** (toolbar **B** / Ctrl+B → `_SheetTableView.toggle_bold` →
+  `ExcelSheetModel.set_bold`): a toggle like Excel's — `all_bold` over the marked block
+  decides whether the press bolds or un-bolds. `_apply_bold` copies each cell's font
+  (`copy(cell.font)` — `cell.font` is an openpyxl `StyleProxy`, and `copy` is the
+  supported way to get a real `Font` to change), sets `bold`, drops those
+  `_style_cache` entries and emits `dataChanged` with `FontRole`, so the table repaints
+  from the workbook's own font — the same path that shows the workbook's original bold
+  cells. The change lives on the worksheet, so `wb.save()` writes it; because no cell
+  *text* changed, `_styled` (next to `_structural`) is what puts the `*` on the tab and
+  makes the close prompt ask. Undoable as a fourth command kind, `bold`, holding the
+  per-cell before/after flags; a block over `_UNDO_CELLS` is refused with a note rather
+  than done without an undo.
+- **Undo / redo** (`ExcelSheetModel`, per sheet — the stacks live on the model, so each
+  tab undoes its own history). Ctrl+Z / Ctrl+Y (and Ctrl+Shift+Z) are handled in
+  `_SheetTableView.keyPressEvent`; both the shortcut and the toolbar button call
+  `model.undo()`/`redo()`. A command is one of **three shapes**: `cells` (a
+  `{(r, c): restore-text}` *before*/*after* pair — one edit, a paste, a fill, a Delete),
+  `insert` (undone by deleting the band again) and `delete` (undone by re-inserting the
+  band **and** writing its captured contents back). The captured text is what would
+  **re-create** the cell (`_restore_text`: a formula's source, else the edit/stored
+  text, a stored value that looks like a formula escaped with `'`), so undo works the
+  same before and after a Save. `_suspend` is on while a command replays, so the replay
+  does not record commands of its own; `_push` keeps `_UNDO_DEPTH` (200) commands and
+  clears the redo stack; a deleted band above `_UNDO_CELLS` (100 000 cells) is **not**
+  captured and `_clear_undo()` runs instead — better no undo than one that silently
+  drops what it cannot put back. `undoStateChanged` drives the toolbar's enabled state.
+- **Closing with unsaved edits** (`closeEvent`): `_has_edits()` (any cached model with
+  `has_edits()` — cell edits **or** the `_structural` flag from an insert/delete) opens a
+  Save / Discard / Cancel question naming the affected **sheets**; Cancel and a *failed*
+  Save `event.ignore()` so the window stays open with the edits intact. Reload and Load
+  ask their own discard question first (see above), so no path loses edits silently.
 - Needs `openpyxl` (already a dependency - cwatm reads xlsx settings sheets via
-  `pd.read_excel`; do not exclude it from the build, §4.4). Reusable for other sheets:
-  `ExcelSheetWindow(path, sheet_name, parent, release_sheet=None)`.
+  `pd.read_excel`; do not exclude it from the build, §4.4). Reusable elsewhere:
+  `ExcelSheetWindow(path, sheet_name=None, parent=None)` — `sheet_name` only picks the
+  tab shown first.
+- **Why openpyxl and not XlsxWriter / xlwings** (asked more than once): this editor
+  must **read an existing workbook, keep every sheet and style it does not touch, and
+  write it back**. *XlsxWriter* is **write-only** — it cannot open a file, so saving
+  would mean re-emitting the whole workbook from scratch and losing everything the GUI
+  never modelled (charts, formats, other sheets). *xlwings* drives a **real Excel** over
+  COM: it needs Excel installed and licensed on the user's machine and cannot be frozen
+  into the distributed exe. openpyxl reads values **and** the fills/fonts the table
+  paints, and is already in the build for cwatm's own `pd.read_excel`. Its known limits
+  are accepted and documented here: `insert_rows`/`insert_cols` move cells and styles
+  but do **not** rewrite formulas or merged ranges, and a file it writes carries no
+  cached formula results (which is why formula cells are saved as values).
+
+#### Spreadsheet behaviour (`_SheetTableView` + `ExcelSheetModel`)
+- **Formulas** (`src/gui/utils/cell_formula.py`). `_set_text` routes a cell's new text
+  through `is_formula`: a leading `=` always, plus **bare** expressions whose every
+  token is a number, a cell reference (`I3`), a known function or an operator **and**
+  that contain at least one operation — so `2+3.5` and `2 + I3` compute while
+  `Winter wheat`, `A-B` and a plain `0.35` stay text. A leading `'` forces text
+  (Excel's escape). `evaluate` walks an **`ast` whitelist** (BinOp/UnaryOp/Constant/
+  Name/Call only — never `eval` of arbitrary code): a `Name` is resolved as a cell ref
+  or a constant (`PI`, `E`), ranges are pre-rewritten (`SUM(A1:B3)` →
+  `SUM(_RNG_("A1:B3"))`, since `A1:B3` is not valid Python), `^` becomes `**`;
+  functions are SUM/AVERAGE(AVG)/MIN/MAX/COUNT/ABS/ROUND/INT/SQRT/EXP/LN/LOG10/LOG/
+  MOD/POWER. Failures raise `FormulaError` whose text is the Excel-ish marker shown in
+  the cell (`#NAME?`, `#SYNTAX`, `#DIV/0!`, `#VALUE!`, `#REF!`, `#CYCLE`).
+  - The model keeps `_formulas[(r, c)]` **live for the session**: `DisplayRole` shows
+    the computed value, `EditRole` gives the formula back (so re-editing shows it, as
+    in Excel), the tooltip shows `formula = value`, and `_calc` caches results until
+    **any** cell changes (`_invalidate` clears it and emits one whole-model
+    `dataChanged`, which is what makes dependants recalculate). `_compute` guards
+    cycles with `_calc_stack` → `#CYCLE`.
+  - **Saving writes the computed value, not the formula** — CWatM reads these sheets
+    with pandas/openpyxl, which would hand it the formula *string* (a file openpyxl
+    writes carries no cached result). Formula cells therefore stay in `_formulas`
+    after a save and are re-written on every later save, while `has_edits()` (the tab
+    `*`, the Reload/Load prompt) only tracks `_edits`.
+- **Clipboard blocks**: `keyPressEvent` handles `QKeySequence.Copy/Cut/Paste` and
+  Delete/Backspace (only outside `EditingState`) over the selection's bounding
+  rectangle (`selected_block`); the **right-click menu on the cells**
+  (`_on_cell_menu`) offers the same four, labelled with what they will act on
+  ("Copy 12 cells"), and right-clicking outside the selection moves it to that cell
+  first. Copy/Cut put `model.block_text` — the **displayed** values, tab-separated,
+  newline per row — on the clipboard, which is exactly what Excel reads, so blocks
+  travel both ways. `paste_block` (fed by `clipboard_block`, the shared parser)
+  writes at the current cell and calls `ensure_size` first, so a paste running past
+  the last row/column **grows the sheet** (openpyxl extends the worksheet on write);
+  each pasted cell goes through `_set_text`, so pasted formulas compute too.
+- **Header right-click — copy / insert / paste / delete whole columns and rows**
+  (`_header_menu`, shared by both headers via `columns=True/False`). The clicked
+  section is selected if it was not already, so the menu always acts on a real
+  selection, and the number of **fully** selected columns/rows
+  (`selected_columns`/`selected_rows`) decides how many lines the actions touch — as
+  in Excel, marking three columns and choosing insert makes three. Items: *Copy
+  column(s)*, *Insert empty column(s) left / right* (rows: *above / below*), *Paste N
+  column(s) left / right* (only while the clipboard holds a block), *Delete
+  column(s)*. `_insert`/`_paste_lines`/`_delete_lines` then call `_after_structure`
+  (re-sync the frozen strip, re-wrap).
+  - **Paste inserts, never overwrites**: `_paste_lines` first inserts as many empty
+    lines as the block is wide/tall, then pastes into them.
+  - **`_LineClip` — a copied line knows what and where it is.** Only the header's
+    *Copy column(s)/row(s)* (`copy_lines`) records one: its **kind** (`column`/`row`)
+    and its **source** `(workbook path, sheet name)`, alongside the clipboard text.
+    An ordinary Ctrl+C over cells never records one, so **a full line can only be
+    copied from a header** — a cell selection that happens to cover a whole column is
+    just a block. `_LineClip.current()` compares the stored text with the clipboard's
+    current content, so a copy made anywhere else (this app or another program)
+    silently retires the record.
+  - `_paste_line_block(kind)` turns that into the reason a paste is refused, and the
+    menu keeps the item **visible but disabled with the reason as its tooltip**
+    (`menu.setToolTipsVisible(True)`) rather than doing the wrong thing: a **row** on
+    the clipboard is never pasted as a column (and vice versa), and a line is only
+    pasted back into **the sheet it came from** (`self._source`, stamped by
+    `set_source` on every `_show_sheet`). A plain block of cells carries no such
+    claim and stays pasteable either way.
+  - `copy_lines` refuses a copy above `_MAX_COPY` (200k cells) with a note, so a
+    header click on a huge sheet cannot hang on building one giant string.
+  - `_delete_lines` asks for confirmation when `model.has_content` finds anything in
+    the lines (that scan stops at the first hit and never looks at more than 5000
+    rows) — the message says whether **Ctrl+Z** can bring the data back
+    (`ExcelSheetModel.delete_is_undoable`); only a band above `_UNDO_CELLS` clears the
+    undo history, and then Reload is the way back.
+  - The model side is `insert_rows`/`insert_columns` and `delete_rows`/
+    `delete_columns`: `beginInsert…`/`beginRemove…`, openpyxl's
+    `ws.insert_rows`/`insert_cols`/`delete_rows`/`delete_cols` on the **live
+    worksheet** (so Save just writes it), then `_shift_keys` re-keys
+    `_edits`/`_formulas` around the change (`remove=True` drops the keys inside the
+    deleted band and shifts the rest back) and the style/calc caches are dropped.
+    Because the worksheet changed without any cell being "edited", `_structural`
+    joins `has_edits()` — otherwise an insert-only change would show no `*` on the
+    tab and Reload would not warn. It is deliberately **not** cleared by undoing the
+    insert/delete again: the worksheet was mutated and rebuilt, and openpyxl cannot
+    promise the styles/merges came back byte-identical, so the sheet stays marked
+    dirty until it is saved or reloaded. **Not** rewritten: formulas that point at moved
+    cells (neither openpyxl's nor this editor's) and merged ranges.
+- **The strip stays the header row** (`_FrozenStrip`): it shows the same model as the
+  body, so left alone it scrolls like any table — a click, a drag or the mouse wheel
+  over it moved it to row 5 and the sheet then carried a "header" that was really a data
+  row. The subclass refuses all of that: `scrollTo` is a no-op (a click cannot scroll
+  row 1 away — it forwards the *sideways* part to the body instead, so stepping to a
+  column off screen still works), `wheelEvent` is handed to the **body** (spinning the
+  wheel over the header scrolls the table, as expected), and `keep_at_top` on its
+  `verticalScrollBar().valueChanged` snaps any remaining vertical scroll back to 0.
+- **Row 1 is edited on the strip** — it is the only place that row is shown (the body
+  hides it), so the strip takes focus, a selection and the usual edit triggers
+  (double-click / F2 / just type), and `ExcelSheetModel.flags` marks **every** row
+  editable. The edit runs through the same `setData`, so it joins the undo stack, marks
+  the tab `*` and is written by Save like any other cell. Because there are now two
+  selections, `_selection_source()` decides whose the clipboard, Delete and **B** act
+  on — and `_show_sheet` connects **both** selection models to `_update_toolbar`.
+  - It returns `_active_view`, recorded by `set_active_view` from each view's
+    `focusInEvent`, **not** `hasFocus()` read when the action runs. Reading the focus
+    live was wrong in exactly the way it sounds: pressing a toolbar button moves the
+    focus first, so **B** pressed straight after marking header cells found the strip
+    unfocused and bolded the *table's* old selection — or did nothing when the table
+    had none ("sometimes it does not work, or it bolds another cell"). Toolbar buttons
+    are `Qt.NoFocus` as well, so they cannot take the focus off the cells they act on,
+    and `activeViewChanged` re-runs `_update_toolbar` when the user moves between the
+    two views.
+  - `_on_letter_clicked` hands the active view **back to the body**: the click lands on
+    the strip, but the column it selects is the body's.
+  - `_FrozenStrip.keyPressEvent` forwards Ctrl+C/X/V, Delete, Ctrl+Z/Y and Ctrl+B to
+    the body's handler (which then acts on the strip's selection through
+    `_selection_source`), so the header row has the same shortcuts as any other row.
+    Everything else falls through to `QTableView`, so typing a character or F2 still
+    opens the cell editor — and while an editor is open the keys stay with it.
+- **Column widths belong to the view, not the sheet**: `_show_sheet` therefore sets
+  **every** column's width for a wide sheet (`_WIDE_COL` = 90 px, signals blocked, one
+  `sync_frozen_columns` afterwards) instead of relying on `setDefaultSectionSize` —
+  a default does not touch sections that were already sized, so a wide sheet opened
+  after a narrow one inherited the narrow one's widths and showed some columns at one
+  width and the rest at another. **B and C get 70 % more** (`_WIDE_COL * 1.7`): on a
+  wide sheet those name the rows (in `Reservoirs_downstream` the station and its river)
+  while the rest is the data matrix.
+- **Strip scrolled exactly with the body** (`_sync_hscroll`): the strip has no vertical
+  scrollbar (the body has), so its viewport is ~16 px wider and Qt gives its horizontal
+  scrollbar a **smaller maximum** — at the right-hand end of a wide sheet the column
+  letters stopped short of the data they belong to. The strip's scrollbar is hidden, so
+  `_sync_hscroll` simply widens its maximum when the body scrolls past it; a relayout
+  that recomputes (and shortens) the range again is caught by the strip's
+  `rangeChanged` → `_on_strip_range_changed`, which re-applies the body's position.
+  (`setViewportMargins` on the strip does *not* work — it changes the margin without
+  moving the scroll range.)
+- **Selection colours**: `_update_selection_tint` (on every `selectionChanged`) sets the
+  view's `QPalette.Highlight` from theme tokens instead of leaving the platform's accent
+  blue — **`selection_cell`** (dark gray) for marked cells and the stronger
+  **`selection_line`** for a whole marked column/row (`selected_columns()`/
+  `selected_rows()`), with white highlighted text; the frozen strip gets the same
+  palette. Both tokens exist in all three themes (on the dark ones the *line* shade is
+  the lighter of the two, since that is what reads as stronger there).
+- **Fill handle**: `_handle_rect` puts a 7 px accent square on the selection's
+  bottom-right corner (painted in `paintEvent` after the base class; the cursor turns
+  into a cross over it). A press inside it starts `_filling` **without** clearing the
+  selection; the drag picks the **dominant** axis (`_fill_target` — a drag is either
+  vertical or horizontal, as in Excel), auto-scrolls past the viewport edges
+  (`_fill_autoscroll`) and paints a dashed preview of the target block. On release
+  `_apply_fill` reduces it to the *new* strip and calls `model.fill_range`, which
+  extends **each line along the fill axis on its own** through
+  `cell_fill.extend_series` (number series, `Crop1`→`Crop2`, weekday/month lists, else
+  repeat) — dragging up/left passes the reversed values and writes them outward.
+  A **single source cell fills its own value** into the rest: `extend_series` returns
+  early for a one-value source, so no series is ever guessed from one cell (this is
+  deliberate, and differs from Excel, which would count `Crop1` up). Filling copies
+  the *displayed* values, so a formula fills as its value: there is no
+  relative-reference translation (`A1` does not become `A2`).
+- **Nothing spills into the next column**: both views use `Qt.ElideRight`, so a value
+  word wrap cannot break (an ID, a path, one long word) is **cut off with an ellipsis**
+  at the column edge instead of being painted across the neighbouring cell and over its
+  content. Widening the column shows the rest.
+- **Column sizing** (`_show_sheet`, sheets of ≤ 60 columns), in order:
+  `resizeColumnsToContents()` → **`fit_header_widths()`** → `cap_column_widths()` →
+  `wrap_columns()` → `_apply_sheet_minimums()`.
+  - `fit_header_widths` (`header_width_hints` = `frozen.sizeHintForColumn`) is what
+    stops a **header** from running into the next column: the body's auto-size measures
+    the *data* only, because row 1 is hidden there — it lives on the strip. That was the
+    Reservoirs "column E overlaps column F" case, where the header is the longest text
+    in the column.
+  - `wrap_columns` therefore also floors its halving at the header's width: halving a
+    text column must not undo what the line above just fixed.
+  - `_SHEET_MIN_CHARS` / `_apply_sheet_minimums` give named sheets a **minimum width in
+    characters** for named columns, because what a column *contains* is not always what
+    makes it readable: `reservoirtransfer` → **F and G ≥ 12 characters** so a reservoir
+    ID (`400001`) is never cut, `reservoir` → **E ≥ 30**. The key comes from
+    `_sheet_key` (letters/digits only, lowercase, plural *s* dropped per word), so
+    `Reservoir_transfers`, `Reservoir transfer` and `ReservoirTransfers` all match while
+    `Reservoirs` stays distinct from `Reservoirs_downstream`. Adding a sheet is one line
+    in that table; the minimum only ever widens a column.
+- **Word-wrapped text columns**: `ExcelSheetModel.is_text_column` samples the first 60
+  **data** rows (row 0 is the sheets' header row and would make everything look
+  textual) and calls a column text when non-numeric values are at least as common as
+  numeric ones. `_show_sheet` auto-sizes the columns, caps every one of them at
+  **~120 characters** (`cap_column_widths`, `_MAX_CHARS` × `averageCharWidth` — one
+  long cell would otherwise stretch a column across several screens; the text wraps
+  into more lines instead), then `wrap_columns` **halves**
+  each text column wider than 140 px (floor 70) — the view has `setWordWrap(True)` +
+  `ElideNone`, so the text wraps instead of being cut off. Row heights are computed
+  for the **visible rows only** (`_resize_visible_rows`, capped at 300 rows), debounced
+  by a 60 ms timer and re-run on scroll, on resize and on `sectionResized` — so
+  **widening or narrowing a column re-wraps it** without ever walking the whole sheet.
+  Row 0's height is mirrored onto the frozen strip in `_update_frozen_geometry`.
 
 ### Compare settings (Settings menu)
 **Settings ▸ Compare settings** (last item, separator above)
@@ -88,7 +412,7 @@ Themed like the other secondary windows; geometry key `compare_settings`.
   instead of the pre-save content — reloaded silently when the main editor is clean,
   and behind a discard-changes prompt when it has unsaved edits. A Save As to a
   different path does not touch the main window.
-- **Open two specific files** (used by Run Ledger ▸ Compare settings):
+- **Open two specific files** (used by Journal of Runs ▸ Compare settings):
   `open_compare_files(parent, a, b)` → `CompareSettingsWindow.load_files(left, right)`
   reads both paths into the two panes and re-diffs (a missing file loads as empty).
 
@@ -114,8 +438,19 @@ the main run and of every other Hidden Run window — so **several can run in pa
 while the main GUI stays fully interactive. Each window:
 - opens **pre-loaded** with the settings file currently loaded in the main window (an
   `.ini` in that file's directory); a **Load** button picks a different `.ini` (dialog
-  starts in that directory);
-- shows the settings-file path in **bold green** (`#1a9a3c`);
+  starts in that directory), **Use current** takes whatever the main window has loaded
+  *now* (this window otherwise keeps the file it was opened with), and an `.ini`/`.txt`
+  can simply be **dropped onto the window** (`setAcceptDrops` + `dragEnterEvent` /
+  `dropEvent`, refused while a run is going);
+- shows the settings-file path in **bold green** — the `ok_color` **theme token**, not a
+  hardcoded hex, so it follows the Mode like the rest of the chrome;
+- shows the run's **Title and resolved PathOut** under it (`_read_settings_facts`, a
+  cheap best-effort read refreshed whenever the file changes; `_preflight` re-reads
+  authoritatively before the run) with an **Open PathOut** button — with several windows
+  open the Title is what tells them apart, and the window title uses it too;
+- **output box extras** (`_on_output_menu`): the standard read-only menu plus *Copy all
+  output*, *Save output as…*, *Find…* and *Clear output*; **Ctrl+F / F3** search the box
+  (wrapping, and saying so once when the text is not there);
 - has a **Run CWatM** button that toggles to **Stop CWatM** (blue→red) while running;
 - streams the run into its **own** read-only output box (per-timestep `\r` discharge
   line overwrites in place, errors in dark red — same rendering as the main box).
@@ -126,6 +461,28 @@ while the main GUI stays fully interactive. Each window:
   in-flight run when the window is closed (no orphan model process). The main window
   keeps the windows in `self._hidden_run_windows` so they are not GC'd; the list entry
   is dropped on `destroyed`.
+- **Progress bar + times**: the worker's `progress` signal (which this window simply did
+  not connect) drives a themed `QProgressBar`, and a 1 s `QTimer` writes
+  `elapsed m:ss · remaining ~m:ss` beside it — the same linear estimate the main
+  window's clock uses, shown only from 3 % so it is not nonsense at the start. It
+  freezes as `run time` / `failed after` / `stopped after` when the run ends, and
+  `QApplication.alert` flashes the taskbar: a hidden run is the one nobody watches.
+- **Pre-flight** (`_preflight`, before the worker is created): the settings file must be
+  readable, and its **PathOut** is resolved (`basin_viewer.pathout_exists`) and
+  **created** — CWatM does not create it, so the run would otherwise die minutes in.
+  It also caches the content, the resolved PathOut and the settings `Title` for the
+  ledger entry. Failure writes the reason into the output box and does not start.
+- **Journal of Runs**: every hidden run is recorded (`kind="hidden"`, with the content
+  snapshot for Compare settings) on success, error **and** stop — hidden runs used to
+  leave no trace in the history at all.
+- **Geometry + cascade**: `GeometryMemoryMixin` with the key `hidden_run`; since all
+  these windows share one key, each new one is offset by 28 px per window already open
+  (`main_window._hidden_run_windows`), so several do not land exactly on top of each
+  other.
+- **Closing asks** when a run is in progress (window title, file name and elapsed time
+  in the question) instead of killing it silently; the same guard is in
+  `main_window.closeEvent`, which lists how many Hidden Run windows are still running
+  before the GUI (their parent) takes them down with it.
 
 ### Batch Run (RUN CWATM menu)
 **RUN CWATM ▸ Batch Run…** (`main_window.open_batch_runner` →
@@ -157,25 +514,163 @@ process** via `CWatMProcessWorker` (the same subprocess worker as the main run).
   named `<key><val>[_<key2><val2>…]` with its own PathOut, the swept keys get override
   columns, and >200 scenarios prompts a confirm. **Replace** (default) gives a clean
   table (rows + old override columns dropped).
-- **The scenario table persists across sessions**: on close (`_save_config`) the rows
-  (name/PathOut/overrides), the override-key columns, and the parallel count are stored
-  as JSON in `QSettings` (`batch_runner/config`); the next open restores them
-  (`_restore_config`, else one default row). **Clear** starts fresh (the empty state is
-  persisted on the next close).
-- On finish each scenario is logged to the **Run Ledger** (`kind="batch"`, title
-  `<base Title> [<scenario>]`, PathOut resolved via `basin_viewer.pathout_exists`); the
-  temp `.ini` is deleted on success (kept on failure for debugging). Non-modal; the main
-  GUI stays usable. `closeEvent` stops in-flight processes; geometry key `batch_runner`.
+- **The scenario table persists across sessions, per base settings file**: on close
+  (`_save_config`) the rows (name/PathOut/overrides), the override-key columns, the
+  parallel count and the stop-on-failure flag are stored as JSON in `QSettings` under
+  **`batch_runner/config_<md5(base path)>`** (`_cfg_key`) — one global key used to greet
+  another project with the *previous* project's scenarios and PathOuts. A table saved
+  under the old global key is adopted once for the file being opened, then re-saved
+  under the new one. **Clear** starts fresh (the empty state is persisted on the next
+  close).
+- **Duration + ETA** (`_TRAILING` = Progress · **Duration** · Status): a 1 s `QTimer`
+  (`_tick` → `_update_times`) ticks the elapsed time of every running scenario and the
+  batch line under the title — `3/20 finished · 2 running · 15 queued · ~1:12:30 left`.
+  The estimate (`_eta_seconds`) is the **mean of the scenarios that have already
+  finished** times what is left (queued rows plus the unfinished fraction of the running
+  ones, from their `progress` %), divided by the parallel count; it stays hidden until
+  the first scenario finishes, because a guess before that is worse than silence.
+  `_freeze_duration` stops a row's clock and feeds `_durations`; when the batch ends the
+  line becomes `Batch finished: 18 done, 2 failed in 3:41:12` and `QApplication.alert`
+  flashes the taskbar entry — batches are long enough to walk away from.
+- **Progress as a bar** (`_ProgressDelegate` on the Progress column): the cell **text**
+  stays `NN%` — that is what the CSV export and every read of the table use — the
+  delegate only paints a themed bar behind it (`surface_bg` groove, `accent` fill), so
+  twenty rows can be taken in at a glance. `_refresh_headers` moves the delegate when an
+  override column shifts the Progress column, clearing it from the old index.
+- **Compare results** (`_compare_results` → `analysis_timeseries.open_comparison`):
+  scans every scenario's PathOut for result `.csv` files, keeps the names that appear in
+  **more than one** scenario, and overlays that file from all of them in a single
+  Timeseries plot, each series labelled with its scenario name. One candidate is used
+  straight away; several ask which (`QInputDialog`, most-covered first). `open_comparison`
+  is the programmatic form of the Timeseries window's *Compare* button: it builds the
+  window on the first file and appends the rest to `win.compare` before the first render.
+- **Resume an interrupted batch** (*Skip finished* checkbox): `_run_rows(rows,
+  force=False)` drops rows whose PathOut already holds output (`_has_results`: any
+  `.nc`/`.tss`/`.csv` — the scenario's own `cwatm_out.txt` is a `.txt`, so the log alone
+  never counts) and marks them `skipped (has results)`. **`force=True` for the row
+  menu's *Run this scenario***: asking for one scenario explicitly must run it whatever
+  is in its folder. Skipped and `cancelled` rows are counted separately by `_counts`, so
+  the batch line and the summary say `… · 3 skipped` instead of silently never reaching
+  the total.
+- **CSV import/export** (`_import_csv` / `_export_csv`): the columns are
+  `Scenario, PathOut, <override keys…>, Duration, Status, LastDischarge`. Export writes the results
+  alongside the definition, so the same file **is** the batch's result summary; import
+  takes every column that is not Scenario/PathOut and not one of `_INFO_COLS`
+  (progress/duration/status) as an **override key**, so a table built in Excel drops
+  straight in. Written as `utf-8-sig` for Excel; a file without a Scenario/PathOut
+  header is refused with the header it did find.
+- **Parallelism**: the spin box starts at `_default_parallel()` = `min(4, cores//2)`
+  rather than 1, and `_preflight` **warns** when it is raised past `cores//2` (CWatM is
+  CPU- and IO-hungry; beyond that a batch gets slower, not faster). **Stop on first
+  failure** (checkbox) clears the queue on the first failed/errored scenario
+  (`_cancel_queued`, remaining rows read `cancelled`) but deliberately **lets running
+  ones finish** — killing them would throw away hours of work.
+- **Pre-flight check** (`_preflight` → `_confirm_problems`), run by *Run all*, *Run this
+  scenario* and *Re-run failed* before a single process starts. A batch is expensive and
+  its worst failures are **silent**, so these are checked up front:
+  - *(blocking)* a row with **no PathOut** — it would write into the base PathOut
+    together with every other scenario; two rows with the **same resolved PathOut** —
+    they would overwrite each other's results; a PathOut that **cannot be created**
+    (`_writable_dir` walks up to the nearest existing ancestor and tests `W_OK`).
+  - *(warning, "Run anyway?")* an override key that is **not in the base file** — the
+    key is otherwise appended silently by `set_settings_key`, so a typo runs the base
+    value to completion; two rows with the same sanitised **name** (they look alike in
+    the Journal of Runs); a PathOut that already **holds files**.
+- **Per-scenario log** (`_ScenarioLog`): each worker gets its own `output_sink`, so the
+  batch never writes into the **main window's** output box — with several scenarios in
+  parallel their lines used to interleave there into one unreadable stream. The log
+  keeps a 3000-line tail in memory (*Show log*) and appends the full stream to
+  `<PathOut>/cwatm_out.txt` (lazy open, flushed every 50 lines, `====`/date header per
+  run, `\r` progress lines overwriting in place like the main box). stderr lines are
+  kept separately and become the **tooltip** of a failed row — the status cell can only
+  show `error: …` cut to 60 characters.
+- **Row context menu** (`_on_row_menu`): *Run '<name>'* (`_run_single` — pre-flights just
+  that row and queues it, so it also works while a batch is running), *Re-run failed (N)*
+  (`_failed_rows` = status starting with failed/error/stopped), *Show log*, *Open output
+  folder* (through `utils/open_path.py`, so it works on Linux too) and *Show settings
+  (diff vs base)*, which opens the **Compare settings** window on the generated scenario
+  against the base file via its `load_contents(left, left_name, right, right_name)`
+  entry point. `_run_all` is now `_preflight` + `_run_rows(all rows)`; `_run_rows` is the
+  shared queue-and-pump path.
+- **Temp `.ini` per row**: the name carries the **row number**
+  (`<base>.batch001_<name>.ini`) — two scenarios whose names sanitise alike (`run 1` /
+  `run_1`) used to write, and delete, the *same* file while both were running. Writing a
+  row's file first removes that row's older ones (`_temp_glob`), so a rename leaves no
+  orphan. Deleted on success **and on stop**; kept on failure for inspection (and
+  overwritten by that row's next attempt).
+- On finish each scenario is logged to the **Journal of Runs** (`kind="batch"`, title
+  `<base Title> [<scenario>]`, PathOut resolved via `basin_viewer.pathout_exists`) —
+  **stopped** scenarios are recorded too, instead of vanishing. Non-modal; the main
+  GUI stays usable. `closeEvent` stops in-flight processes and closes the logs; geometry
+  key `batch_runner`.
 
-### Run Ledger (Tools menu)
-**Tools ▸ Run Ledger** (last item, separator above) (`main_window.open_run_ledger` →
+### Journal of Runs (RUN CWATM menu)
+**RUN CWATM ▸ Journal of Runs** — the **2nd item**, right under *Run CWATM* (it was
+Tools ▸ *Run Ledger*; only the visible name and place changed — the window class is still
+`RunLedgerWindow`, the storage module `utils/run_ledger.py`, the file `run_ledger.json`)
+— (`main_window.open_run_ledger` →
 `src/gui/widgets/run_ledger_window.py`, `RunLedgerWindow`) shows a table of **past runs**
 recorded by `src/gui/utils/run_ledger.py` — one JSON row per run (`run_ledger.json`):
 time, `kind` (run/hidden/batch/stopped), settings path, settings **Title**, resolved
 **PathOut**, duration, success, last discharge. Rows are actionable: **Open results**
-(the run's PathOut in the **Output Explorer**), **Load settings** (reload the run's
-settings file into the main window), **Compare settings**, **Refresh**, **Clear
-ledger**. Newest first; non-modal; geometry key `run_ledger`.
+(the run's PathOut in the **Output Explorer**), **Show log**, **Load settings** (reload
+the run's settings file into the main window), **Re-run**, **Compare settings**,
+**Compare results**, **Refresh**, **Delete**, **Clear journal**. Newest first;
+non-modal; geometry key `run_ledger`.
+- **Finding a run**: a **filter box** hides every row that does not contain the typed
+  text (any column — Title, PathOut, settings file, kind, date), and the table is
+  **sortable** by any column (`setSortingEnabled`). Sorting means a table row is no
+  longer its entry's index, so each row stashes that index in column 0's `Qt.UserRole`
+  and `_entry_at`/`_selected_entries` read it back; `_SortItem` sorts by a **key**
+  (timestamp, seconds, discharge) rather than the displayed text, so `2m 05s` sorts
+  after `45s`.
+- **Show log** (`_log_path`): the `log` path recorded with the entry, else
+  `<PathOut>/cwatm_out.txt` when one is there; shown read-only with only the **last
+  2 MB** read, since a long run's log is big. Main runs record theirs when
+  **Preferences ▸ Output ▸ Write output box** is on; batch scenarios always write one.
+  The journal otherwise records *that* a run failed and never *why*.
+- **Re-run**: opens a **Hidden Run** window on that settings file and starts it,
+  falling back to the run-time **snapshot** when the original file is gone (with a note
+  saying so). The journal knows exactly what ran, so repeating it should not be a
+  manual load-then-run.
+- **Compare results**: for two or more marked runs, collects the result `.csv` names
+  present in several of their PathOuts, asks which one when there is a choice, and
+  overlays them in a single Timeseries plot through
+  `analysis_timeseries.open_comparison`, each series labelled with the run's Title.
+  *Compare settings* answers "what differed in the set-up"; this answers "what differed
+  in the results".
+- **Delete** removes the marked runs and their snapshots (`run_ledger.remove_entries`,
+  matched on ts + settings + pathout because the window works on copies). Until now it
+  was all-or-nothing via *Clear journal*. Deleting a **grouped batch row** deletes all
+  its scenarios.
+- **Grouping** (*Group batches*, on by default): entries sharing a `batch_id` — written
+  by the Batch runner, one id per batch — collapse into a single row
+  (`<Title> — batch of N`, summed duration, `12/14` in the OK column). Entries without
+  a batch id (everything before this, and every main/hidden run) are untouched. Untick
+  to see every scenario.
+- **Dead rows are visible**: a PathOut or settings file that no longer exists is drawn
+  in `text_gray` with a "does not exist any more" tooltip, instead of being discovered
+  by clicking. One `os.path` check per **distinct path** per reload (`exists` dict), not
+  per row, so a few hundred rows on a share stay cheap.
+- **Note column** (last, editable): free text stored in the journal
+  (`run_ledger.set_note`, matched on the same ts+settings+pathout key as the delete).
+  Titles come from the settings file and repeat, so a note — *"calibration attempt 3"* —
+  is what makes a months-old journal navigable. `_filling` guards `itemChanged` while
+  the table is rebuilt, live rows and **grouped batch rows** are read-only (their
+  tooltip says to untick *Group batches* to note a single scenario).
+- **Export CSV** writes the rows **currently shown** — so the filter narrows the export
+  — with the visible columns plus `Kind` and `Log`.
+- **Right-click a row** (`_on_row_menu`) for everything that applies to it, including
+  the two things with no button: **Open output folder** (the file manager, through
+  `utils/open_path.py`) and **Copy PathOut / Copy settings path** (retyping a path out
+  of the table was the only way before). The rest mirrors the buttons — open results,
+  show log, load settings, re-run, delete — each greyed out when it does not apply.
+- **What is running now**: `_live_entries` builds pseudo-rows for the **main run**
+  (`_run_ledger_ctx`), every **Hidden Run** window and every in-flight **Batch**
+  scenario, shown at the top with `running…`, a live elapsed time and a tinted
+  background, refreshed by a 2 s timer (which also picks up runs that finish while the
+  window is open). They cannot be deleted or re-run, and the timer is stopped in
+  `closeEvent`.
 - **Compare settings**: the table is **ExtendedSelection**, so two runs can be marked
   (Ctrl/Shift+click). The **Compare settings** button is **grey/disabled** until
   **exactly two** rows are marked, then **blue** (`itemSelectionChanged` →
@@ -198,9 +693,9 @@ ledger**. Newest first; non-modal; geometry key `run_ledger`.
   stores its path as `entry["snapshot"]`. This is what **Compare settings** diffs. The
   **Batch runner** snapshots each scenario's generated content too.
 - **Storage / retention** (`run_ledger.py`, `QSettings`): folder `history/folder`
-  (default `%LOCALAPPDATA%/CWatM_GUI`, set via **Configure ▸ Run history folder…**),
-  retention `history/retention_days` (default 60; 0 = keep forever, set via **Configure ▸
-  Run history retention…**) — entries older than the window are pruned on write **and
+  (default `%LOCALAPPDATA%/CWatM_GUI`, set via **Preferences ▸ Run History ▸ Run history folder**),
+  retention `history/retention_days` (default 60; 0 = keep forever, set via **Preferences ▸ Run History ▸
+  Run history retention**) — entries older than the window are pruned on write **and
   their snapshot files deleted**, plus a hard `_MAX_ENTRIES` cap. **Clear ledger** also
   removes the `snapshots/` folder. Writes are atomic (`.tmp` + `os.replace`).
 
@@ -208,18 +703,85 @@ ledger**. Newest first; non-modal; geometry key `run_ledger`.
 **Tools ▸ Restore settingsfile** (`main_window.restore_settingsfile`) opens a `dis*.nc`
 output file and shows its global attributes in a table (`RestoreSettingsWindow`,
 `src/gui/widgets/restore_settings_window.py`), **excluding** the three bulky ones
-(`version_settingsfile`, `version_inputfiles`, `version_modules`). Two bottom-left
-buttons act on those hidden attributes:
+(`version_settingsfile`, `version_inputfiles`, `version_modules`) — each of which has
+its own viewer instead. **One `Dataset` open for the whole window**: the call site reads
+*every* global attribute (`read_netcdf_attrs`) and hands the list to the window, which
+filters its table and serves all buttons from that dict (these files usually sit on a
+network share, where each open is the slow part; `read_netcdf_metadata` /
+`read_netcdf_attr` stay as thin wrappers). Above the table sits a **summary card**
+(`_summary_rows`): Title · Created (`history`, minus the leading "Created") · CWatM
+(`Source_Software`, else `Version`) · Settings file · Output folder — the facts everyone
+hunted for in the alphabetical list; rows the file does not carry are simply absent, and
+each value is selectable.
+
+Every button is **enabled by what the file actually contains** (`_update_buttons`) —
+a NetCDF without `version_settingsfile` greys the three settings buttons with the reason
+in the tooltip, instead of explaining it after the click.
+
+- **Preview settingsfile** (`_on_preview` → `SettingsPreviewWindow`): the stored
+  settings in a **read-only `SettingsEditor`** (highlighting + folding for free, styled
+  with `_ComparePane._editor_style()`). *Look before you restore* — until it existed the
+  only way to see the stored file was to write it somewhere and load it, i.e. replace the
+  file you were working on. Its own buttons: **Save as…** (write, don't load),
+  **Load into editor (unsaved)** and **Compare with current**.
+- **Load into editor (unsaved)** (`RestoreSettingsWindow.load_into_editor`): pushes the
+  stored content into the main editor through `set_content_preserving`, so it is **one
+  undo step** (Ctrl+Z restores the current file) and **nothing is written to disk** — the
+  Save buttons just turn blue. Asks first, naming the file whose content is replaced;
+  refuses when no settings file is loaded (there would be no editor to put it in).
+- **Compare with current** (`_on_compare`): diffs the stored settings against
+  `main_window._live_content()` in a `CompareSettingsWindow` (`load_contents`, panes
+  labelled *current file* vs *stored in \<nc\>*). This window is **modal**, which would
+  block the diff window, so it `accept()`s itself (and the preview) first — the same
+  reason **Show in Journal** closes it.
 - **Restore settingsfile** (`_on_restore`): writes `version_settingsfile` (the full
   settings file CWatM stamped into the output) to a **new file** (Save-As dialog,
   suggested in PathOut / next to the nc), then **loads** it in the main window
   (`load_recent_file`). If the currently loaded settings file has **unsaved changes**
   (`main_window._is_dirty`) it first warns *"Current settingsfile is not saved. Save it
-  or loose content."* with **Save current first / Continue (lose changes) / Cancel**.
+  or loose content."* with **Save current first / Continue (lose changes) / Cancel**
+  (`_confirm_unsaved`). The suggested name is `<title>_<run date>.ini`
+  (`_suggested_name`, from the `title` and `history` attributes, falling back to
+  `restored_settings.ini`) — restoring three runs into one folder used to collide three
+  times on the same name.
 - **Show Inputfiles** (`_on_show_inputfiles` → `InputFilesWindow`): parses
   `version_inputfiles` (entries separated by `;`, each `<filename> <DD/MM/YYYY HH:MM>`,
-  via `parse_input_files`, exact duplicates dropped) into a 2-column **File / Date**
-  table.
+  via `parse_input_files`, exact duplicates dropped) into a **File / Date at run time /
+  Status / Found at** table, and **checks** each entry (`check_input_files`): is the file
+  still there, and is it still the version the run used? CWatM records only the
+  **base name** (`data_handling.py: os.path.basename(filename)`), so there is nothing to
+  `os.path.exists` — the check instead resolves the *stored* settings file
+  (`candidate_dirs`: every `Path*` value and the folder of every file value, placeholders
+  resolved by the module's **own** `_resolve_placeholders` — a deliberate copy of
+  `basin_viewer._resolve_settings_placeholders`, because importing that module for one
+  regex helper drags numpy/xarray/rasterio into a worker thread; relative paths against
+  the run's settings folder from the `settingsfile` attribute) and builds one
+  basename → path index over those folders (`_dir_index`, one `os.scandir` each). The
+  recorded date is compared against **both** the file's mtime and ctime in CWatM's own
+  `%d/%m/%Y %H:%M` format (it writes `getctime`, so comparing only mtime would cry wolf)
+  → `ok` / `changed (now …)` / `missing` / `found` (no date recorded) / `?` (nowhere to
+  look — no stored settings, or none of its folders readable), the status cell tinted
+  `error_line` / `wrongext_line`, with a count line *"188 files · 3 missing · 5 changed
+  since the run"*; the `?` count is reported too, because otherwise a check that checked
+  **nothing** summarised as "all still there and unchanged". The listing runs in a
+  **`QThread`** (`_InputCheckWorker`, `done` connected to a **bound method** so it stays
+  queued) — folder listings take seconds on a share — and **Re-check files** repeats it.
+  **Double-clicking a row opens that input file** (`_on_double_clicked`): a `.nc`/`.nc4`
+  in the **NetCDF viewer** (`analysis_netcdf.NetcdfWindow`, `WA_DeleteOnClose` like the
+  Output Explorer's viewers), anything else through `open_path`; the resolved path is
+  kept on the name cell (`Qt.UserRole`), so a row that is missing or not yet checked
+  says so instead of doing nothing.
+- **Show in Journal** (`_on_show_in_journal`): finds the run whose PathOut is (or
+  contains) this file's folder in `run_ledger.load_entries()` (`_journal_entry`, also
+  what enables the button), closes this dialog and opens the Journal of Runs on that row
+  — `RunLedgerWindow.select_run(ts=, pathout=)` unhides, selects and scrolls to it,
+  matching a folded batch row through its `members`.
+- **Getting values out** (`install_table_tools`, both tables): **Ctrl+C** copies the
+  marked rows tab-separated, a right-click offers *Copy value / Copy row(s) / Export as
+  CSV…*, and an **Export as CSV** button writes the visible rows (`;`-separated,
+  utf-8-sig, suggested next to the nc as `<name>_metadata.csv` /
+  `<name>_inputfiles.csv`). Before this, a read-only table with no menu meant a value
+  could not leave the window at all.
 
 ### CWatM AI (Gemini NotebookLM)
 **CWatM AI** button (left of Help) opens a chat window where questions about CWatM are
@@ -360,7 +922,7 @@ the raster onto a Mercator basemap and did not render well).
   **EPSG:4326 WMS layer names** (OSM-WMS / TOPO-OSM-WMS / SRTM30-Colored-Hillshade
   / Dark) served by the terrestris OSM WMS through the `osmtile://wms/…` handler
   branch (query forwarded verbatim, Python-fetched, cached, proxy-proof). The
-  Configure-menu default (a Mercator XYZ key) falls back to `OSM-WMS`.
+  Preferences default (a Mercator XYZ key) falls back to `OSM-WMS`.
 - **Markers are CSS teardrop pins** (`L.divIcon`, `.cwatm-pin`, ~22 px, the
   `folium.Icon` look but self-contained — no font-awesome, which is stripped):
   red gauges labelled **1..N** (the station number, from `setRedAll`'s forEach
@@ -398,7 +960,7 @@ the raster onto a Mercator basemap and did not render well).
   `_tile.setOpacity`) and the **ups.nc/mask overlay opacity** falls 1.0 → 0.5
   (`setOverlayOpacity`). So **0% = OSM hidden + data fully opaque** (only ups.nc/mask,
   over white) and **100% = OSM fully visible + data 50% opaque on top**. The **initial**
-  value comes from **Configure ▸ Transparency** (`display_format.get_transparency()`,
+  value comes from **Preferences ▸ Display ▸ Initial map transparency** (`display_format.get_transparency()`,
   default 100). `setBasemap` re-applies `_baseOp` on a basemap switch.
 - **Load JSON** button: opens a `*.geojson`/`*.json` file (starting in the settings
   file's folder), parses it with `json.load`, and draws it via the `addGeoJson` JS
@@ -499,7 +1061,7 @@ so this folium viewer is now simply **NetCDF**.)
   `_tile.setOpacity`) **and** the **NetCDF overlay opacity** 1.0 → 0.5 (`setNcOpacity`
   → `_ov.setOpacity`). So **0% = OSM hidden + NetCDF fully opaque** (only the data, over
   white) and **100% = OSM fully visible + NetCDF 50% opaque on top**. The **initial**
-  value comes from **Configure ▸ Transparency** (`display_format.get_transparency()`,
+  value comes from **Preferences ▸ Display ▸ Initial map transparency** (`display_format.get_transparency()`,
   default 100). `setBasemap` re-applies `_baseOp` when the layer is swapped. (There is no separate
   Hide OSM button — sliding to 0% hides the basemap.)
 - **Log scale** button (checkable, `_toggle_log`): maps the values to colour on a
@@ -653,3 +1215,5 @@ result file as Watercycle and shows the overall water balance as a Plotly
 - **Save HTML** button (same as Watercycle): saves the self-contained Plotly plot,
   suggesting the resolved PathOut directory. Window geometry remembered via
   QSettings key `flowdiagram`.
+
+

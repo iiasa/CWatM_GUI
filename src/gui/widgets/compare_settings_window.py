@@ -695,6 +695,13 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
         except Exception:
             log.debug("main-window refresh after compare save failed", exc_info=True)
 
+    def load_contents(self, left_content, left_name, right_content, right_name):
+        """Compare two texts that are not (both) files on disk - used by the Batch
+        runner to show a generated scenario against its base settings file."""
+        self.left.set_source(left_content or "", "", left_name)
+        self.right.set_source(right_content or "", "", right_name)
+        self._recompare()
+
     def load_files(self, left_path, right_path):
         """Load two specific settings files into the two panes and diff them (Run
         Ledger ▸ Compare settings). A file that cannot be read loads as empty."""

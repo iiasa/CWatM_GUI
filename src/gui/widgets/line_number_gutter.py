@@ -65,13 +65,30 @@ class LineNumberGutter(QWidget):
                 yield block, y, geo.height()
             block = block.next()
 
+    def _gutter_font(self):
+        """The editor's font, one step smaller - so the numbers follow the editor's
+        '+' / '-' font buttons.
+
+        The editor's font comes from a stylesheet in PIXELS (main_window
+        ``_editor_style``: ``font-size: <n>px``), so its ``pointSizeF()`` is -1 and
+        scaling *that* would have pinned the gutter to a fixed 7 pt for every editor
+        size. Shrink whichever size the font actually carries, and cap the pixel
+        size: the gutter is a fixed 62 px wide, so a 4-5 digit number in a very
+        large font would otherwise run into the fold marker.
+        """
+        font = QFont(self._editor.font())
+        px = font.pixelSize()
+        if px > 0:
+            font.setPixelSize(max(8, min(px - 1, 16)))
+        else:
+            font.setPointSizeF(max(7.0, font.pointSizeF() - 1))
+        return font
+
     def paintEvent(self, event):
         painter = QPainter(self)
         try:
             painter.fillRect(self.rect(), theme.qcolor("gutter_bg"))
-            font = QFont(self._editor.font())
-            font.setPointSizeF(max(7.0, font.pointSizeF() - 1))
-            painter.setFont(font)
+            painter.setFont(self._gutter_font())
             for block, y, h in self._visible_blocks():
                 text = block.text()
                 # Bookmark: filled orange dot at the far left

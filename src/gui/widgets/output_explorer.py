@@ -178,7 +178,7 @@ class OutputExplorerWindow(GeometryMemoryMixin, QDialog):
             f"QHeaderView::section {{ background-color: {theme.c('menubar_bg')}; "
             f"color: {theme.c('text')}; border: 0px; "
             f"border-bottom: 1px solid {theme.c('border')}; padding: 4px 8px; "
-            "font-weight: 600; }}")
+            "font-weight: 600; }")
         style = self._button_style()
         for b in (self.open_button, self.folder_button,
                   self.refresh_button, self.close_button):
@@ -246,7 +246,10 @@ class OutputExplorerWindow(GeometryMemoryMixin, QDialog):
                 else:
                     self._open_timeseries(path, parent)
             else:
-                os.startfile(path)  # .html / .txt / anything else -> OS default
+                # .html / .txt / anything else -> the desktop's default handler
+                from src.gui.utils.open_path import open_path
+                if not open_path(path):
+                    raise RuntimeError("no application is registered for this file")
         except Exception as e:
             log.warning("output explorer dispatch failed", exc_info=True)
             QMessageBox.warning(

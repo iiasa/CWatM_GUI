@@ -239,10 +239,19 @@ class RunControllerMixin:
                     last = float(last_dis)
                 except (TypeError, ValueError):
                     last = None
+            # The run-log file, when this run wrote one (Preferences ▸ Output ▸ Write
+            # output box) - the Journal of Runs offers it as "Show log".
+            log_path = ctx.get("log")
+            if not log_path:
+                try:
+                    if self.write_output_action.isChecked():
+                        log_path = self._output_file_override or self._default_output_file()
+                except Exception:
+                    log_path = None
             run_ledger.add_entry(run_ledger.make_entry(
                 ctx.get("settings"), ctx.get("title"), ctx.get("pathout"),
                 ctx.get("started_at"), success, last, kind=kind,
-                content=ctx.get("content")))
+                content=ctx.get("content"), log_path=log_path))
         except Exception:
             log.debug("run-ledger logging failed", exc_info=True)
 

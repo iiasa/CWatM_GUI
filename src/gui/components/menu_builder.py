@@ -3,33 +3,20 @@ Menu bar construction for the CWatM GUI main window.
 
 Extracted verbatim from main_window.py: builds the full menu bar (File /
 Settings / Tools / RUN CWATM / Configure / Analyse / Help / Info), the menu-bar
-group separators and the recent-files handling (listed directly in the File
-menu). Mixed into CWatMMainWindow - all state lives on the main window instance.
+group separators, the ⋮ Preferences button in the right corner and the
+recent-files handling (listed directly in the File menu). Mixed into
+CWatMMainWindow - all state lives on the main window instance.
 """
 
 import os
 
-from PySide6.QtWidgets import QMenuBar, QMenu
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices
-from PySide6.QtCore import QUrl, QObject, QEvent
+from PySide6.QtWidgets import QMenuBar, QToolButton
+from PySide6.QtGui import QAction, QDesktopServices
+from PySide6.QtCore import Qt, QUrl
 
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("menu_builder")
-
-
-class _KeepMenuOpenFilter(QObject):
-    """Event filter that keeps a QMenu **open** after a checkable (tick-box) item is
-    clicked, so the ☐→☑ change is visible instead of the menu vanishing. Non-checkable
-    items (dialogs, submenus) behave normally."""
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.MouseButtonRelease and isinstance(obj, QMenu):
-            act = obj.actionAt(event.position().toPoint())
-            if act is not None and act.isCheckable() and act.isEnabled():
-                act.trigger()          # toggle + fire the connected slots
-                return True             # consume the event -> the menu stays open
-        return False
 
 
 class MenuBuilderMixin:
@@ -148,26 +135,6 @@ class MenuBuilderMixin:
             "side by side")
         compare_action.triggered.connect(lambda: self.open_compare_settings())
 
-        # Excel menu (between Settings and Tools) — edit the settings Excel workbook
-        excel_menu = menu_bar.addMenu("Excel")
-        excel_menu.setToolTipsVisible(True)
-        crops_action = excel_menu.addAction("Crops")
-        crops_action.setToolTip(
-            "Open the 'Crops' sheet of the settings Excel file (Excel_settings_file) "
-            "in an editable, colour-preserving table")
-        crops_action.triggered.connect(lambda: self.open_excel_sheet("Crops"))
-        reservoirs_action = excel_menu.addAction("Reservoirs")
-        reservoirs_action.setToolTip(
-            "Open the 'Reservoirs' sheet of the settings Excel file "
-            "(Excel_settings_file) in an editable, colour-preserving table")
-        reservoirs_action.triggered.connect(
-            lambda: self.open_excel_sheet("Reservoirs", release_sheet="Reservoirs_downstream"))
-        # The Excel menu itself stays open-able; its two items are greyed out while
-        # the settings file has no 'Excel_settings_file' key (kept referenced so
-        # _update_excel_menu_enabled can toggle them as the text changes).
-        self._excel_actions = [crops_action, reservoirs_action]
-        self._update_excel_menu_enabled()
-
         # Tools menu (right of File) — same actions as the side buttons
         tools_menu = menu_bar.addMenu("Tools")
         tools_menu.setToolTipsVisible(True)
@@ -182,6 +149,12 @@ class MenuBuilderMixin:
         set_gauge_action.setToolTip("Find the point with the largest upstream area in Mask Map")
         set_gauge_action.triggered.connect(lambda: self.set_gauge())
         self._add_menu_section(tools_menu, "Outputs")
+        # First under Outputs: the folder the outputs go into has to exist before a
+        # run - CWatM does not create it.
+        create_pathout_action = tools_menu.addAction("Create PathOut Folder")
+        create_pathout_action.setToolTip(
+            "Create the output folder (PathOut, placeholders resolved) if it is missing")
+        create_pathout_action.triggered.connect(lambda: self.create_pathout_folder())
         watercycle_action = tools_menu.addAction("Add output Watercycle")
         watercycle_action.setToolTip("Adds an additional output for creating watercycles")
         watercycle_action.triggered.connect(lambda: self.add_output_watercycle())
@@ -192,19 +165,25 @@ class MenuBuilderMixin:
         options_action = tools_menu.addAction("Change Options")
         options_action.setToolTip("Display a popup with the settingsfile [Options]")
         options_action.triggered.connect(lambda: self.open_options_window())
+        # The settings Excel workbook (this was the whole "Excel" menu before).
+        workbook_action = tools_menu.addAction("Excel Crops/Reservoirs")
+        workbook_action.setToolTip(
+            "Open the settings Excel file (Excel_settings_file) in an editable, "
+            "colour-preserving table - all its sheets (Crops, Reservoirs, "
+            "Reservoirs_downstream, ...) on tabs below the table")
+        workbook_action.triggered.connect(lambda: self.open_excel_workbook())
+        # Greyed out while the settings file has no 'Excel_settings_file' key (kept
+        # referenced so _update_excel_menu_enabled can toggle it as the text changes).
+        self._excel_actions = [workbook_action]
+        self._update_excel_menu_enabled()
         check_action = tools_menu.addAction("Check Data")
         check_action.triggered.connect(lambda: self.open_check_data_window())
-        create_pathout_action = tools_menu.addAction("Create PathOut Folder")
-        create_pathout_action.triggered.connect(lambda: self.create_pathout_folder())
-        self._add_menu_section(tools_menu, "Results && History")
+        # (No "Results & History" section any more: the Journal of Runs moved to the
+        # RUN CWATM menu, and Restore settingsfile belongs with the other setup tools.)
         restore_action = tools_menu.addAction("Restore settingsfile")
         restore_action.setToolTip(
             "Open a CWatM output NetCDF (dis*.nc) and show its stored run metadata")
         restore_action.triggered.connect(lambda: self.restore_settingsfile())
-        ledger_action = tools_menu.addAction("Run Ledger")
-        ledger_action.setToolTip(
-            "Show the log of past runs; reopen their results or reload/compare their settings")
-        ledger_action.triggered.connect(lambda: self.open_run_ledger())
 
         # RUN CWATM menu (right of Tools). Actualize was removed: field changes are
         # auto-applied to the content, and Save/Run flush any pending change first.
@@ -212,6 +191,13 @@ class MenuBuilderMixin:
         run_action = run_menu.addAction("Run CWATM")
         run_action.setShortcut("Ctrl+R")
         run_action.triggered.connect(lambda: self.run_cwatm())
+        # The history of what has been run - next to the actions that produce it
+        # (this was Tools > Run Ledger).
+        ledger_action = run_menu.addAction("Journal of Runs")
+        ledger_action.setToolTip(
+            "Show the journal of past runs; reopen their results or reload/compare "
+            "their settings")
+        ledger_action.triggered.connect(lambda: self.open_run_ledger())
         # Hidden Run: open an independent window that runs CWatM in its own process
         # (does not touch the main run or the main GUI); several can run in parallel.
         hidden_run_action = run_menu.addAction("Hidden Run CWatM")
@@ -250,10 +236,12 @@ class MenuBuilderMixin:
             "Show a .nc file on a folium OSM map (EPSG:4326) with an OSM-transparency "
             "slider, colour scale and log scale")
         netcdf_action.triggered.connect(self.open_netcdf_analysis)
-        watercycle_action = analyse_menu.addAction("Watercycle")
-        watercycle_action.setToolTip(
+        # Own name: the Tools menu has an "Add output Watercycle" action in the same
+        # scope, and both are registered for the Beginner level below.
+        analyse_watercycle_action = analyse_menu.addAction("Watercycle")
+        analyse_watercycle_action.setToolTip(
             "Show the water balance of a WaterCycle_areasum_monthtot.csv as a sunburst")
-        watercycle_action.triggered.connect(self.open_watercycle_analysis)
+        analyse_watercycle_action.triggered.connect(self.open_watercycle_analysis)
         flowdiagram_action = analyse_menu.addAction("Flow Diagram")
         flowdiagram_action.setToolTip(
             "Show the water balance of a WaterCycle_areasum_monthtot.csv as a Sankey flow diagram")
@@ -262,223 +250,20 @@ class MenuBuilderMixin:
         # --- Group divider: between "analyse results" and "Help & Info" ---
         self._add_menubar_separator(menu_bar)
 
-        # Configure menu (left of Help). "Write output box" is a checkable tick box;
-        # run_cwatm reads the mirrored self._write_output_enabled bool.
+        # Configure menu (left of Help). Every GUI setting now lives in the
+        # Preferences window (categorised pages + OK/Cancel/Apply); the menu holds
+        # the single item that opens it - as does the ⋮ button in the menu bar's
+        # right corner.
         configure_menu = menu_bar.addMenu("Configure")
         configure_menu.setToolTipsVisible(True)  # show action tooltips in the menu
+        prefs_action = configure_menu.addAction("Preferences…")
+        prefs_action.setShortcut("Ctrl+,")
+        prefs_action.setToolTip(
+            "All GUI settings - output, startup, display, editor, run history")
+        prefs_action.triggered.connect(lambda: self.open_preferences())
+        self._preferences_action = prefs_action
 
-        self._add_menu_section(configure_menu, "Output", first=True)
-        set_output_action = configure_menu.addAction("Set output box file…")
-        set_output_action.triggered.connect(lambda: self.set_output_box_file())
-        # Checkable "Write output box": ☐/☑ box marks it as a tick box.
-        self.write_output_action = configure_menu.addAction("Write output box")
-        self.write_output_action.setCheckable(True)
-        self.write_output_action.setChecked(False)
-        self.write_output_action.setToolTip(
-            "Writes input to output box to disk, but can slow down a run")
-        # Mirror the checkbox into a plain bool so run_cwatm never has to touch the
-        # QAction's C++ object (which can outlive-mismatch its Python wrapper).
-        self._write_output_enabled = False
-        self.write_output_action.toggled.connect(self._on_write_output_toggled)
-        self._wire_checkbox_glyph(self.write_output_action, "Write output box")
-        # Refresh the tooltip with the current effective output path when opened
-        configure_menu.aboutToShow.connect(self._update_output_tooltip)
-
-        # "Run model in separate process" (default ON, persisted): CWatM runs in its
-        # own OS process (real Stop, crash isolation - report §3.1). The FUNCTIONALITY
-        # is kept (run_controller reads self._run_subprocess_enabled), but the toggle is
-        # no longer SHOWN in Configure - the action is created standalone (not added to
-        # any menu) so its state still loads/persists and the run path is unchanged.
-        # Re-add it to a menu to expose it again.
-        _subproc = self._settings.value("run/subprocess", True, type=bool)
-        self.run_subprocess_action = QAction("Run model in separate process", self)
-        self.run_subprocess_action.setCheckable(True)
-        self.run_subprocess_action.setChecked(_subproc)
-        self._on_run_subprocess_toggled(_subproc)  # mirror bool (+ glyph text)
-        self.run_subprocess_action.toggled.connect(self._on_run_subprocess_toggled)
-
-        self._add_menu_section(configure_menu, "Startup && Model")
-        # Checkable "Load previous settings at start" (persisted, default OFF): when
-        # ticked, the most recently opened settings file is re-opened automatically on
-        # the next startup (handled in cwatm_gui.py main()).
-        _load_prev = self._settings.value("startup/load_previous", False, type=bool)
-        self.load_previous_action = configure_menu.addAction("Load previous settings at start")
-        self.load_previous_action.setCheckable(True)
-        self.load_previous_action.setChecked(_load_prev)
-        self.load_previous_action.setToolTip(
-            "When ticked, the last settings file you had open is loaded again "
-            "automatically the next time CWatM GUI starts.")
-        self._on_load_previous_toggled(_load_prev)  # persist
-        self.load_previous_action.toggled.connect(self._on_load_previous_toggled)
-        self._wire_checkbox_glyph(self.load_previous_action,
-                                  "Load previous settings at start")
-
-        # Checkable "Use Modflow" (persisted, default OFF): when ON the GUI pre-imports
-        # flopy (heavy - pulls the matplotlib stack) so MODFLOW-coupled runs / Check Data
-        # are ready; when OFF flopy is never loaded, keeping GUI startup fast.
-        _use_modflow = self._settings.value("modflow/enabled", False, type=bool)
-        self.use_modflow_action = configure_menu.addAction("Use Modflow")
-        self.use_modflow_action.setCheckable(True)
-        self.use_modflow_action.setChecked(_use_modflow)
-        self.use_modflow_action.setToolTip(
-            "Load flopy for MODFLOW coupling. Off = flopy is not loaded (faster start).")
-        self._on_use_modflow_toggled(_use_modflow)  # persist + warm if on
-        self.use_modflow_action.toggled.connect(self._on_use_modflow_toggled)
-        self._wire_checkbox_glyph(self.use_modflow_action, "Use Modflow")
-
-        self._add_menu_section(configure_menu, "Display")
-        # Colour mode for the whole GUI (Normal / Dark Mode / Mikhail).
-        from src.gui.utils import theme as _theme
-        mode_menu = configure_menu.addMenu("Mode")
-        mode_menu.setToolTipsVisible(True)
-        mode_menu.setToolTip("Colour mode of the whole GUI")
-        self._mode_group = QActionGroup(self)
-        self._mode_group.setExclusive(True)
-        _active = _theme.current_theme()
-        for _label, _key in _theme.THEME_CHOICES:
-            act = mode_menu.addAction(_label)
-            act.setCheckable(True)
-            act.setData(_key)
-            act.setChecked(_key == _active)
-            if _key == "mikhail":
-                act.setToolTip("Black background with amber font")
-            self._mode_group.addAction(act)
-            act.triggered.connect(lambda *_a, k=_key: self._set_theme_mode(k))
-        self._mode_menu = mode_menu
-
-        # Show Header: the top banner (CWatM icon + title + interface text + IIASA
-        # logo). Off hides the banner and moves everything below up.
-        show_header_action = configure_menu.addAction("Show Header")
-        show_header_action.setCheckable(True)
-        show_header_action.setToolTip("Shows the headline of the CWatM GUI")
-        show_header_action.setChecked(
-            self._settings.value("display/show_header", True, type=bool))
-        show_header_action.toggled.connect(self._on_show_header_toggled)
-        self.show_header_action = show_header_action
-        self._wire_checkbox_glyph(show_header_action, "Show Header")
-
-        # Global display precision: how many decimals every numeric read-out shows.
-        decimals_action = configure_menu.addAction("Show Decimals…")
-        decimals_action.setToolTip(
-            "Number of decimals shown throughout all displays (default 3)")
-        decimals_action.triggered.connect(self.set_show_decimals)
-        transparency_action = configure_menu.addAction("Transparency…")
-        transparency_action.setToolTip(
-            "Initial map transparency (0-100) used by NetCDF and Show Basin")
-        transparency_action.triggered.connect(self.set_transparency)
-
-        # Default basemap for the Show Basin map (the EPSG:4326 WMS layers Show
-        # Basin offers). Kept in sync with basin_viewer2._B2_PROVIDERS.
-        basemap_menu = configure_menu.addMenu("Default openstreet map")
-        basemap_menu.setToolTipsVisible(True)
-        self._basemap_group = QActionGroup(self)
-        self._basemap_group.setExclusive(True)
-        _basemaps = [("OSM", "OSM-WMS"), ("Topographic", "TOPO-OSM-WMS"),
-                     ("Terrain", "SRTM30-Colored-Hillshade"), ("Dark", "Dark")]
-        saved = self._settings.value("basin/default_basemap", "OSM-WMS")
-        if saved not in {k for _l, k in _basemaps}:   # migrate an old XYZ key
-            saved = "OSM-WMS"
-        for _label, _key in _basemaps:
-            act = basemap_menu.addAction(_label)
-            act.setCheckable(True)
-            act.setData(_key)
-            act.setChecked(_key == saved)
-            self._basemap_group.addAction(act)
-            act.triggered.connect(lambda *_a, k=_key: self._set_default_basemap(k))
-
-        # Select animal: the cameo animal that occasionally appears on the live
-        # discharge sparkline (exclusive submenu, persisted display/animal).
-        from src.gui.widgets.discharge_sparkline import ANIMALS as _ANIMALS
-        animal_menu = configure_menu.addMenu("Select animal")
-        animal_menu.setToolTip("Animal shown now and then on the live discharge plot")
-        self._animal_group = QActionGroup(self)
-        self._animal_group.setExclusive(True)
-        _sel_animal = self._settings.value("display/animal", "Fish")
-        for _name, _emoji in _ANIMALS:
-            act = animal_menu.addAction(f"{_emoji}  {_name}")
-            act.setCheckable(True)
-            act.setData(_name)
-            act.setChecked(_name == _sel_animal)
-            self._animal_group.addAction(act)
-            act.triggered.connect(lambda *_a, n=_name: self._set_animal(n))
-        self._animal_menu = animal_menu
-
-        self._add_menu_section(configure_menu, "Editor && Dates")
-        # Skill of User (Beginner / Advanced / Expert): how much of the settings
-        # file is shown - in sync with the coloured level button next to the editor.
-        from src.gui.components.main_window import _EXPERIENCE_LEVELS
-        skill_menu = configure_menu.addMenu("Skill of User")
-        skill_menu.setToolTipsVisible(True)
-        skill_menu.setToolTip(
-            "The skill of the user determines how much of the settingsfile is presented")
-        self._skill_group = QActionGroup(self)
-        self._skill_group.setExclusive(True)
-        self._level_menu_actions = {}
-        for _lvl in _EXPERIENCE_LEVELS:
-            act = skill_menu.addAction(_lvl)
-            act.setCheckable(True)
-            act.setChecked(_lvl == getattr(self, "_experience_level", "Expert"))
-            act.setToolTip(
-                "The skill of the user determines how much of the settingsfile is presented")
-            self._skill_group.addAction(act)
-            act.triggered.connect(lambda *_a, l=_lvl: self.set_experience_level(l))
-            self._level_menu_actions[_lvl] = act
-        self._skill_menu = skill_menu
-
-        # Web-style date picker (option 3): 📅 button + frameless shadowed popup
-        # for Start/Spin/End; unticked = the classic QDateEdit drop-down calendar.
-        web_picker_action = configure_menu.addAction("Web-style date picker")
-        web_picker_action.setCheckable(True)
-        web_picker_action.setToolTip(
-            "Pick the Start/Spin/End dates with a modern frameless calendar popup "
-            "(📅 button); untick to go back to the classic drop-down calendar")
-        web_picker_action.setChecked(
-            self._settings.value("display/date_picker_web", True, type=bool))
-        web_picker_action.toggled.connect(self._on_web_picker_toggled)
-        self.web_picker_action = web_picker_action
-        self._wire_checkbox_glyph(web_picker_action, "Web-style date picker")
-
-        # Date timeline (option 4): three-handle Start/Spin/End timeline below
-        # the date fields (drag to set; shows the forcing coverage band).
-        timeline_action = configure_menu.addAction("Date timeline")
-        timeline_action.setCheckable(True)
-        timeline_action.setToolTip(
-            "Show a draggable Start/Spin/End timeline below the date fields "
-            "(the band behind it is the meteo-forcing coverage)")
-        timeline_action.setChecked(
-            self._settings.value("display/date_timeline", True, type=bool))
-        timeline_action.toggled.connect(self._on_date_timeline_toggled)
-        self.date_timeline_action = timeline_action
-        self._wire_checkbox_glyph(timeline_action, "Date timeline")
-
-        # Checkable "Bookmark Change" (persisted): auto-bookmark a line when it is
-        # changed (skipping a line if a bookmark is already 1-2 lines above/below).
-        _bm_change = self._settings.value("editor/bookmark_change", False, type=bool)
-        self.bookmark_change_action = configure_menu.addAction("Bookmark Change")
-        self.bookmark_change_action.setCheckable(True)
-        self.bookmark_change_action.setChecked(_bm_change)
-        self.bookmark_change_action.setToolTip(
-            "Automatically set a bookmark on a line when it is changed (skips a line "
-            "if a bookmark is already 1 or 2 lines above/below)")
-        self._on_bookmark_change_toggled(_bm_change)  # apply to editor
-        self.bookmark_change_action.toggled.connect(self._on_bookmark_change_toggled)
-        self._wire_checkbox_glyph(self.bookmark_change_action, "Bookmark Change")
-
-        # Keep the Configure menu open after a tick box is toggled, so the ☐→☑ change
-        # is visible instead of the menu closing immediately.
-        self._configure_keep_open = _KeepMenuOpenFilter(self)
-        configure_menu.installEventFilter(self._configure_keep_open)
-
-        self._add_menu_section(configure_menu, "Run History")
-        # Run-history (Run Ledger) storage: general folder + retention.
-        history_folder_action = configure_menu.addAction("Run history folder…")
-        history_folder_action.setToolTip(
-            "Folder where the Run Ledger (log of past runs) is stored")
-        history_folder_action.triggered.connect(self.set_history_folder)
-        history_retention_action = configure_menu.addAction("Run history retention…")
-        history_retention_action.setToolTip(
-            "How many days of runs to keep in the Run Ledger (0 = keep forever)")
-        history_retention_action.triggered.connect(self.set_history_retention)
+        self._init_configure_state()
 
         # "CWatM AI" - a clickable menu-bar button (a top-level QAction fires on
         # click instead of opening a dropdown), placed left of Help. Opens the
@@ -509,6 +294,18 @@ class MenuBuilderMixin:
         info_action = info_menu.addAction("About CWatM")
         info_action.triggered.connect(self.show_info_dialog)
 
+        # "⋮" in the menu bar's right corner - a second way into Preferences
+        # (the familiar overflow/settings affordance). Kept referenced so PySide
+        # cannot garbage-collect it.
+        prefs_button = QToolButton()
+        prefs_button.setText("⋮")
+        prefs_button.setToolTip("Preferences")
+        prefs_button.setAutoRaise(True)
+        prefs_button.setCursor(Qt.PointingHandCursor)
+        prefs_button.clicked.connect(lambda: self.open_preferences())
+        menu_bar.setCornerWidget(prefs_button, Qt.TopRightCorner)
+        self._preferences_button = prefs_button
+
         # Style the menu bar (theme-aware; re-applied on a mode switch)
         menu_bar.setStyleSheet(self._menu_bar_stylesheet())
 
@@ -519,9 +316,65 @@ class MenuBuilderMixin:
         # Keep Python references to every submenu so PySide cannot garbage-collect a
         # QMenu (and its child QActions) out from under us - the cause of intermittent
         # "Internal C++ object (QAction) already deleted" errors.
-        self._menus = [file_menu, settings_menu, excel_menu,
-                       tools_menu, run_menu, configure_menu, basemap_menu,
-                       self._mode_menu, analyse_menu, help_menu, info_menu]
+        self._menus = [file_menu, settings_menu,
+                       tools_menu, run_menu, configure_menu,
+                       analyse_menu, help_menu, info_menu]
+        # Entries a **Beginner** does not see (Skill of user). The level restricts the
+        # settings sections shown in the editor; the same idea applied to the menus -
+        # everything a beginner has no use for yet, and could set up wrongly, is out of
+        # the way. Advanced and Expert see everything.
+        self._beginner_hidden_actions = [
+            watercycle_action, options_action, workbook_action, check_action,
+            restore_action, ledger_action,                      # Tools
+            hidden_run_action, batch_action,                    # RUN CWATM
+            analyse_watercycle_action, flowdiagram_action,      # Analyse
+        ]
+        self._apply_menu_level()
+
+    def _init_configure_state(self):
+        """Restore the persisted Preferences settings that need an action at
+        startup.
+
+        The settings themselves are edited in the Preferences window
+        (``preferences_window.py``); this only re-establishes their effect on the
+        freshly built GUI. The rest is already restored where it is used - the
+        banner, date picker and timeline in ``create_gui``, decimals/transparency
+        in ``__init__``, the sparkline animal in ``discharge_sparkline``.
+
+        Two settings keep a standalone ``QAction`` (not in any menu) because other
+        code reads ``.isChecked()`` on them: **Write output box** (run_controller)
+        and **Run model in separate process** (default ON, deliberately not exposed
+        in the UI - add it to a Preferences page to expose it again).
+        """
+        # Write output box - off at every start (it is not persisted)
+        self.write_output_action = QAction("Write output box", self)
+        self.write_output_action.setCheckable(True)
+        self.write_output_action.setChecked(False)
+        # Mirror the state into a plain bool so run_cwatm never has to touch the
+        # QAction's C++ object (which can outlive-mismatch its Python wrapper).
+        self._write_output_enabled = False
+        self.write_output_action.toggled.connect(self._on_write_output_toggled)
+
+        # Run model in separate process: own OS process (real Stop, crash
+        # isolation - report §3.1).
+        _subproc = self._settings.value("run/subprocess", True, type=bool)
+        self.run_subprocess_action = QAction("Run model in separate process", self)
+        self.run_subprocess_action.setCheckable(True)
+        self.run_subprocess_action.setChecked(_subproc)
+        self._on_run_subprocess_toggled(_subproc)  # mirror bool + persist
+        self.run_subprocess_action.toggled.connect(self._on_run_subprocess_toggled)
+
+        # Load previous settings at start (read by cwatm_gui.py main())
+        self._on_load_previous_toggled(
+            self._settings.value("startup/load_previous", False, type=bool))
+        # Use Modflow: pre-warm flopy in the background when on (heavy import)
+        self._on_use_modflow_toggled(
+            self._settings.value("modflow/enabled", False, type=bool))
+        # Bookmark Change: auto-bookmark changed lines - apply to the editor
+        self._on_bookmark_change_toggled(
+            self._settings.value("editor/bookmark_change", False, type=bool))
+        # Tooltip reverse: the app-wide QToolTip rule (no-op when off)
+        self._apply_tooltip_style()
 
     def _set_theme_mode(self, key):
         """Configure ▸ Mode: switch the whole GUI to the chosen colour theme,
@@ -555,6 +408,21 @@ class MenuBuilderMixin:
                 color: {theme.c('menubar_sep')};   /* visible divider "|" (not faint grey) */
                 padding: 4px 6px;
             }}
+            /* the ⋮ Preferences button in the right corner (a narrow, tall glyph -
+               a slightly larger font and symmetric padding keep the hover box square) */
+            QMenuBar QToolButton {{
+                background-color: transparent;
+                color: {theme.c('text')};
+                border: none;
+                border-radius: 3px;
+                padding: 0px 9px;
+                font-size: 18px;
+                font-weight: bold;
+            }}
+            QMenuBar QToolButton:hover {{
+                background-color: {theme.c('menu_sel_bg')};
+                color: {theme.c('menu_sel_text')};
+            }}
         """
 
     def _add_menubar_separator(self, menu_bar):
@@ -579,21 +447,54 @@ class MenuBuilderMixin:
         _f = header.font()
         _f.setBold(True)
         header.setFont(_f)
+        # Remembered so _apply_menu_level can hide a header whose whole section is
+        # hidden (Beginner) instead of leaving a title with nothing under it.
+        if not hasattr(self, "_section_headers"):
+            self._section_headers = []
+        self._section_headers.append(header)
         return header
 
-    def _wire_checkbox_glyph(self, action, label):
-        """Prefix a checkable menu item with a ☐ (off) / ☑ (on) box so it is clearly a
-        **tick box**, distinct from the dialog '…' items and the '▸' submenus. Sets the
-        initial glyph and keeps it in sync on every toggle (in addition to the native
-        checkmark). `label` is the plain menu text without the box."""
-        def _glyph(checked=None):
-            c = action.isChecked() if checked is None else checked
+    def _apply_menu_level(self):
+        """Show or hide the menu entries that depend on the **Skill of user**.
+
+        A Beginner sees only what a first model run needs; everything registered in
+        ``_beginner_hidden_actions`` (scenario runs, the Excel workbook, Check Data,
+        the Run Ledger, the water-balance analyses, …) is hidden - the same idea as
+        the settings sections the level hides in the editor. Advanced and Expert see
+        the full menus. Called when the menus are built and from
+        ``set_experience_level``."""
+        beginner = getattr(self, "_experience_level", "Expert") == "Beginner"
+        for action in getattr(self, "_beginner_hidden_actions", []):
             try:
-                action.setText(("☑  " if c else "☐  ") + label)
+                action.setVisible(not beginner)
+            except RuntimeError:          # QAction deleted on the C++ side
+                log.debug("level: action already gone", exc_info=True)
+        # A section title with nothing left under it is noise - hide it too.
+        headers = set(getattr(self, "_section_headers", []))
+        if not headers:
+            return
+        for menu in getattr(self, "_menus", []):
+            try:
+                actions = menu.actions()
             except RuntimeError:
-                pass   # QAction C++ object gone
-        _glyph()
-        action.toggled.connect(_glyph)
+                continue
+            header, items = None, []
+            for action in actions:
+                if action in headers:
+                    self._set_header_visible(header, items)
+                    header, items = action, []
+                elif not action.isSeparator():
+                    items.append(action)
+            self._set_header_visible(header, items)
+
+    @staticmethod
+    def _set_header_visible(header, items):
+        if header is None:
+            return
+        try:
+            header.setVisible(any(a.isVisible() for a in items) if items else True)
+        except RuntimeError:
+            pass
 
     def _add_recent_file(self, path):
         """Record a settings file at the top of the recent-files (History) list."""

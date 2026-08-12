@@ -55,6 +55,9 @@ _THEMES = {
         changed_line="#dcecff", duplicate_line="#ff8f8f", error_line="#ffd9d9",
         filler_line="#e0e0e0", diff_line="#ffe1c2", current_diff_line="#ffb877",
         inactive_line="#ffddb0", wrongext_line="#ffe8cc",
+        # Excel table selection: marked cells (dark gray), a whole marked
+        # column/row (darker still, so a full line reads as the stronger mark).
+        selection_cell="#6c757d", selection_line="#41484d",
         out_bg="#f5f5f5", out_border="#cccccc", out_text="#333333",
         out_error="darkred",
         ok_color="green", link_color="blue", warn_color="red",
@@ -85,6 +88,7 @@ _THEMES = {
         changed_line="#1f3a5f", duplicate_line="#8a2626", error_line="#5a2323",
         filler_line="#3a3a3a", diff_line="#7d5a2b", current_diff_line="#c08333",
         inactive_line="#4d4030", wrongext_line="#5a4a2e",
+        selection_cell="#6a7178", selection_line="#8b9298",
         out_bg="#16181a", out_border="#3a3f44", out_text="#d0d4d8",
         out_error="#ff6b60",
         ok_color="#4ec46a", link_color="#6cb6ff", warn_color="#ff6b60",
@@ -116,6 +120,7 @@ _THEMES = {
         changed_line="#2e2400", duplicate_line="#6b1e00", error_line="#3d1400",
         filler_line="#2a2a10", diff_line="#6e4a10", current_diff_line="#946313",
         inactive_line="#4a3612", wrongext_line="#5e4514",
+        selection_cell="#5c4d19", selection_line="#8a7426",
         out_bg="#000000", out_border="#4d3800", out_text="#ffb000",
         out_error="#ff5533",
         ok_color="#ffd24d", link_color="#ffd24d", warn_color="#ff6a00",

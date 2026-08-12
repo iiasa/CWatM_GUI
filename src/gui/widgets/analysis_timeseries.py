@@ -86,6 +86,50 @@ def open_timeseries(parent=None):
         QMessageBox.warning(parent, "Timeseries", f"Could not open the file:\n{e}")
 
 
+def open_comparison(parent, paths, labels=None):
+    """Open **one** Timeseries window with several result CSVs overlaid.
+
+    The same overlay the *Compare* button builds one file at a time, but filled in up
+    front - used by the Batch runner to put a whole sweep's results in a single plot.
+    Files that cannot be read are skipped; returns the window, or None when nothing
+    could be plotted."""
+    if not _TS_AVAILABLE:
+        QMessageBox.warning(
+            parent, "Timeseries",
+            "Plotly / QtWebEngine are not available.\n\n" + _TS_IMPORT_ERROR)
+        return None
+    paths = list(paths or [])
+    labels = list(labels or [])
+    if not paths:
+        return None
+    win = None
+    for i, path in enumerate(paths):
+        name = labels[i] if i < len(labels) else os.path.basename(path)
+        if win is None:
+            try:
+                win = TimeseriesWindow(path, parent)
+                win._legend_name = name          # label the first series too
+            except Exception:
+                win = None                       # unreadable: the next one becomes base
+            continue
+        try:
+            dates, series, _x, _y = win._parse_csv(path)
+            if series:
+                win.compare.append({"name": name,
+                                    "x": win._parse_dates(dates),
+                                    "series": series})
+        except Exception:
+            pass                                 # skip a file that cannot be read
+    if win is None:
+        QMessageBox.warning(parent, "Compare results",
+                            "None of the result files could be read.")
+        return None
+    win.setAttribute(Qt.WA_DeleteOnClose)
+    win._show_current()
+    win.exec()
+    return win
+
+
 class TimeseriesWindow(GeometryMemoryMixin, QDialog):
     """Window showing a CWatM result .csv time series as a Plotly scatter plot."""
 

@@ -1,4 +1,5 @@
 /venv
+/venv2
 /dist
 /build
 /cwatm/__pycache__

@@ -19,6 +19,7 @@ import re
 import sys
 import os
 
+from src.gui import __version__ as GUI_VERSION
 from src.gui.components.config_parser import ConfigParser
 from src.gui.managers.date_manager import DateManager
 from src.gui.managers.file_manager import FileManager
@@ -100,8 +101,13 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.resize(1200, 800)  # Default reasonable size
         # Center window and make responsive to different screen sizes
         self.setMinimumSize(800, 600)  # Minimum size for usability
-        # Always open in full (maximized) view
-        self.setWindowState(Qt.WindowMaximized)
+        # Always open in full (maximized) view - unless CWATM_GUI_NO_MAXIMIZE is set.
+        # On a **remote X display** (Xming, X2Go, VNC) a maximized window means a
+        # backing store the size of the whole desktop on the X server, which can
+        # exhaust it: the window then simply disappears (BadAlloc / a dropped
+        # connection). Starting windowed is the way out on such a display.
+        if not os.environ.get("CWATM_GUI_NO_MAXIMIZE"):
+            self.setWindowState(Qt.WindowMaximized)
         # Allow dropping a settings file (.ini/.txt) onto the window to load it
         self.setAcceptDrops(True)
         
@@ -1739,80 +1745,10 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         _known_lower = {k.lower(): k for k in _known}
 
         # Multi-dimensional model variables that need an index in an output value
-        # (e.g. actualET -> actualET[1]) - mirrored from the allocation lists in
-        # cwatm/hydrological_modules/ (read-only, per the hard rule):
-        #   landcoverType.py landcoverAll+landcoverVars -> (6, cells)  [_DIM6]
-        #   landcoverType.py landcoverVarsSoil + w1/w2/w3 -> (4, cells) [_DIM4]
-        #   landcoverType.py soilVars -> (soilLayers=3, 4, cells)       [_DIM3X4]
-        #   soil.py soilDepthLayer -> (soilLayers=3, cells)             [_DIM3]
-        #   evaporation.py crop lists -> (len(Crops), cells)            [_DIMCROP]
-        _DIM6 = frozenset((
-            'fracVegCover', 'interceptStor', 'availWaterInfiltration', 'interceptEvap',
-            'directRunoff', 'openWaterEvap', 'irrTypeFracOverIrr', 'fractionArea',
-            'totAvlWater', 'cropKC', 'cropKC_landCover', 'effSatAt50',
-            'effPoreSizeBetaAt50', 'rootZoneWaterStorageMin',
-            'rootZoneWaterStorageRange', 'totalPotET', 'potTranspiration',
-            'soilWaterStorage', 'infiltration', 'actBareSoilEvap', 'landSurfaceRunoff',
-            'actTransTotal', 'gwRecharge', 'gwRecharge2', 'interflow', 'actualET',
-            'pot_irrConsumption', 'act_irrConsumption', 'irrDemand', 'topWaterLayer',
-            'perc3toGW', 'capRiseFromGW', 'netPercUpper', 'netPerc', 'prefFlow'))
-        _DIM4 = frozenset((
-            'arnoBeta', 'rootZoneWaterStorageCap', 'rootZoneWaterStorageCap12',
-            'perc1to2', 'perc2to3', 'theta1', 'theta2', 'theta3', 'w1', 'w2', 'w3'))
-        _DIM3X4 = frozenset(('adjRoot', 'perc', 'capRise', 'rootDepth', 'storCap'))
-        _DIM3 = frozenset(('soildepth',))
-        _DIMCROP = frozenset((
-            'irrM3_Paddy_month_segment', 'irr_Paddy_month', 'irr_crop',
-            'irr_crop_month', 'irrM3_crop_month_segment', 'ratio_a_p_nonIrr',
-            'ratio_a_p_Irr', 'fracCrops_IrrLandDemand', 'fracCrops_Irr',
-            'areaCrops_Irr_segment', 'areaCrops_nonIrr_segment',
-            'fracCrops_nonIrrLandDemand', 'fracCrops_nonIrr', 'activatedCrops',
-            'monthCounter', 'currentKC', 'totalPotET_month', 'PET_cropIrr_m3',
-            'actTransTotal_month_Irr', 'actTransTotal_month_nonIrr', 'currentKY',
-            'Yield_Irr', 'Yield_nonIrr', 'actTransTotal_crops_Irr',
-            'actTransTotal_crops_nonIrr', 'PotET_crop', 'PotETaverage_crop_segments',
-            'totalPotET_month_segment', 'ET_crop_nonIrr', 'ET_crop_Irr',
-            'ratio_a_p_nonIrr_daily', 'ratio_a_p_Irr_daily'))
-        _HINT6 = "0..5 = forest, grassland, irrPaddy, irrNonPaddy, sealed, water"
-        _HINT4 = "0..3 = forest, grassland, irrPaddy, irrNonPaddy"
-        _HINT3 = "0..2 = soil layer"
-
-        def _num(s):
-            try:
-                return int(s.strip())
-            except ValueError:
-                return None
-
-        def _dim_problem(base, idx):
-            """Message when the index/indices of ``base`` don't match its dimension,
-            or None. Unknown variables with an index are NOT flagged (other modules
-            allocate 2-D vars we don't track)."""
-            if base in _DIM6 or base in _DIM4 or base in _DIM3:
-                n, hint = ((6, _HINT6) if base in _DIM6 else
-                           (4, _HINT4) if base in _DIM4 else (3, _HINT3))
-                kind = "per-soil-layer" if base in _DIM3 else "per-land-cover"
-                if len(idx) != 1:
-                    return (f"'{base}' is a {kind} array - it needs one index, "
-                            f"e.g. '{base}[1]' ({hint}).")
-                i = _num(idx[0])
-                if i is None or not 0 <= i < n:
-                    return f"index '[{idx[0]}]' is invalid for '{base}' - use {hint}."
-            elif base in _DIM3X4:
-                if len(idx) != 2:
-                    return (f"'{base}' is a (soil layer x land cover) array - it "
-                            f"needs two indices, e.g. '{base}[0][1]'.")
-                i0, i1 = _num(idx[0]), _num(idx[1])
-                if i0 is None or not 0 <= i0 < 3:
-                    return (f"first index '[{idx[0]}]' is invalid for '{base}' "
-                            f"({_HINT3}).")
-                if i1 is None or not 0 <= i1 < 4:
-                    return (f"second index '[{idx[1]}]' is invalid for '{base}' "
-                            f"({_HINT4}).")
-            elif base in _DIMCROP:
-                if len(idx) != 1 or _num(idx[0]) is None or _num(idx[0]) < 0:
-                    return (f"'{base}' is a per-crop array - it needs a crop index, "
-                            f"e.g. '{base}[0]'.")
-            return None
+        # (e.g. actualET -> actualET[1]). The sets and the check live in
+        # src/gui/utils/var_dims.py - Tools ▸ Add output variables uses the same
+        # knowledge to OFFER the valid indices by name, so it must not be duplicated.
+        from src.gui.utils.var_dims import dim_problem as _dim_problem
 
         def _out_value_problems(value):
             """List of messages for unknown output-variable names in ``value``."""
@@ -1981,6 +1917,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         same _forcing_time_range as the F4 semantic check; called lazily by the
         DateManager cache the first time a popup opens after a file load."""
         try:
+            import configparser
             content = self.text_area.toPlainText()
             if not content.strip():
                 return None
@@ -2051,12 +1988,12 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             self.check_settingsfile()
         self._refresh_check_settings_label()
 
-    def open_excel_sheet(self, sheet_name, release_sheet=None):
-        """Excel menu: open ``sheet_name`` of the settings Excel_settings_file in an
-        editable, colour-preserving table (used by Excel ▸ Crops / Reservoirs).
-        ``release_sheet`` adds a "Release" button that opens that companion sheet
-        (used by Reservoirs -> Reservoirs_downstream)."""
+    def open_excel_workbook(self):
+        """Excel ▸ Crops/Reservoirs: open the settings Excel_settings_file in an
+        editable, colour-preserving table; every sheet of the workbook (Crops,
+        Reservoirs, Reservoirs_downstream, ...) is a tab below the table."""
         import configparser
+        title = "Excel"               # title of this action's message boxes
         try:
             content = self.text_area.toPlainText()
         except Exception:
@@ -2070,20 +2007,20 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         except Exception:
             config = None
         if config is None:
-            QMessageBox.warning(self, sheet_name, "Could not parse the settings file.")
+            QMessageBox.warning(self, title, "Could not parse the settings file.")
             return
         from src.gui.widgets.basin_viewer import (
             _find_setting_value, _resolve_settings_placeholders)
         excel = _find_setting_value(config, "Excel_settings_file")
         if not excel:
             QMessageBox.information(
-                self, sheet_name,
+                self, title,
                 "No 'Excel_settings_file' entry found in the settings file.")
             return
         resolved = _resolve_settings_placeholders(excel.strip(), config)
         if "$(" in resolved:
             QMessageBox.warning(
-                self, sheet_name, f"Could not resolve the Excel path:\n{excel}")
+                self, title, f"Could not resolve the Excel path:\n{excel}")
             return
         if not os.path.isabs(resolved):
             base = self.working_dir()
@@ -2091,16 +2028,16 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 resolved = os.path.join(base, resolved)
         if not os.path.exists(resolved):
             QMessageBox.warning(
-                self, sheet_name, f"The Excel file does not exist:\n{resolved}")
+                self, title, f"The Excel file does not exist:\n{resolved}")
             return
         try:
             from src.gui.widgets.excel_sheet_window import ExcelSheetWindow
-            win = ExcelSheetWindow(resolved, sheet_name, self, release_sheet=release_sheet)
+            win = ExcelSheetWindow(resolved, parent=self)
             win.exec()
         except Exception as e:
             import traceback
             traceback.print_exc()
-            QMessageBox.warning(self, sheet_name, f"Could not open the Excel sheet:\n{e}")
+            QMessageBox.warning(self, title, f"Could not open the Excel file:\n{e}")
 
     def create_pathout_folder(self):
         """Create the PathOut folder (placeholders resolved) if it does not exist."""
@@ -2219,6 +2156,11 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         if not self.file_manager.has_file_loaded():
             self.status_bar.showMessage("Load a settings file first")
             return
+        # Jump the editor to the end of the file first (same as Settings ▸ Down):
+        # [OUTPUT] is the last section, so the OUT_… lines a picked variable goes on
+        # are on screen - and the cursor, which a left-click inserts at, is already
+        # down there instead of wherever it was left.
+        self.jump_to_bottom()
         try:
             from src.gui.widgets.output_variables_window import open_output_variables
             self._output_variables_window = open_output_variables(self)
@@ -2334,21 +2276,84 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         except Exception:
             log.debug("show header toggle failed", exc_info=True)
 
-    def _update_output_tooltip(self):
-        """Refresh the 'Write output box' tooltip: what it does, plus the current
-        effective output file path (custom or default <PathOut>/cwatm_out.txt)."""
+    def _on_tooltip_reverse_toggled(self, checked):
+        """Preferences ▸ Display ▸ Tooltip reverse: show tooltips with the text and
+        background colours **swapped** (light on dark instead of the platform's dark
+        on light).
+
+        Applied as an application-wide ``QToolTip`` rule, so every window - including
+        the ones already open - follows at once. The colours are theme tokens, so
+        `_retheme` re-applies this after a Mode switch."""
         try:
-            path = self._output_file()
+            self._settings.setValue("display/tooltip_reverse", bool(checked))
         except Exception:
-            path = ""
-        tip = "Writes input to output box to disk, but can slow down a run"
-        tip += f"\nOutput box file: {path}"
-        if self._output_file_override:
-            tip += "  (custom)"
+            pass
+        self._apply_tooltip_style(bool(checked))
+
+    #: The platform's own tooltip palette, captured before the first reverse so
+    #: switching back restores exactly what Qt had.
+    _tooltip_palette = None
+
+    def _apply_tooltip_style(self, reverse=None):
+        """(Re)apply the QToolTip rule for the current Mode. ``reverse=None`` reads
+        the stored setting - used by `_retheme`."""
+        from PySide6.QtWidgets import QApplication
+        if reverse is None:
+            try:
+                reverse = self._settings.value(
+                    "display/tooltip_reverse", False, type=bool)
+            except Exception:
+                reverse = False
+        from PySide6.QtWidgets import QToolTip
+        from PySide6.QtGui import QPalette, QColor
+        app = QApplication.instance()
+        if app is None:
+            return
+        sheet = app.styleSheet() or ""
+        # Drop a previous QToolTip block of ours, then add the new one (if any).
+        sheet = re.sub(r"\s*/\* cwatm-tooltip \*/.*?\}", "", sheet, flags=re.S).strip()
+        # Reversed = the plain opposite of the platform's tooltip: **white on black**
+        # on a light Mode, black on white on a dark one. Theme tokens (slate on
+        # off-white) would not read as "reversed" at all.
+        fg, bg = ("black", "white") if theme.is_dark() else ("white", "black")
+        if reverse:
+            sheet = (sheet + "\n/* cwatm-tooltip */ QToolTip { "
+                     f"color: {fg}; background-color: {bg}; "
+                     f"border: 1px solid {fg}; padding: 3px; }}").strip()
         try:
-            self.write_output_action.setToolTip(tip)
-        except RuntimeError:
-            log.debug("write-output action already deleted - tooltip not updated")
+            app.setStyleSheet(sheet)
+        except Exception:
+            log.debug("tooltip style failed", exc_info=True)
+        # Belt and braces: the stylesheet alone is not enough. A tooltip **is** a
+        # QLabel, so any `QLabel { … }` rule reaching the widget it belongs to paints
+        # it too - which is how the Options window's badge coloured its own tooltip.
+        # QToolTip's palette is not affected by that, so set it as well.
+        try:
+            if self._tooltip_palette is None:
+                self._tooltip_palette = QPalette(QToolTip.palette())
+            palette = QPalette(self._tooltip_palette)
+            if reverse:
+                palette.setColor(QPalette.ToolTipBase, QColor(bg))
+                palette.setColor(QPalette.ToolTipText, QColor(fg))
+                palette.setColor(QPalette.Window, QColor(bg))
+                palette.setColor(QPalette.WindowText, QColor(fg))
+            QToolTip.setPalette(palette)
+        except Exception:
+            log.debug("tooltip palette failed", exc_info=True)
+
+    def open_preferences(self):
+        """Configure ▸ Preferences… (Ctrl+,) and the ⋮ button in the menu bar's
+        right corner: the categorised window holding every GUI setting.
+
+        Modal, and built fresh each time so it picks up the active theme. It edits
+        a buffered copy and pushes the changed settings back through the handlers
+        below on Apply/OK (see src/gui/widgets/preferences_window.py)."""
+        try:
+            from src.gui.widgets.preferences_window import open_preferences
+            open_preferences(self)
+        except Exception as e:
+            log.warning("opening Preferences failed", exc_info=True)
+            print(f"Error opening Preferences: {str(e)}", file=sys.stderr)
 
     def _default_basemap(self):
         """Return the default basemap chosen in Configure ▸ Default openstreet map.
@@ -2360,35 +2365,6 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         """Persist the default OpenStreetMap basemap chosen in the Configure menu."""
         self._settings.setValue("basin/default_basemap", key)
         self.status_bar.showMessage(f"Default OpenStreetMap basemap: {key}")
-
-    def set_show_decimals(self):
-        """Configure > Show Decimals: ask for the number of decimals shown throughout
-        all displays and persist it. Newly opened displays pick it up immediately."""
-        value, ok = QInputDialog.getInt(
-            self, "Show Decimals",
-            "Number of decimals shown in all displays:",
-            display_format.get_decimals(), 0, 12, 1)
-        if not ok:
-            return
-        display_format.set_decimals(value)
-        self._settings.setValue("display/decimals", display_format.get_decimals())
-        self.status_bar.showMessage(
-            f"Displays now show {display_format.get_decimals()} decimals")
-
-    def set_transparency(self):
-        """Configure > Transparency: ask for the initial map transparency (0-100) used
-        by NetCDF and Show Basin when they open, and persist it."""
-        value, ok = QInputDialog.getInt(
-            self, "Transparency",
-            "Initial map transparency for NetCDF / Show Basin (0-100):\n"
-            "0 = OSM hidden (only the data); 100 = OSM fully visible (data 50% on top)",
-            display_format.get_transparency(), 0, 100, 1)
-        if not ok:
-            return
-        display_format.set_transparency(value)
-        self._settings.setValue("display/transparency", display_format.get_transparency())
-        self.status_bar.showMessage(
-            f"Initial map transparency set to {display_format.get_transparency()}%")
 
     def _set_animal(self, name):
         """Configure > Select animal: persist the chosen cameo animal and apply it to
@@ -2402,16 +2378,6 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 pass
         self.status_bar.showMessage(f"Sparkline animal: {name}")
 
-    def set_output_box_file(self):
-        """Let the user pick a custom output-box file (location + name), kept in
-        memory. The default shown is <PathOut>/cwatm_out.txt."""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Set output box file", self._output_file(),
-            "Text files (*.txt);;All files (*)")
-        if path:
-            self._output_file_override = path
-            self.status_bar.showMessage(f"Output box file set to: {path}")
-
     def open_pathout_folder(self):
         """Tools > Open PathOut Folder: show the resolved PathOut directory in the
         system file browser."""
@@ -2420,11 +2386,10 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             self.status_bar.showMessage(
                 "PathOut does not exist - use Tools/Create PathOut Folder first")
             return
-        try:
-            os.startfile(path)
-        except Exception as e:
-            log.warning("could not open PathOut folder", exc_info=True)
-            self.status_bar.showMessage(f"Could not open PathOut: {e}")
+        from src.gui.utils.open_path import open_path
+        if not open_path(path):
+            log.warning("could not open PathOut folder: %s", path)
+            self.status_bar.showMessage(f"Could not open PathOut: {path}")
 
     # ------------------------------------------------- changed-fields hint (RUN row)
     def _current_field_values(self):
@@ -2797,7 +2762,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         info_text.setAlignment(Qt.AlignJustify)
         
         # CWatM GUI version (shown above the CWatM model version)
-        gui_version_header = QLabel("CWatM GUI version 1.02")
+        gui_version_header = QLabel(f"CWatM GUI version {GUI_VERSION}")
         gui_version_header.setStyleSheet(f"""
             QLabel {{
                 font-family: 'Segoe UI', sans-serif;
@@ -2989,9 +2954,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         return False
 
     def _update_excel_menu_enabled(self, content=None):
-        """Grey out the Excel menu's items (Crops / Reservoirs) when the settings
-        file has no 'Excel_settings_file' key - there is nothing for them to open.
-        The Excel menu itself stays enabled, so it can still be opened to see why."""
+        """Grey out Tools > Excel Crops/Reservoirs when the settings file has no
+        'Excel_settings_file' key - there is nothing for it to open. The rest of the
+        Tools menu is untouched, so the item can still be seen (and its tooltip read)."""
         actions = getattr(self, "_excel_actions", None)
         if not actions:
             return
@@ -3320,10 +3285,10 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.set_experience_level(nxt)
 
     def set_experience_level(self, level):
-        """Set the experience level (from the button or the Configure ▸ Skill of
-        User menu) and apply it. Keeps the menu radio group in sync."""
+        """Set the experience level (from the level button or Preferences ▸ Editor &
+        Dates ▸ Skill of user) and apply it. Keeps a menu radio group in sync if one
+        exists."""
         if level not in _EXPERIENCE_LEVELS or level == self._experience_level:
-            # Still re-sync the menu check state (the QActionGroup may have toggled).
             self._sync_level_menu()
             return
         self._experience_level = level
@@ -3332,9 +3297,12 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self._apply_level_button_style()
         self._sync_level_menu()
         self._apply_experience_level()
+        self._apply_menu_level()      # Beginner also hides the advanced menu entries
 
     def _sync_level_menu(self):
-        """Tick the matching Configure ▸ Skill of User radio item."""
+        """Tick the matching Skill-of-user radio item. The level lives in the
+        Preferences window (a combo box, read fresh on open), so there is no menu
+        to sync any more - a no-op unless `_level_menu_actions` is populated again."""
         actions = getattr(self, "_level_menu_actions", None)
         if not actions:
             return
@@ -3538,6 +3506,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         """Re-apply every theme-dependent style after a Configure ▸ Mode switch.
         The app-wide palette/stylesheet is already applied by the caller."""
         try:
+            # The reversed-tooltip rule is built from theme tokens and lives on the
+            # application stylesheet the switch just replaced - put it back first.
+            self._apply_tooltip_style()
             self.menu_bar.setStyleSheet(self._menu_bar_stylesheet())
             self._banner_title.setStyleSheet(f"color: {theme.c('accent')};")
             self.interface_label.setStyleSheet(f"color: {theme.c('text_muted')};")
@@ -3762,30 +3733,6 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         except Exception as e:
             print(f"Error opening Run Ledger: {str(e)}", file=sys.stderr)
 
-    def set_history_folder(self):
-        """Configure > Run history folder…: choose where the Run Ledger is stored."""
-        from PySide6.QtWidgets import QFileDialog
-        from src.gui.utils import run_ledger
-        current = run_ledger.history_dir()
-        folder = QFileDialog.getExistingDirectory(
-            self, "Choose the run-history folder", current)
-        if folder:
-            run_ledger.set_history_dir(folder)
-            self.status_bar.showMessage(f"Run history folder: {folder}")
-
-    def set_history_retention(self):
-        """Configure > Run history retention…: how many days of runs to keep."""
-        from PySide6.QtWidgets import QInputDialog
-        from src.gui.utils import run_ledger
-        days, ok = QInputDialog.getInt(
-            self, "Run history retention",
-            "Keep runs for how many days? (0 = keep forever)",
-            run_ledger.retention_days(), 0, 100000)
-        if ok:
-            run_ledger.set_retention_days(days)
-            keep = f"{days} days" if days else "forever"
-            self.status_bar.showMessage(f"Run history retention: keep {keep}")
-
     def open_timeseries_analysis(self):
         """Analyse menu > Timeseries: open a result .csv and plot it with Plotly."""
         try:
@@ -3881,8 +3828,11 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             return
         try:
             from src.gui.widgets.restore_settings_window import (
-                read_netcdf_metadata, RestoreSettingsWindow)
-            metadata = read_netcdf_metadata(path)
+                read_netcdf_attrs, RestoreSettingsWindow)
+            # Every global attribute in ONE open - the window filters the bulky ones
+            # out of its table and serves its buttons from the same read (these files
+            # usually sit on a network share, where each open is the slow part).
+            metadata = read_netcdf_attrs(path)
             win = RestoreSettingsWindow(path, metadata, self)
             win.exec()
         except Exception as e:
@@ -4099,17 +4049,17 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 self.status_bar.showMessage("No configuration loaded")
                 return
             
-            # Create and show options window
+            # Non-modal (since 1.05): the settings editor stays readable while the
+            # switches are being changed - each tick is applied to the content at
+            # once anyway, so there is nothing to accept or cancel. The reference is
+            # kept so the window is not garbage-collected, and dropped on close.
             self.options_window = OptionsWindow(self, config_content)
-            if self.options_window.exec():
-                # Options were accepted, content has been updated
-                self.status_bar.showMessage("Options updated")
-                # Clear reference after use
-                self.options_window = None
-            else:
-                # Clear reference if canceled
-                self.options_window = None
-            
+            self.options_window.destroyed.connect(
+                lambda *_: setattr(self, "options_window", None))
+            self.options_window.show()
+            self.options_window.raise_()
+            self.options_window.activateWindow()
+
         except Exception as e:
             print(f"Error opening options window: {str(e)}", file=sys.stderr)
             self.status_bar.showMessage(f"Error opening options: {str(e)}")
@@ -4127,18 +4077,29 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 self.status_bar.showMessage("No configuration loaded")
                 return
             
-            # Create and show check data window
+            # Already open (it is non-modal now): raise it instead of stacking a
+            # second copy - and never replace one while its check is running.
+            existing = getattr(self, "check_data_window", None)
+            if existing is not None:
+                try:
+                    if existing.isVisible():
+                        existing.raise_()
+                        existing.activateWindow()
+                        return
+                except RuntimeError:
+                    pass                      # deleted C++ object - fall through
+
+            # Create and show check data window.
             # Lazy import (§4.1): check_data_window pulls in cwatm.run_cwatm
             from src.gui.widgets.check_data_window import CheckDataWindow
+            # NOT modal / not exec(): the check itself runs in a worker thread, and a
+            # modal dialog would keep the GUI blocked anyway - which is exactly what
+            # threading it was meant to fix. Kept referenced so it is not GC'd.
             self.check_data_window = CheckDataWindow(self, config_content)
-            if self.check_data_window.exec():
-                # Window was closed normally
-                self.status_bar.showMessage("Check Data window closed")
-                # Clear reference after use
-                self.check_data_window = None
-            else:
-                # Clear reference if canceled
-                self.check_data_window = None
+            self.check_data_window.show()
+            self.check_data_window.raise_()
+            self.check_data_window.activateWindow()
+            self.status_bar.showMessage("Check Data window opened")
             
         except Exception as e:
             print(f"Error opening check data window: {str(e)}", file=sys.stderr)
@@ -4166,6 +4127,25 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                     self.status_bar.showMessage("Save failed - exit cancelled")
                     event.ignore()
                     return
+
+        # Hidden Run windows are children of this one: closing here kills their model
+        # processes too, so say so rather than ending someone's multi-hour run silently.
+        hidden = []
+        for win in list(getattr(self, "_hidden_run_windows", []) or []):
+            try:
+                if getattr(win, "_running", False):
+                    hidden.append(win)
+            except RuntimeError:
+                continue
+        if hidden:
+            if QMessageBox.question(
+                    self, "Hidden runs in progress",
+                    f"{len(hidden)} Hidden Run window(s) are still running CWatM.\n\n"
+                    "Closing the GUI stops them. Close anyway?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No) != QMessageBox.Yes:
+                event.ignore()
+                return
 
         if self.cwatm_running and self.cwatm_worker:
             # Stop CWatM execution before closing

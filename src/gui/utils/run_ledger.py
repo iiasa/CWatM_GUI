@@ -186,8 +186,81 @@ def clear():
         log.warning("could not clear settings snapshots", exc_info=True)
 
 
+def _entry_key(entry):
+    """What identifies a journal entry across a reload (the window works on copies)."""
+    try:
+        ts = round(float(entry.get("ts", 0)), 3)
+    except (TypeError, ValueError):
+        ts = 0.0
+    return ts, entry.get("settings", ""), entry.get("pathout", "")
+
+
+def set_note(entry, note):
+    """Attach a free-text note to one entry ("calibration attempt 3").
+
+    Titles come from the settings file and repeat endlessly, so a note is what makes a
+    months-old journal navigable. Returns True when something was written."""
+    try:
+        key = _entry_key(entry)
+        entries = load_entries()
+        changed = False
+        for e in entries:
+            if _entry_key(e) == key:
+                if (note or "").strip():
+                    e["note"] = note.strip()
+                else:
+                    e.pop("note", None)
+                changed = True
+        if not changed:
+            return False
+        path = ledger_path()
+        tmp = path + ".tmp"
+        os.makedirs(history_dir(), exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(entries, f, indent=1)
+        os.replace(tmp, path)
+        return True
+    except Exception:
+        log.warning("could not store the run note", exc_info=True)
+        return False
+
+
+def remove_entries(victims):
+    """Delete these entries from the journal (and their settings snapshots).
+
+    Matched on the ``ts`` + ``settings`` + ``pathout`` triple rather than object
+    identity: the window works on copies loaded from the file. Returns how many were
+    removed."""
+    try:
+        keys = {_entry_key(e) for e in (victims or [])}
+        if not keys:
+            return 0
+        entries = load_entries()
+        keep, drop = [], []
+        for e in entries:
+            (drop if _entry_key(e) in keys else keep).append(e)
+        if not drop:
+            return 0
+        for e in drop:
+            snap = e.get("snapshot")
+            if snap and os.path.exists(snap):
+                try:
+                    os.remove(snap)
+                except Exception:
+                    pass
+        path = ledger_path()
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(keep, f, indent=1)
+        os.replace(tmp, path)
+        return len(drop)
+    except Exception:
+        log.warning("could not remove journal entries", exc_info=True)
+        return 0
+
+
 def make_entry(settings_path, title, pathout, started_at, success, last_dis,
-               kind="run", content=None):
+               kind="run", content=None, log_path=None, batch_id=None):
     """Build a ledger entry dict from the common run facts. When ``content`` (the
     settings content the run actually used) is given, it is snapshotted to a file and
     the entry gets a ``snapshot`` path (so Compare settings diffs the run-time content,
@@ -204,6 +277,14 @@ def make_entry(settings_path, title, pathout, started_at, success, last_dis,
         "success": bool(success),
         "last_dis": last_dis,
     }
+    # Where this run's output was written, so the journal can show *why* it failed
+    # instead of only *that* it failed.
+    if log_path:
+        entry["log"] = log_path
+    # Scenarios of one Batch Run share this, so the journal can fold them into a
+    # single row instead of 30 unrelated ones.
+    if batch_id:
+        entry["batch_id"] = batch_id
     snap = _write_snapshot(content, settings_path, now)
     if snap:
         entry["snapshot"] = snap

@@ -16,17 +16,22 @@ construction; geometry key ``batch_runner``.
 
 import os
 import re
+import csv
+import glob
 import json
 import time
+import hashlib
 import itertools
+from collections import deque
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QMessageBox, QPlainTextEdit, QCheckBox, QDialogButtonBox,
+    QMessageBox, QPlainTextEdit, QCheckBox, QDialogButtonBox, QMenu,
+    QFileDialog, QApplication, QStyledItemDelegate, QInputDialog,
 )
-from PySide6.QtCore import Qt, QSettings
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, QSettings, QTimer, QRect
+from PySide6.QtGui import QIcon, QColor, QPainter, QTextCursor
 
 from src.gui.utils.window_geometry import GeometryMemoryMixin
 from src.gui.utils import theme
@@ -57,6 +62,121 @@ def set_settings_key(content, key, value):
     if not done:
         out.append(f"{key} = {value}")
     return "\n".join(out)
+
+
+class _ProgressDelegate(QStyledItemDelegate):
+    """Paints the Progress column as a **bar**. The cell text stays ``NN%`` - it is what
+    the CSV export and every read of the table use - the bar is only how it is drawn, so
+    twenty rows can be taken in at a glance instead of read one by one."""
+
+    def paint(self, painter, option, index):
+        text = str(index.data() or "").strip()
+        match = re.match(r"(\d+)\s*%$", text)
+        if match is None:
+            super().paint(painter, option, index)
+            return
+        pct = max(0, min(100, int(match.group(1))))
+        rect = option.rect.adjusted(4, 4, -4, -4)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        groove = QColor(theme.c("surface_bg"))
+        painter.setPen(QColor(theme.c("border")))
+        painter.setBrush(groove)
+        painter.drawRoundedRect(rect, 3, 3)
+        if pct:
+            fill = QRect(rect)
+            fill.setWidth(max(2, int(rect.width() * pct / 100.0)))
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(theme.c("accent")))
+            painter.drawRoundedRect(fill, 3, 3)
+        painter.setPen(QColor(theme.c("text")))
+        painter.drawText(option.rect, Qt.AlignCenter, text)
+        painter.restore()
+
+
+class _ScenarioLog:
+    """One scenario's run output: the tail in memory (for *Show log*) and the whole
+    stream in ``<PathOut>/cwatm_out.txt``.
+
+    Without this every scenario writes through the global ``sys.stdout`` into the
+    **main window's** output box - with several running in parallel their lines
+    interleave into one unreadable stream, and a failure leaves nothing to read
+    afterwards. Each worker gets its own sink instead (``CWatMProcessWorker``'s
+    ``output_sink``), so the batch does not touch the main box at all."""
+
+    _MAX_LINES = 3000        # tail kept in memory
+    _FLUSH_EVERY = 50        # lines between flushes (a network share hates per-line)
+
+    def __init__(self, path, title):
+        self.path = path                 # None when the scenario has no PathOut
+        self.title = title
+        self.lines = deque(maxlen=self._MAX_LINES)
+        self.errors = deque(maxlen=40)   # stderr lines, for the failure tooltip
+        self._fh = None
+        self._cur = ""
+        self._pending = 0
+        self._broken = False             # the file could not be written - stop trying
+
+    def sink(self):
+        """The ``output_sink(text, is_error)`` callable for CWatMProcessWorker."""
+        return self.append
+
+    def append(self, text, is_error=False):
+        parts = str(text).split("\n")
+        for i, part in enumerate(parts):
+            if "\r" in part:
+                # The per-timestep progress line overwrites itself in place.
+                self._cur = part.rsplit("\r", 1)[1]
+            else:
+                self._cur += part
+            if i < len(parts) - 1:
+                self._flush_line(is_error)
+
+    def _flush_line(self, is_error):
+        line = self._cur
+        self._cur = ""
+        if not line:
+            return
+        self.lines.append(line)
+        if is_error:
+            self.errors.append(line)
+        self._write(line)
+
+    def _write(self, line):
+        if not self.path or self._broken:
+            return
+        try:
+            if self._fh is None:
+                self._fh = open(self.path, "a", encoding="utf-8", errors="replace")
+                self._fh.write("\n" + "=" * 70 + "\n")
+                self._fh.write(time.strftime("%Y-%m-%d %H:%M:%S") +
+                               f"   batch scenario: {self.title}\n")
+                self._fh.write("-" * 70 + "\n")
+            self._fh.write(line + "\n")
+            self._pending += 1
+            if self._pending >= self._FLUSH_EVERY:
+                self._fh.flush()
+                self._pending = 0
+        except Exception:
+            log.debug("scenario log write failed: %s", self.path, exc_info=True)
+            self._broken = True
+
+    def close(self):
+        if self._cur:
+            self._flush_line(False)
+        if self._fh is not None:
+            try:
+                self._fh.write("\n")
+                self._fh.close()
+            except Exception:
+                pass
+            self._fh = None
+
+    def text(self):
+        return "\n".join(self.lines)
+
+    def error_text(self, limit=6):
+        return "\n".join(list(self.errors)[-limit:])
 
 
 def open_batch_runner(parent=None):
@@ -93,8 +213,12 @@ def open_batch_runner(parent=None):
 class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
     """Table of scenarios (base .ini + per-row overrides); runs up to N in parallel."""
 
-    _FIXED = ["Scenario", "PathOut"]        # leading columns
-    _TRAILING = ["Progress", "Status"]      # trailing columns
+    _FIXED = ["Scenario", "PathOut"]                    # leading columns
+    _TRAILING = ["Progress", "Duration", "Status"]      # trailing columns
+    #: Trailing column names a CSV import ignores (they are results, not inputs).
+    _INFO_COLS = {"progress", "duration", "status", "lastdischarge"}
+    #: A PathOut holding one of these has results in it already (see "skip finished").
+    _RESULT_SUFFIXES = (".nc", ".tss", ".csv")
 
     def __init__(self, base_path, base_content, parent=None):
         super().__init__(parent)
@@ -108,6 +232,17 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         self._active = {}                   # row -> dict(worker, temp, started, pathout, name)
         self._queue = []
         self._running = False
+        self._logs = {}                     # row -> _ScenarioLog (kept after the run)
+        self._log_windows = []              # open "Show log" dialogs
+        self._batch_id = ""                 # id shared by one batch's ledger entries
+        self._pct = {}                      # row -> last progress %, for the batch ETA
+        self._last_dis = {}                 # row -> last discharge (result summary)
+        self._durations = []                # seconds per finished scenario (ETA basis)
+        self._batch_started = None
+        # Ticks the elapsed times and the "7/20 done · ~1 h left" line while running.
+        self._tick = QTimer(self)
+        self._tick.setInterval(1000)
+        self._tick.timeout.connect(self._update_times)
 
         self.setWindowTitle("\U0001F5C2 Batch Run")
         self.setModal(False)
@@ -160,9 +295,15 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         layout.addWidget(self.sub_label)
 
         self.table = QTableWidget(0, len(self._FIXED) + len(self._TRAILING))
+        self._progress_delegate = _ProgressDelegate(self.table)
+        self._progress_delegate_col = None
         self._refresh_headers()
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        # Right-click a scenario: run just it, re-run the failed ones, open its output
+        # folder, read its log, or see what it actually changes in the settings file.
+        self.table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_row_menu)
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.Interactive)
         hh.setSectionResizeMode(1, QHeaderView.Stretch)     # PathOut
@@ -190,11 +331,29 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             "Auto-generate scenario rows from a value list or range for one or more keys "
             "(the full grid for several keys)")
         self.sweep_button.clicked.connect(self._open_sweep)
+        self.import_button = QPushButton("Import CSV")
+        self.import_button.setToolTip(
+            "Read scenarios from a CSV: columns Scenario, PathOut, then one column "
+            "per override key (build them in Excel and paste them here)")
+        self.import_button.clicked.connect(self._import_csv)
+        self.export_button = QPushButton("Export CSV")
+        self.export_button.setToolTip(
+            "Write the scenario table to a CSV - including each row's duration, "
+            "status and last discharge, so it doubles as the batch's result summary")
+        self.export_button.clicked.connect(self._export_csv)
+        self.compare_button = QPushButton("Compare results")
+        self.compare_button.setToolTip(
+            "Overlay the same result file of every finished scenario in one "
+            "Timeseries plot")
+        self.compare_button.clicked.connect(self._compare_results)
         edit_row.addWidget(self.add_row_button)
         edit_row.addWidget(self.dup_row_button)
         edit_row.addWidget(self.del_row_button)
         edit_row.addWidget(self.clear_button)
         edit_row.addStretch()
+        edit_row.addWidget(self.import_button)
+        edit_row.addWidget(self.export_button)
+        edit_row.addWidget(self.compare_button)
         edit_row.addWidget(self.sweep_button)
         edit_row.addWidget(self.add_key_button)
         layout.addLayout(edit_row)
@@ -205,9 +364,26 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         run_row.addWidget(QLabel("Parallel runs:"))
         self.parallel_spin = QSpinBox()
         self.parallel_spin.setRange(1, 16)
-        self.parallel_spin.setValue(1)
-        self.parallel_spin.setToolTip("How many scenarios run at the same time")
+        # Half the cores (at most 4) is a safe default: a CWatM run is CPU- and
+        # IO-hungry, and 16 of them will thrash most machines. _preflight warns when
+        # the value is raised beyond that.
+        self.parallel_spin.setValue(self._default_parallel())
+        self.parallel_spin.setToolTip(
+            "How many scenarios run at the same time.\n"
+            f"This machine has {os.cpu_count() or '?'} logical cores - going much "
+            "beyond half of them usually makes the whole batch slower.")
         run_row.addWidget(self.parallel_spin)
+        self.stop_on_fail = QCheckBox("Stop on first failure")
+        self.stop_on_fail.setToolTip(
+            "When a scenario fails, do not start the queued ones.\n"
+            "Scenarios already running are left to finish.")
+        run_row.addWidget(self.stop_on_fail)
+        self.skip_finished = QCheckBox("Skip finished")
+        self.skip_finished.setToolTip(
+            "Resume an interrupted batch: scenarios whose PathOut already holds "
+            "results (.nc / .tss / .csv) are not run again.\n"
+            "'Run this scenario' from the row menu always runs, whatever is there.")
+        run_row.addWidget(self.skip_finished)
         run_row.addStretch()
         self.run_button = QPushButton("▶ Run all")
         self.run_button.setStyleSheet(self._run_style(False))
@@ -227,22 +403,127 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         for b in self._edit_buttons():
             b.setStyleSheet(self._button_style())
 
+    @staticmethod
+    def _default_parallel():
+        return max(1, min(4, (os.cpu_count() or 2) // 2))
+
     def _edit_buttons(self):
         """The row/column editing buttons (disabled while a batch is running)."""
         return (self.add_row_button, self.dup_row_button, self.del_row_button,
-                self.clear_button, self.sweep_button, self.add_key_button)
+                self.clear_button, self.sweep_button, self.add_key_button,
+                self.import_button)
 
     def _refresh_headers(self):
         headers = self._FIXED + self._key_cols + self._TRAILING
         self.table.setColumnCount(len(headers))
         self.table.setHorizontalHeaderLabels(headers)
+        # The Progress column moves when an override column is added, so the bar
+        # delegate has to move with it.
+        delegate = getattr(self, "_progress_delegate", None)
+        if delegate is not None:
+            previous = getattr(self, "_progress_delegate_col", None)
+            if previous is not None and previous != self._progress_col():
+                self.table.setItemDelegateForColumn(previous, None)
+            self._progress_delegate_col = self._progress_col()
+            self.table.setItemDelegateForColumn(self._progress_delegate_col, delegate)
 
     # column index helpers
     def _progress_col(self):
         return len(self._FIXED) + len(self._key_cols)
 
-    def _status_col(self):
+    def _duration_col(self):
         return self._progress_col() + 1
+
+    def _status_col(self):
+        return self._progress_col() + 2
+
+    # ------------------------------------------------------------ times / ETA
+    @staticmethod
+    def _fmt_dur(seconds):
+        """h:mm:ss (or m:ss below an hour) - a batch runs for hours, so the elapsed
+        time has to be readable at a glance."""
+        try:
+            seconds = int(max(0, round(seconds)))
+        except (TypeError, ValueError):
+            return ""
+        h, rest = divmod(seconds, 3600)
+        m, s = divmod(rest, 60)
+        return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    def _eta_seconds(self):
+        """Rough time left: the mean of the scenarios that have finished, times what is
+        still to do (queued rows + the unfinished part of the running ones), divided by
+        how many run at once. None until the first one finishes - guessing before that
+        would be worse than saying nothing."""
+        if not self._durations:
+            return None
+        mean = sum(self._durations) / len(self._durations)
+        outstanding = float(len(self._queue))
+        for row in self._active:
+            outstanding += max(0.0, 1.0 - self._pct.get(row, 0) / 100.0)
+        if outstanding <= 0:
+            return 0
+        return mean * outstanding / max(1, self.parallel_spin.value())
+
+    def _counts(self):
+        """(done, failed, not_run) over the whole table - `not_run` are the rows that
+        were skipped as already finished or cancelled by stop-on-first-failure, which
+        belong in neither of the other two."""
+        done = failed = not_run = 0
+        for row in range(self.table.rowCount()):
+            status = self._cell_text(row, self._status_col())
+            if status.startswith("done"):
+                done += 1
+            elif status.startswith(self._FAILED_STATES):
+                failed += 1
+            elif status.startswith(("skipped", "cancelled")):
+                not_run += 1
+        return done, failed, not_run
+
+    def _update_times(self):
+        """The 1 s tick: elapsed time per running scenario + the batch line."""
+        now = time.time()
+        for row, info in list(self._active.items()):
+            self._set_cell(row, self._duration_col(),
+                           self._fmt_dur(now - info["started"]), editable=False)
+        self._update_batch_line()
+
+    def _update_batch_line(self):
+        total = self.table.rowCount()
+        done, failed, not_run = self._counts()
+        if not self._running:
+            return
+        parts = [f"{done + failed + not_run}/{total} finished"]
+        if failed:
+            parts.append(f"{failed} failed")
+        if not_run:
+            parts.append(f"{not_run} skipped")
+        if self._active:
+            parts.append(f"{len(self._active)} running")
+        if self._queue:
+            parts.append(f"{len(self._queue)} queued")
+        eta = self._eta_seconds()
+        if eta:
+            parts.append(f"~{self._fmt_dur(eta)} left")
+        self.sub_label.setText(" · ".join(parts))
+
+    def _finish_batch_line(self):
+        """The summary that stays on screen when the batch is over."""
+        done, failed, not_run = self._counts()
+        elapsed = (self._fmt_dur(time.time() - self._batch_started)
+                   if self._batch_started else "")
+        text = f"Batch finished: {done} done"
+        if failed:
+            text += f", {failed} failed"
+        if not_run:
+            text += f", {not_run} skipped"
+        if elapsed:
+            text += f" in {elapsed}"
+        self.sub_label.setText(text)
+        try:    # flash the taskbar entry - a batch is long enough to walk away from
+            QApplication.alert(self, 0)
+        except Exception:
+            pass
 
     def _apply_theme(self):
         self.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
@@ -257,11 +538,15 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             f"color: {theme.c('out_text')}; border: 1px solid {theme.c('out_border')}; "
             f"border-radius: 8px; gridline-color: {theme.c('border')}; "
             f"alternate-background-color: {theme.c('surface_bg')}; "
-            "font-family: 'Segoe UI', sans-serif; font-size: 12px; }}"
+            # NB: a plain (non-f) string must close the rule with ONE brace - the
+            # doubled one is only an escape *inside* an f-string. With "}}" here Qt
+            # failed to parse the whole sheet ("Could not parse stylesheet") and the
+            # table stayed unthemed.
+            "font-family: 'Segoe UI', sans-serif; font-size: 12px; }"
             f"QHeaderView::section {{ background-color: {theme.c('menubar_bg')}; "
             f"color: {theme.c('text')}; border: 0px; "
             f"border-bottom: 1px solid {theme.c('border')}; padding: 4px 8px; "
-            "font-weight: 600; }}")
+            "font-weight: 600; }")
 
     @staticmethod
     def _button_style():
@@ -291,10 +576,12 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         """
 
     # --------------------------------------------------------------- rows / keys
-    def _set_cell(self, row, col, text, editable=True):
+    def _set_cell(self, row, col, text, editable=True, tooltip=None):
         item = QTableWidgetItem(str(text))
         if not editable:
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+        if tooltip:
+            item.setToolTip(tooltip)
         self.table.setItem(row, col, item)
 
     def _cell_text(self, row, col):
@@ -317,6 +604,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             val = (overrides or {}).get(key, "")
             self._set_cell(row, 2 + i, val)
         self._set_cell(row, self._progress_col(), "0%", editable=False)
+        self._set_cell(row, self._duration_col(), "", editable=False)
         self._set_cell(row, self._status_col(), "idle", editable=False)
 
     def _duplicate_row(self):
@@ -495,28 +783,201 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             content = set_settings_key(content, "PathOut", pathout)
         return content
 
-    def _write_scenario_ini(self, row, content):
+    def _safe_name(self, row):
         name = self._cell_text(row, 0) or f"scenario_{row + 1}"
-        safe = re.sub(r"[^\w\-.]+", "_", name).strip("_") or f"scenario_{row + 1}"
+        return re.sub(r"[^\w\-.]+", "_", name).strip("_") or f"scenario_{row + 1}"
+
+    def _temp_glob(self, row):
+        """Every temp .ini this **row** has ever written (the name part may have
+        changed since), so an old one cannot be left behind after a rename."""
         base = os.path.splitext(os.path.basename(self._base_path))[0]
-        path = os.path.join(self._base_dir, f"{base}.batch_{safe}.ini")
+        return glob.glob(os.path.join(
+            self._base_dir, f"{base}.batch{row + 1:03d}_*.ini"))
+
+    def _write_scenario_ini(self, row, content):
+        """Write this row's settings file. The name carries the **row number**, so two
+        scenarios that sanitise to the same name (``run 1`` / ``run_1``) cannot end up
+        writing - and deleting - the same file while both are running."""
+        base = os.path.splitext(os.path.basename(self._base_path))[0]
+        path = os.path.join(
+            self._base_dir, f"{base}.batch{row + 1:03d}_{self._safe_name(row)}.ini")
+        for old in self._temp_glob(row):        # a rename left an older one behind
+            if os.path.normcase(old) != os.path.normcase(path):
+                try:
+                    os.remove(old)
+                except Exception:
+                    pass
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         return path
 
+    @staticmethod
+    def _drop_temp(path):
+        try:
+            if path and os.path.isfile(path):
+                os.remove(path)
+        except Exception:
+            log.debug("could not remove temp ini: %s", path, exc_info=True)
+
+    # ------------------------------------------------------------- pre-flight
+    def _base_keys(self):
+        """The keys the base settings file actually defines (lower-cased)."""
+        keys = set()
+        for line in self._base_content.split("\n"):
+            s = line.strip()
+            if not s or s[0] in "#;[" or "=" not in s:
+                continue
+            keys.add(s.split("=", 1)[0].strip().lower())
+        return keys
+
+    def _resolved_pathout(self, content, fallback=""):
+        """This scenario's PathOut with placeholders expanded (best effort)."""
+        try:
+            from src.gui.widgets.basin_viewer import pathout_exists
+            _exists, resolved = pathout_exists(content)
+            if resolved:
+                return resolved
+        except Exception:
+            log.debug("PathOut resolution failed", exc_info=True)
+        return fallback
+
+    @staticmethod
+    def _writable_dir(path):
+        """Can this directory be created/written? Walks up to the nearest existing
+        ancestor - the folder itself usually does not exist yet."""
+        probe = os.path.abspath(path)
+        while probe and not os.path.isdir(probe):
+            parent = os.path.dirname(probe)
+            if parent == probe:
+                return False
+            probe = parent
+        return os.access(probe, os.W_OK)
+
+    def _preflight(self, rows):
+        """Check the scenarios **before** anything runs; True = go ahead.
+
+        A batch is expensive, and its worst failures are silent: two rows sharing a
+        PathOut quietly mix their results, a row without one writes into the base
+        PathOut together with everybody else, and an override key that is not in the
+        base file is simply *appended* as a new key - a typo then runs the unchanged
+        scenario to completion. All of that is cheap to catch here."""
+        errors, warnings = [], []
+        seen_names, seen_out = {}, {}
+        cores = os.cpu_count() or 2
+        parallel = self.parallel_spin.value()
+        if parallel > max(1, cores // 2) and len(rows) > 1:
+            warnings.append(
+                f"{parallel} scenarios in parallel on {cores} logical cores - CWatM is "
+                f"CPU- and disk-hungry, so beyond about {max(1, cores // 2)} the whole "
+                f"batch usually gets slower, not faster")
+        base_keys = self._base_keys()
+        unknown = [k for k in self._key_cols if k.lower() not in base_keys]
+        for key in unknown:
+            warnings.append(
+                f"key '{key}' is not in the base settings file - it will be added as a "
+                f"new key at the end (a typo would run the base value unchanged)")
+        for row in rows:
+            label = f"row {row + 1} ({self._cell_text(row, 0) or 'unnamed'})"
+            name = self._safe_name(row).lower()
+            if name in seen_names:
+                warnings.append(f"{label}: same scenario name as row {seen_names[name]}"
+                                f" - both appear alike in the Run Ledger")
+            else:
+                seen_names[name] = row + 1
+            pathout = self._cell_text(row, 1)
+            if not pathout:
+                errors.append(f"{label}: no PathOut - it would write into the base "
+                              f"PathOut, together with every other scenario")
+                continue
+            try:
+                content = self._scenario_content(row)
+            except Exception as e:
+                errors.append(f"{label}: cannot build the settings file ({e})")
+                continue
+            resolved = self._resolved_pathout(content, pathout)
+            key = os.path.normcase(os.path.abspath(resolved))
+            if key in seen_out:
+                errors.append(f"{label}: same PathOut as row {seen_out[key]} "
+                              f"- the two runs would overwrite each other's results")
+            else:
+                seen_out[key] = row + 1
+            if not self._writable_dir(resolved):
+                errors.append(f"{label}: PathOut cannot be created or written: {resolved}")
+            elif os.path.isdir(resolved) and os.listdir(resolved):
+                warnings.append(f"{label}: PathOut is not empty - existing results "
+                                f"there will be mixed with the new ones ({resolved})")
+        return self._confirm_problems(errors, warnings)
+
+    def _confirm_problems(self, errors, warnings):
+        """Show what the pre-flight found. Errors block the batch; warnings ask."""
+        def block(title, items):
+            shown = items[:20]
+            more = len(items) - len(shown)
+            text = "\n".join(f"• {m}" for m in shown)
+            if more > 0:
+                text += f"\n• … and {more} more"
+            return f"{title}\n\n{text}"
+
+        if errors:
+            QMessageBox.critical(
+                self, "Batch Run",
+                block(f"{len(errors)} problem(s) would spoil this batch:", errors) +
+                "\n\nNothing was started.")
+            return False
+        if warnings:
+            return QMessageBox.question(
+                self, "Batch Run",
+                block(f"{len(warnings)} thing(s) worth a look:", warnings) +
+                "\n\nRun anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
+        return True
+
     def _run_all(self):
-        if self._running:
+        if self._running or self.table.rowCount() == 0:
             return
-        if self.table.rowCount() == 0:
+        rows = list(range(self.table.rowCount()))
+        if not self._preflight(rows):
             return
-        self._queue = list(range(self.table.rowCount()))
-        self._running = True
-        self.run_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
-        for b in self._edit_buttons():
-            b.setEnabled(False)
-        for row in range(self.table.rowCount()):
+        self._run_rows(rows)
+
+    def _run_rows(self, rows, force=False):
+        """Queue these rows and start pumping (used by Run all, by the row menu's
+        *Run this scenario* and by *Re-run failed*).
+
+        ``force`` skips the "Skip finished" filter - asking for **this** scenario
+        explicitly means it should run whatever is already in its PathOut."""
+        rows = [r for r in rows if r not in self._active and r not in self._queue]
+        if not force and self.skip_finished.isChecked():
+            keep = []
+            for row in rows:
+                if self._has_results(self._row_pathout(row)):
+                    self._set_cell(row, self._status_col(), "skipped (has results)",
+                                   editable=False,
+                                   tooltip="'Skip finished' is ticked and this "
+                                           "PathOut already holds output files.")
+                else:
+                    keep.append(row)
+            rows = keep                  # the count shows up in the batch line
+        if not rows:
+            return
+        self._queue.extend(rows)
+        if not self._running:
+            self._running = True
+            self._batch_started = time.time()
+            # One id for this batch, carried into every scenario's journal entry so
+            # the Journal of Runs can fold them into a single row.
+            self._batch_id = "%s-%d" % (
+                time.strftime("%Y%m%d_%H%M%S"), int(time.time() * 1000) % 1000)
+            self._durations = []
+            self.run_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+            for b in self._edit_buttons():
+                b.setEnabled(False)
+            self._tick.start()
+        for row in rows:
+            self._pct[row] = 0
             self._set_cell(row, self._progress_col(), "0%", editable=False)
+            self._set_cell(row, self._duration_col(), "", editable=False)
             self._set_cell(row, self._status_col(), "queued", editable=False)
         self._pump()
 
@@ -527,11 +988,15 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             row = self._queue.pop(0)
             self._start_row(row)
         if not self._queue and not self._active and self._running:
+            self._tick.stop()
+            self._finish_batch_line()
             self._running = False
             self.run_button.setEnabled(True)
             self.stop_button.setEnabled(False)
             for b in self._edit_buttons():
                 b.setEnabled(True)
+        else:
+            self._update_batch_line()
 
     def _start_row(self, row):
         try:
@@ -543,30 +1008,31 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         # Resolve this scenario's PathOut (placeholders expanded) for the ledger, and
         # create the output folder if it does not exist yet - CWatM does not create it
         # and would otherwise fail (e.g. out_emo-1v3_scenario_3).
-        pathout = self._cell_text(row, 1)
-        resolved = pathout
-        try:
-            from src.gui.widgets.basin_viewer import pathout_exists
-            _ex, res = pathout_exists(content)
-            if res:
-                resolved = res
-        except Exception:
-            pass
+        resolved = self._resolved_pathout(content, self._cell_text(row, 1))
         if resolved:
             try:
                 os.makedirs(resolved, exist_ok=True)
             except Exception as e:
                 self._set_cell(row, self._status_col(),
                                f"error: cannot create PathOut ({e})", editable=False)
+                self._drop_temp(temp)
                 return
+        # This scenario's own log: <PathOut>/cwatm_out.txt plus the tail in memory.
+        # Without the sink the output would go to the *main* window's box, where
+        # parallel scenarios interleave into one unreadable stream.
+        scenario_log = _ScenarioLog(
+            os.path.join(resolved, "cwatm_out.txt") if resolved else None,
+            self._cell_text(row, 0) or f"scenario_{row + 1}")
+        self._logs[row] = scenario_log
         # Run from the base settings file's folder (where the scenario .ini is
         # written too), so relative paths resolve against it - not against the main
         # window's working dir, and not against the exe/source root.
         worker = CWatMProcessWorker(temp, self._mw,
+                                    output_sink=scenario_log.sink(),
                                     working_dir=self._base_dir or None)
         self._active[row] = dict(worker=worker, temp=temp, started=time.time(),
                                  pathout=resolved, name=self._cell_text(row, 0),
-                                 content=content)
+                                 content=content, log=scenario_log.path)
         worker.progress.connect(lambda p, r=row: self._on_progress(r, p))
         worker.finished.connect(lambda ok, dis, r=row: self._on_finished(r, ok, dis))
         worker.error.connect(lambda msg, r=row: self._on_error(r, msg))
@@ -574,36 +1040,86 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         worker.start()
 
     def _on_progress(self, row, pct):
+        self._pct[row] = int(pct)
         self._set_cell(row, self._progress_col(), f"{int(pct)}%", editable=False)
+
+    def _freeze_duration(self, row, info):
+        """Stop the clock for this row and feed the batch ETA."""
+        if not info or not info.get("started"):
+            return
+        seconds = time.time() - info["started"]
+        self._durations.append(seconds)
+        self._set_cell(row, self._duration_col(), self._fmt_dur(seconds),
+                       editable=False)
+
+    def _cancel_queued(self, reason="cancelled"):
+        """Stop-on-first-failure: do not start what has not started yet. Scenarios
+        already running are left alone - killing them would throw away hours."""
+        for row in self._queue:
+            self._set_cell(row, self._status_col(), reason, editable=False,
+                           tooltip="A scenario failed and 'Stop on first failure' "
+                                   "was ticked.")
+        self._queue = []
+
+    def _close_log(self, row):
+        scenario_log = self._logs.get(row)
+        if scenario_log is not None:
+            scenario_log.close()
+        return scenario_log
+
+    def _failure_tooltip(self, row, extra=""):
+        """What actually went wrong: the run's own error lines (the status cell can
+        only ever show a fragment) plus where the full log is."""
+        scenario_log = self._logs.get(row)
+        parts = [extra] if extra else []
+        if scenario_log is not None:
+            err = scenario_log.error_text()
+            if err:
+                parts.append(err)
+            if scenario_log.path:
+                parts.append(f"Full log: {scenario_log.path}")
+        parts.append("Right-click the row for 'Show log'.")
+        return "\n".join(p for p in parts if p)
 
     def _on_finished(self, row, ok, last_dis):
         info = self._active.pop(row, None)
+        scenario_log = self._close_log(row)
         if info is not None:
             self._log_scenario(info, ok, last_dis)
+            self._freeze_duration(row, info)
             self._set_cell(row, self._progress_col(), "100%" if ok else
                            self._cell_text(row, self._progress_col()), editable=False)
             if ok:
                 dis = ""
                 try:
                     dis = f" ({display_format.fmt(last_dis)})" if last_dis is not None else ""
+                    self._last_dis[row] = float(last_dis)
                 except (TypeError, ValueError):
                     dis = ""
-                self._set_cell(row, self._status_col(), f"done{dis}", editable=False)
-                # Clean up the temporary .ini on success (kept on failure for debugging).
-                try:
-                    os.remove(info["temp"])
-                except Exception:
-                    pass
+                tip = (f"Log: {scenario_log.path}"
+                       if scenario_log is not None and scenario_log.path else "")
+                self._set_cell(row, self._status_col(), f"done{dis}",
+                               editable=False, tooltip=tip)
+                # The temp .ini has done its job (it is rebuilt from the table on every
+                # run, so nothing is lost); a failed one is kept for inspection.
+                self._drop_temp(info["temp"])
             else:
-                self._set_cell(row, self._status_col(), "failed", editable=False)
+                self._set_cell(row, self._status_col(), "failed", editable=False,
+                               tooltip=self._failure_tooltip(row))
+                if self.stop_on_fail.isChecked():
+                    self._cancel_queued()
         self._pump()
 
     def _on_error(self, row, msg):
         info = self._active.pop(row, None)
+        self._close_log(row)
         if info is not None:
             self._log_scenario(info, False, None)
-            self._set_cell(row, self._status_col(),
-                           f"error: {msg[:60]}", editable=False)
+            self._freeze_duration(row, info)
+            self._set_cell(row, self._status_col(), f"error: {msg[:60]}",
+                           editable=False, tooltip=self._failure_tooltip(row, msg))
+            if self.stop_on_fail.isChecked():
+                self._cancel_queued()
         self._pump()
 
     def _log_scenario(self, info, ok, last_dis):
@@ -618,7 +1134,8 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             run_ledger.add_entry(run_ledger.make_entry(
                 self._base_path, title, info.get("pathout", ""),
                 info.get("started"), ok, last, kind="batch",
-                content=info.get("content")))
+                content=info.get("content"),
+                log_path=info.get("log"), batch_id=self._batch_id))
         except Exception:
             log.debug("batch ledger logging failed", exc_info=True)
 
@@ -629,13 +1146,307 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
                 info["worker"].stop()
             except Exception:
                 pass
+            self._close_log(row)
+            # A stopped scenario is part of the history too, and its temp .ini has no
+            # reason to survive (both used to be dropped silently).
+            self._log_scenario(info, False, None)
+            self._freeze_duration(row, info)
+            self._drop_temp(info.get("temp"))
             self._set_cell(row, self._status_col(), "stopped", editable=False)
         self._active.clear()
+        self._tick.stop()
+        if self._running:
+            self._finish_batch_line()
         self._running = False
         self.run_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         for b in self._edit_buttons():
             b.setEnabled(True)
+
+    # ------------------------------------------------------------------- CSV
+    def _export_csv(self):
+        """Write the table to a CSV — the scenarios **and** their outcome, so the same
+        file is both a reproducible batch definition and its result summary."""
+        start = os.path.join(
+            self._base_dir,
+            os.path.splitext(os.path.basename(self._base_path))[0] + "_scenarios.csv")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export scenarios", start, "CSV files (*.csv);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+                writer = csv.writer(fh)
+                writer.writerow(["Scenario", "PathOut"] + list(self._key_cols)
+                                + ["Duration", "Status", "LastDischarge"])
+                for row in range(self.table.rowCount()):
+                    dis = self._last_dis.get(row)
+                    writer.writerow(
+                        [self._cell_text(row, 0), self._cell_text(row, 1)]
+                        + [self._cell_text(row, 2 + i)
+                           for i in range(len(self._key_cols))]
+                        + [self._cell_text(row, self._duration_col()),
+                           self._cell_text(row, self._status_col()),
+                           "" if dis is None else repr(dis)])
+        except Exception as e:
+            QMessageBox.warning(self, "Export scenarios", f"Could not write:\n{e}")
+            return
+        self.sub_label.setText(f"Exported {self.table.rowCount()} scenarios → {path}")
+
+    def _row_pathout(self, row):
+        """This row's PathOut, placeholders expanded (best effort, never raises)."""
+        try:
+            return self._resolved_pathout(self._scenario_content(row),
+                                          self._cell_text(row, 1))
+        except Exception:
+            return self._cell_text(row, 1)
+
+    def _has_results(self, path):
+        """Does this PathOut already hold model output? (The scenario's own
+        ``cwatm_out.txt`` is a .txt, so the log alone never counts as a result.)"""
+        if not path or not os.path.isdir(path):
+            return False
+        try:
+            with os.scandir(path) as it:
+                for entry in it:
+                    if entry.is_file() and entry.name.lower().endswith(
+                            self._RESULT_SUFFIXES):
+                        return True
+        except OSError:
+            return False
+        return False
+
+    def _compare_results(self):
+        """Overlay one result file of every scenario that has output in a single
+        Timeseries plot - the reason a sweep is run in the first place."""
+        found = {}                       # csv name -> [(scenario, full path)]
+        for row in range(self.table.rowCount()):
+            out = self._row_pathout(row)
+            if not out or not os.path.isdir(out):
+                continue
+            name = self._cell_text(row, 0) or f"scenario_{row + 1}"
+            try:
+                with os.scandir(out) as it:
+                    for entry in it:
+                        if entry.is_file() and entry.name.lower().endswith(".csv"):
+                            found.setdefault(entry.name, []).append(
+                                (name, entry.path))
+            except OSError:
+                continue
+        usable = {n: v for n, v in found.items() if len(v) > 1}
+        if not usable:
+            QMessageBox.information(
+                self, "Compare results",
+                "No result .csv was found in two or more scenario output folders yet.\n\n"
+                "Run the batch first - and note that only time series (.csv) can be "
+                "overlaid, not maps (.nc).")
+            return
+        if len(usable) == 1:
+            chosen = next(iter(usable))
+        else:
+            names = sorted(usable, key=lambda n: (-len(usable[n]), n.lower()))
+            chosen, ok = QInputDialog.getItem(
+                self, "Compare results",
+                "Which result file should be compared across the scenarios?",
+                [f"{n}   ({len(usable[n])} scenarios)" for n in names], 0, False)
+            if not ok or not chosen:
+                return
+            chosen = chosen.split("   (")[0]
+        entries = usable[chosen]
+        try:
+            from src.gui.widgets.analysis_timeseries import open_comparison
+            open_comparison(self._mw or self, [p for _n, p in entries],
+                            [n for n, _p in entries])
+        except Exception as e:
+            log.debug("compare results failed", exc_info=True)
+            QMessageBox.warning(self, "Compare results",
+                                f"Could not open the comparison:\n{e}")
+
+    def _import_csv(self):
+        """Read scenarios from a CSV (the columns Export writes, or one made in Excel).
+        Every column that is not Scenario/PathOut and not a result column becomes an
+        override key."""
+        if self._running:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import scenarios", self._base_dir,
+            "CSV files (*.csv);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, newline="", encoding="utf-8-sig") as fh:
+                rows = [r for r in csv.reader(fh) if any(c.strip() for c in r)]
+        except Exception as e:
+            QMessageBox.warning(self, "Import scenarios", f"Could not read:\n{e}")
+            return
+        if len(rows) < 2:
+            QMessageBox.warning(
+                self, "Import scenarios",
+                "The file needs a header row (Scenario, PathOut, <keys>…) and at "
+                "least one scenario.")
+            return
+        header = [h.strip() for h in rows[0]]
+        lower = [h.lower() for h in header]
+        try:
+            name_i = lower.index("scenario")
+            out_i = lower.index("pathout")
+        except ValueError:
+            QMessageBox.warning(
+                self, "Import scenarios",
+                "The header must contain a 'Scenario' and a 'PathOut' column.\n\n"
+                f"Found: {', '.join(header) or '(nothing)'}")
+            return
+        keys = [(i, h) for i, h in enumerate(header)
+                if i not in (name_i, out_i) and h and h.lower() not in self._INFO_COLS]
+        self.table.setRowCount(0)
+        self._key_cols = [h for _i, h in keys]
+        self._refresh_headers()
+        for raw in rows[1:]:
+            cell = lambda i: raw[i].strip() if i < len(raw) else ""   # noqa: E731
+            self._add_row(name=cell(name_i), pathout=cell(out_i),
+                          overrides={h: cell(i) for i, h in keys})
+        self.sub_label.setText(
+            f"Imported {self.table.rowCount()} scenarios from {os.path.basename(path)}"
+            + (f" · override keys: {', '.join(self._key_cols)}" if self._key_cols else ""))
+
+    # -------------------------------------------------------------- row menu
+    _FAILED_STATES = ("failed", "error", "stopped")
+
+    def _failed_rows(self):
+        return [r for r in range(self.table.rowCount())
+                if self._cell_text(r, self._status_col()).startswith(self._FAILED_STATES)]
+
+    def _on_row_menu(self, pos):
+        """Right-click on a scenario: everything that applies to **that one** row."""
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        self.table.selectRow(row)
+        name = self._cell_text(row, 0) or f"scenario_{row + 1}"
+        menu = QMenu(self)
+        menu.setToolTipsVisible(True)
+
+        run_one = menu.addAction(f"Run '{name}'")
+        run_one.setToolTip("Run this scenario alone - or add it to a batch already running")
+        run_one.setEnabled(row not in self._active and row not in self._queue)
+        failed = self._failed_rows()
+        rerun = menu.addAction(f"Re-run failed ({len(failed)})")
+        rerun.setToolTip("Run every scenario that failed, errored or was stopped")
+        rerun.setEnabled(bool(failed))
+        menu.addSeparator()
+
+        scenario_log = self._logs.get(row)
+        show_log = menu.addAction("Show log")
+        show_log.setEnabled(scenario_log is not None and bool(scenario_log.lines))
+        show_log.setToolTip("This scenario's run output"
+                            if scenario_log is not None else "It has not run yet")
+        open_out = menu.addAction("Open output folder")
+        show_ini = menu.addAction("Show settings (diff vs base)")
+        show_ini.setToolTip("What this scenario changes in the base settings file")
+
+        chosen = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if chosen is run_one:
+            self._run_single(row)
+        elif chosen is rerun:
+            self._rerun_failed()
+        elif chosen is show_log:
+            self._show_log(row)
+        elif chosen is open_out:
+            self._open_pathout(row)
+        elif chosen is show_ini:
+            self._show_scenario_settings(row)
+
+    def _run_single(self, row):
+        if self._preflight([row]):
+            self._run_rows([row], force=True)
+
+    def _rerun_failed(self):
+        rows = self._failed_rows()
+        if rows and self._preflight(rows):
+            self._run_rows(rows)
+
+    def _open_pathout(self, row):
+        try:
+            resolved = self._resolved_pathout(self._scenario_content(row),
+                                              self._cell_text(row, 1))
+        except Exception:
+            resolved = self._cell_text(row, 1)
+        if not resolved or not os.path.isdir(resolved):
+            QMessageBox.information(
+                self, "Open output folder",
+                f"This scenario has no output folder (yet):\n{resolved or '-'}")
+            return
+        from src.gui.utils.open_path import open_path
+        if not open_path(resolved):
+            QMessageBox.warning(self, "Open output folder",
+                                f"Could not open:\n{resolved}")
+
+    def _show_log(self, row):
+        """The scenario's output in a plain, non-modal window (the log file itself may
+        be on a slow share, and a finished run's tail is already in memory)."""
+        scenario_log = self._logs.get(row)
+        if scenario_log is None:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Log — {self._cell_text(row, 0) or 'scenario'}")
+        dlg.setAttribute(Qt.WA_DeleteOnClose, True)
+        dlg.resize(820, 520)
+        v = QVBoxLayout(dlg)
+        head = QLabel(scenario_log.path or "(no PathOut - kept in memory only)")
+        head.setStyleSheet(f"color: {theme.c('text_muted')}; font-size: 11px;")
+        head.setWordWrap(True)
+        v.addWidget(head)
+        view = QPlainTextEdit()
+        view.setReadOnly(True)
+        view.setStyleSheet(
+            f"QPlainTextEdit {{ background-color: {theme.c('out_bg')}; "
+            f"color: {theme.c('out_text')}; border: 1px solid {theme.c('out_border')}; "
+            "font-family: Consolas, monospace; font-size: 11px; }")
+        view.setPlainText(scenario_log.text())
+        view.moveCursor(QTextCursor.MoveOperation.End)
+        v.addWidget(view, 1)
+        row_box = QHBoxLayout()
+        row_box.addStretch()
+        if scenario_log.path and os.path.isfile(scenario_log.path):
+            open_btn = QPushButton("Open log file")
+            open_btn.setStyleSheet(self._button_style())
+            open_btn.clicked.connect(
+                lambda: __import__("src.gui.utils.open_path", fromlist=["open_path"])
+                .open_path(scenario_log.path))
+            row_box.addWidget(open_btn)
+        close_btn = QPushButton("Close")
+        close_btn.setStyleSheet(self._button_style())
+        close_btn.clicked.connect(dlg.close)
+        row_box.addWidget(close_btn)
+        v.addLayout(row_box)
+        dlg.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
+        self._log_windows.append(dlg)
+        dlg.destroyed.connect(
+            lambda *_: self._log_windows.remove(dlg) if dlg in self._log_windows else None)
+        dlg.show()
+
+    def _show_scenario_settings(self, row):
+        """The scenario's settings file next to the base one, in the Compare window -
+        so what a row really changes is visible before (or after) it runs."""
+        try:
+            content = self._scenario_content(row)
+        except Exception as e:
+            QMessageBox.warning(self, "Show settings",
+                                f"Could not build this scenario:\n{e}")
+            return
+        try:
+            from src.gui.widgets.compare_settings_window import CompareSettingsWindow
+            win = CompareSettingsWindow(self._mw or self)
+            win.load_contents(
+                self._base_content, os.path.basename(self._base_path) or "base",
+                content, f"{self._cell_text(row, 0) or 'scenario'} (generated)")
+            win.show()
+            win.raise_()
+            win.activateWindow()
+        except Exception as e:
+            log.debug("compare of scenario failed", exc_info=True)
+            QMessageBox.warning(self, "Show settings",
+                                f"Could not open the comparison:\n{e}")
 
     def _clear_all(self):
         """Clear all scenarios and override columns and start fresh (one empty row)."""
@@ -644,10 +1455,23 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         self.table.setRowCount(0)
         self._key_cols = []
         self._refresh_headers()
-        self.parallel_spin.setValue(1)
+        self.parallel_spin.setValue(self._default_parallel())
         self._add_row()
 
     # -------------------------------------------------------------- persistence
+    def _cfg_key(self):
+        """The QSettings key for **this base settings file**.
+
+        One global key meant that opening another project showed the previous
+        project's scenarios - with its PathOuts, ready to run. The path is hashed so
+        the key stays short and legal."""
+        try:
+            ident = os.path.normcase(os.path.abspath(self._base_path))
+        except Exception:
+            ident = self._base_path or ""
+        digest = hashlib.md5(ident.encode("utf-8", "replace")).hexdigest()[:12]
+        return f"batch_runner/config_{digest}"
+
     def _save_config(self):
         """Persist the current scenario table so the next open restores it."""
         try:
@@ -661,9 +1485,12 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
                 })
             cfg = {"keys": list(self._key_cols),
                    "parallel": self.parallel_spin.value(),
+                   "stop_on_fail": self.stop_on_fail.isChecked(),
+                   "skip_finished": self.skip_finished.isChecked(),
+                   "base": self._base_path,
                    "rows": rows}
             QSettings("IIASA", "CWatM_GUI").setValue(
-                "batch_runner/config", json.dumps(cfg))
+                self._cfg_key(), json.dumps(cfg))
         except Exception:
             log.debug("batch config save failed", exc_info=True)
 
@@ -671,7 +1498,15 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         """Restore the scenario table from the last session; return True if anything was
         restored, else False (so the caller adds a default row)."""
         try:
-            raw = QSettings("IIASA", "CWatM_GUI").value("batch_runner/config", "")
+            settings = QSettings("IIASA", "CWatM_GUI")
+            raw = settings.value(self._cfg_key(), "")
+            if not raw:
+                # Table saved before the per-file keys existed: adopt it once, for the
+                # file that is open now, then let it be saved under the new key.
+                legacy = settings.value("batch_runner/config", "")
+                if legacy:
+                    raw = legacy
+                    settings.remove("batch_runner/config")
             if not raw:
                 return False
             cfg = json.loads(raw)
@@ -680,7 +1515,10 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
                 return False
             self._key_cols = list(cfg.get("keys") or [])
             self._refresh_headers()
-            self.parallel_spin.setValue(int(cfg.get("parallel", 1)))
+            self.parallel_spin.setValue(
+                int(cfg.get("parallel", self._default_parallel())))
+            self.stop_on_fail.setChecked(bool(cfg.get("stop_on_fail", False)))
+            self.skip_finished.setChecked(bool(cfg.get("skip_finished", False)))
             for rd in rows:
                 self._add_row(name=rd.get("name"), pathout=rd.get("pathout"),
                               overrides=rd.get("overrides") or {})
@@ -693,5 +1531,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         # Stop any in-flight scenario processes so none is orphaned.
         if self._active:
             self._stop_all()
+        for scenario_log in self._logs.values():
+            scenario_log.close()
         self._save_config()
         super().closeEvent(event)

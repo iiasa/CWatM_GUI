@@ -32,6 +32,7 @@ python cwatm_gui.py
 1. **File ▸ Load .ini** (Ctrl+O) — load a settings file (parses automatically).
 2. Edit **Start/Spin/End Date, PathOut, MaskMap, Gauges** — changes auto-apply to the
    content in memory; **Save / Save As** turn blue to show unsaved changes.
+   *(What changed in the current release: `CWatM_GUI_Version_1.04.md`.)*
 3. **File ▸ Save .ini** (Ctrl+S) — write to disk.
 4. **RUN CWATM ▸ Run CWATM** (Ctrl+R) — run the model (select again to stop).
 
@@ -60,9 +61,9 @@ Top / Down** and **RUN CWatM** remain as buttons *and* menu items.
 |------|-------------------|
 | **File** | Load .ini (Ctrl+O), Reload (Ctrl+L), Save .ini (Ctrl+S), Save As (Ctrl+Alt+S), Exit |
 | **Settings** | Fold All (Alt+0), Unfold All (Alt+Shift+0), Top (Alt+T), Down (Alt+D), Find (F5), Find next (Ctrl+F), Undo (Ctrl+Z), Redo (Ctrl+Y) |
-| **Tools** | Change Options, Show Basin, Set Gauge, Add output Watercycle, Check Data, Create PathOut Folder |
-| **RUN CWATM** | Run CWATM (Ctrl+R) |
-| **Configure** | Set output box file, Write output box |
+| **Tools** | Show Basin, Set max Gauge · Create PathOut Folder, Add output Watercycle, Add output variables · Change Options, Excel Crops/Reservoirs, Check Data, Restore settingsfile |
+| **RUN CWATM** | Run CWATM (Ctrl+R), Journal of Runs, Hidden Run CWatM, Batch Run… |
+| **Configure** | Preferences… (Ctrl+, — every GUI setting; also the ⋮ button right of the menu bar) |
 | **Info** | About CWatM |
 
 ## Features
@@ -83,8 +84,8 @@ Top / Down** and **RUN CWatM** remain as buttons *and* menu items.
   `OUT_TSS_AreaSum_MonthTot = WaterCycle` under `[OUTPUT]`).
 - **Model execution** — threaded, responsive; live progress clock (below the output
   box) and a selectable/copyable output box; errors in dark red.
-- **Output logging** — **Configure ▸ Write output box** appends to
-  `<PathOut>/cwatm_out.txt` (or a custom file via **Set output box file**), with a dated
+- **Output logging** — **Preferences ▸ Output ▸ Write output box** appends to
+  `<PathOut>/cwatm_out.txt` (or a custom file via the **Output box file** field on the same page), with a dated
   header per run.
 - **Options window**, **Basin viewer**, and **Check Data** (run CWatM in check mode,
   compare against a discharge NetCDF, restore settings from a discharge map).
@@ -127,3 +128,4 @@ one-file. See **[cwtmexe.md](cwtmexe.md)** (rasterio/xarray/GDAL packaging fixes
 
 See the `LICENSE` file. Developed by IIASA — info@iiasa.ac.at ·
 [CWatM on GitHub](https://github.com/iiasa/CWatM).
+

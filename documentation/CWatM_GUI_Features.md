@@ -8,7 +8,7 @@
 
 ### File Management
 - **Load Configuration Files**: Load INI files with a preselected `.ini` filter.
-- **Load previous settings at start** (Configure): when ticked, the last settings file
+- **Load previous settings at start** (Preferences ▸ Startup & Model): when ticked, the last settings file
   you had open is re-opened automatically the next time the GUI starts.
 - **Recent files**: up to 6 recently opened settings files are listed directly in the
   **File** menu (between Save As and Exit).
@@ -72,7 +72,19 @@
 
 ### Options Management
 - **Options Window** (Tools ▸ Change Options): manage boolean settings from the
-  `[Options]` section as checkboxes.
+  `[Options]` section as checkboxes. The window is **not modal**, so the settings
+  editor stays readable beside it, and it remembers its size and position.
+- **Grouped by topic** — Meteo & evaporation, Water demand, Crops, Groundwater &
+  MODFLOW, Water bodies & routing, Output & reporting, … — with a **filter box** to
+  find a switch by name and **Changed only** to see just what you altered.
+- **What does it do?** Hover the small **ⓘ** next to an option.
+- **A dot** marks every option changed since the window opened; **Revert all** puts
+  them back.
+- **Add option…** offers the switches CWatM understands that your file does not define
+  yet and writes the chosen one into `[OPTIONS]`.
+- Ticking a box is **one undo step** in the editor (Ctrl+Z), and any comment after the
+  value — `includeGlaciers = False   # no OGGM data yet` — is kept. (Options written
+  with such a comment now also *appear* in the window; they used to be skipped.)
 - **Automatic Detection**: finds and parses all boolean options.
 - **Real-time Updates**: checkbox changes update the content immediately and mark the
   document dirty (Save / Save As turn light blue). No Apply/Cancel — changes take effect
@@ -101,7 +113,16 @@
   windows that each run CWatM in their own process, independent of the main window — so
   several runs can go in parallel while you keep working. Each has a bold-green settings
   label, a **Load** button, a **Run/Stop** button and its own output box; it opens
-  pre-loaded with the main window's current settings file.
+  pre-loaded with the main window's current settings file. It shows a **progress bar
+  with elapsed and remaining time**, flashes the taskbar when it is done, and appears in
+  the **Journal of Runs** like any other run. The output folder is created before the run
+  starts (a missing PathOut is the usual reason a run dies minutes in), new windows
+  cascade instead of stacking, and closing a window — or the GUI — while a run is going
+  asks first. The header shows the run's **Title** and **output folder** (with a button
+  to open it); you can set the file by **dropping an `.ini` onto the window** or with
+  **Use current** (the file the main window has loaded right now); and the output box
+  has a right-click menu — *Copy all output*, *Save output as…*, *Find…* (**Ctrl+F**,
+  **F3** for the next hit), *Clear output*.
 - **Batch Run…** (RUN CWATM ▸ Batch Run…): run many scenarios from the loaded settings
   file. A table where each row is a scenario — a name, its own **PathOut**, and a few
   **key = value overrides** (add a column with **Add key column**, which takes the key
@@ -114,34 +135,117 @@
   the full grid of combinations.
 - **Live discharge sparkline**: next to the progress clock, a small live plot of the
   discharge at the first gauge for the last ~3 months (older values fade out). Now and
-  then a little animal (Configure ▸ **Select animal**: Fish / Otter / Beaver / Sailboat)
+  then a little animal (Preferences ▸ Display ▸ **Select animal**: Fish / Otter / Beaver / Sailboat)
   briefly swims along the trace.
 
-### Run Ledger (Tools ▸ Run Ledger)
+### Journal of Runs (RUN CWATM ▸ Journal of Runs — 2nd item)
 A table of your past runs — time, Title, PathOut, duration, success and last discharge —
 kept automatically (main runs, Hidden Runs and Batch scenarios). Select a run and **Open
 results** (its PathOut in the Output Explorer) or **Load settings** (reopen its settings
 file). **Mark two runs** (Ctrl/Shift+click) to enable **Compare settings**, which diffs
-the exact settings each run used (a snapshot is saved per run). Where the ledger is
-stored and how long runs are kept are set in **Configure ▸ Run history folder… /
-retention…**.
+the exact settings each run used (a snapshot is saved per run). Where the journal is
+stored and how long runs are kept are set in **Preferences ▸ Run History**.
+
+More on the same table:
+
+- **Find a run**: type in the **filter box** (matches Title, PathOut, settings file,
+  kind, date) and click any column header to **sort** by it.
+- **Show log** opens that run's output log — the journal tells you a run failed, the log
+  tells you why. (Main runs write one when *Write output box* is on; batch scenarios
+  always do.)
+- **Re-run** starts the same settings again in a Hidden Run window — even if the original
+  file is gone, using the snapshot taken when it ran.
+- **Compare results** (two or more marked runs) overlays the same result file from each
+  of them in one Timeseries plot, labelled per run.
+- **Delete** removes just the marked runs; *Clear journal* still removes everything.
+- **Group batches** shows a whole Batch Run as a single row (`… — batch of 14`, with
+  `12/14` succeeded); untick it to list every scenario.
+- **Runs in progress** — the main run, Hidden Runs and batch scenarios — appear at the
+  top marked *running…* with a live elapsed time, and the table refreshes itself.
+- **Dead rows are visible**: an output folder or settings file that has been deleted
+  since is shown greyed out, instead of only failing when you click it.
+- **Note column**: double-click it and write anything — *"calibration attempt 3"*. It is
+  kept with the run, and is what makes a months-old journal navigable when every run is
+  called the same thing.
+- **Export CSV** writes what you currently see (so filter first, then export).
+- **Right-click a run** for the rest: open its output folder in the file manager, copy
+  its PathOut or settings path, load, re-run, show the log, or delete it.
 
 ### Data Validation and Checking
 - **Check Data Window** (Tools ▸ Check Data): validate a configuration without a full
   run — CWatM runs in check mode (`-c`).
+- **Runs in the background**: the check opens every input file, which takes a while on a
+  network drive — the window and the rest of the GUI stay usable, with an elapsed-time
+  counter, instead of freezing until it is done.
+- **You can see what it does**: CWatM's output — and the full traceback when it fails —
+  appears in the **log pane** below the table.
+- **Unsaved changes are caught**: CWatM reads the settings from disk, so if your editor
+  has unsaved edits you are asked to save first (otherwise you would be checking a
+  different file than the one you see).
 - **NetCDF Comparison**: optionally compare against an existing discharge NetCDF file
   (its filename is passed to CWatM automatically).
-- **CSV Output**: results are saved to CSV and shown in a sortable results table.
-- **Error Detection**: identifies missing files, configuration issues, and data
-  inconsistencies.
-- **Modal Dialog Behavior**: opens via `exec()`, no separate taskbar icon,
-  min/max/close, tied to the parent window.
-- **Settings Restoration**: **Restore settings from discharge map** (enabled only when a
-  discharge NetCDF is selected) reads the `version_settingsfile` global attribute and
-  saves it as `settings_restore_dischargenc.ini` (ASCII UTF-8). Requires the `netCDF4`
-  library.
+- **Reading the results**: rows with a problem are tinted across the whole row and
+  counted above the table (*"312 rows · 7 not valid · 3 date mismatches"*). Columns are
+  **sortable**, the **filter box** narrows the list, **Select trouble** keeps only the
+  bad rows, and a **double-click on a row jumps to that key** in the settings editor.
+- **CSV Output**: results are written to `<PathOut>/check_cwatm1.csv` (changeable);
+  **Copy Table** and **Export CSV** take exactly the rows shown.
+- **Only with a MaskMap map**: with a coordinate MaskMap the **Run Check** button is
+  disabled and its tooltip says why.
+- **Settings Restoration**: **Restore settings from discharge map** (enabled once a
+  discharge NetCDF is selected) opens that file in **Restore settingsfile**, where you
+  can preview, compare and restore the settings it carries.
 
 ![Check Data](figures/screenshot_checkdata.png)
+
+### Add output variables (Tools menu)
+Pick what CWatM should write, without looking anything up:
+- Opening it **scrolls the settings file to the bottom** (like *Settings ▸ Down*), where
+  the `[OUTPUT]` section is — so the `OUT_…` lines, and the cursor a click inserts at,
+  are right there.
+- The variables that **fit your `[OPTIONS]`** (no glacier output when glaciers are off,
+  …), **grouped by topic** — snow, meteo, evaporation, soil, groundwater, lakes,
+  routing, water demand, crops, balance totals, static maps.
+- The **filter box searches the unit, long name and description too**, so typing
+  *evapo* finds `actualET`.
+- A **✓ green** marks every variable your settings file already writes; the tooltip says
+  in which `OUT_…` key and on which line, and clicking it again takes it out. Tick
+  **Only variables already in the settings file** to see just those — the picker then
+  works as an overview of your outputs.
+- Variables marked **`[index]`** are arrays: `actualET` is calculated per land cover, so
+  it must be written `actualET[1]`. You are asked which one **by name** —
+  *1 - grassland*, *0,2 - top soil layer, irrPaddy* — instead of having to know the
+  numbers. (Check settingsfile flags a wrong index with the same table.)
+- **Left-click** inserts at the cursor (on an `OUT_TSS_…`/`OUT_MAP_…` line);
+  **right-click** picks the output type and time step, creating the key if needed.
+- By default only the recommended (high-priority) variables are listed; **Load all
+  Variable** shows all ~580. Whatever your file already uses is always listed.
+
+### Restore settingsfile (Tools menu)
+Every CWatM discharge/ET output file carries the **complete settings file** and the
+**list of input files** the run used. Tools ▸ Restore settingsfile opens such a `dis*.nc`
+and shows what is inside:
+- A **summary card** on top — Title, when it was created, which CWatM version, which
+  settings file — above the full attribute table.
+- **Preview settingsfile** — read the stored settings in a read-only editor (with the
+  usual colouring and folding) *before* you decide anything. From there you can **Save
+  as…**, **Load into editor (unsaved)** — the settings go into the main editor without
+  writing any file, and one **Ctrl+Z** takes it back — or **Compare with current**.
+- **Compare with current** — a side-by-side diff of the stored settings against the ones
+  you have loaded: what did this run do differently?
+- **Restore settingsfile** — write the stored settings to a new file and load it. The
+  suggested name is now `<title>_<run date>.ini`, so restoring several runs into one
+  folder no longer collides; if your current file has unsaved edits you are asked first.
+- **Show Inputfiles** — the recorded input files, each with the date the run saw, and a
+  **check**: is the file still there (**missing**, in red), is it still the same version
+  (**changed since the run**, in orange), or is everything as it was? A summary line
+  counts them. Use **Re-check files** after you fixed something. **Double-click a file**
+  to open it — a NetCDF opens in the map viewer (Analyse ▸ NetCDF), anything else in the
+  program your desktop uses for it.
+- **Show in Journal** — jump to the run that wrote this file in the Journal of Runs.
+- **Ctrl+C**, a right-click menu and **Export as CSV** work on both tables.
+- Buttons a file cannot serve (e.g. an output NetCDF without a stored settings file) are
+  greyed out with the reason in the tooltip.
 
 ### Check settingsfile (Settings menu)
 - **Check settingsfile** (F4) is a **toggle**: it scans the settings and flags every
@@ -165,6 +269,35 @@ retention…**.
   data" crash before you waste a run). A summary of only the problem lines is written to
   the output box.
 
+### Batch Run — what protects you
+
+- Before anything starts, the scenarios are **checked**: a row without a PathOut, or two
+  rows sharing one, is refused (they would write over each other's results); an override
+  key that does not exist in the base settings file, a duplicate scenario name or an
+  output folder that already holds files asks first.
+- Every scenario writes **its own log** to `<PathOut>/cwatm_out.txt` instead of mixing
+  into the main output box. Right-click a row for **Show log**, and hover a failed row to
+  see the actual error.
+- **Right-click a scenario** to run just that one, re-run everything that failed, open its
+  output folder, or see **what it changes in the settings file** side by side with the
+  base.
+- Each row shows its **duration**, and the line under the title tells you how far the
+  batch is and roughly how long is left (`3/20 finished · 2 running · ~1:12:30 left`).
+  When it is done the taskbar entry flashes and the line becomes a summary.
+- **Import CSV / Export CSV**: build the scenarios in Excel (columns *Scenario*,
+  *PathOut*, then one per key you override) and read them in. Export writes the same
+  columns plus each row's duration and status — so it is also the batch's result table.
+- **Parallel runs** starts at a sensible value for your machine and warns if you push it
+  well past half your cores. Tick **Stop on first failure** to hold the queue back when
+  something fails (runs already going are left to finish).
+- **Compare results**: one click overlays the same result file from every scenario in a
+  single Timeseries plot, each line labelled with its scenario — the reason you ran the
+  sweep. If several result files qualify, you are asked which one.
+- **Skip finished** resumes an interrupted batch: scenarios whose output folder already
+  holds results are not run again. Running a single scenario from the row menu always
+  runs it, whatever is in its folder.
+- The **Progress** column is a bar, so a long table can be read at a glance.
+
 ## Maps, Excel and Result Analysis
 
 ### Show Basin (Tools ▸ Show Basin)
@@ -175,11 +308,54 @@ fade the OSM basemap with the transparency slider.
 
 ![Show Basin](figures/screenshot_basin.png)
 
-### Excel editor (Excel ▸ Crops / Reservoirs)
-Edit the sheets of the settings `Excel_settings_file` in a table that **reproduces the
-Excel cell colours**. **Reload / Save / Save As** write the edits back preserving every
-other sheet and all styling; large sheets load instantly (lazy). Reservoirs adds a
-**Release** button that opens the `Reservoirs_downstream` companion sheet.
+### Excel editor (Tools ▸ Excel Crops/Reservoirs)
+Edit the settings `Excel_settings_file` in a table that **reproduces the Excel cell
+colours** — and works like Excel:
+
+- **Sheet tabs below the table** (Crops, Reservoirs, Reservoirs_downstream, …); a sheet
+  with unsaved edits gets a `*` on its tab.
+- **Formulas**: type `2+3.5`, `2 + I3`, `=(A1+B1)/2` or `=SUM(C2:C10)` — the cell shows
+  the result, editing it shows the formula again, and it recalculates when a cell it
+  refers to changes. Start with `'` to keep something as plain text.
+- **Copy & paste blocks**: select one cell or many, **Ctrl+C** / **Ctrl+X** / **Ctrl+V**,
+  **Delete** to clear — or use the **right-click menu**. The clipboard is tab-separated,
+  so blocks travel to and from Excel itself.
+- **Fill handle**: drag the little square at the selection's bottom-right corner to
+  autofill. One cell fills its value into the rest; from two or more, the series
+  continues (`1, 3` → `5, 7, …`, `Crop1, Crop2` → `Crop3…`, month and weekday names).
+- **Whole columns and rows**: click a column letter or row number — a full-line
+  selection is shown in a stronger gray. **Right-click the header** to *copy*,
+  *insert empty*, *paste* (making room instead of overwriting) or *delete* whole
+  columns/rows. A line copied from a header remembers whether it is a column or a row
+  and which sheet it came from, so it cannot be pasted the wrong way round or into
+  another sheet.
+- **Text columns** are shown at half width (and never wider than ~120 characters) with
+  **word wrap**; widen or narrow a column and the text re-wraps. Text that still does
+  not fit is **cut off at the column edge** rather than drawn over the next column —
+  widen the column to see it all. Columns are sized to their **header** as well as their
+  data, and the reservoir-ID columns of *Reservoir_transfers* always stay wide enough to
+  read an ID such as `400001`.
+- **Symbol bar** at the top left: copy, cut, paste, delete │ **B** │ undo, redo — the
+  same things the shortcuts do, greyed out when they cannot be used right now.
+- **Bold**: mark cells and press **B** (or **Ctrl+B**) to make them bold; press again to
+  take it off. It is saved with the workbook and can be undone.
+- Marked cells are shown in **dark gray**, a whole marked column or row in a darker
+  shade still.
+- The **header row stays put**: it is the sheet's first row and never scrolls away —
+  the mouse wheel over it scrolls the table underneath. It **can be edited** there
+  (double-click it, or press F2, or just start typing), like any other row.
+- **Undo / redo** (**Ctrl+Z** / **Ctrl+Y**) covers everything you change: single cells,
+  pastes, fills, and whole inserted or deleted columns and rows. Each sheet keeps its
+  own history.
+- **Nothing is lost silently**: **Reload**, **Load** and **closing the window** ask
+  first when a sheet still holds unsaved edits (Save / Discard / Cancel).
+- **Big workbooks stay responsive**: the file is read in the background — the window
+  shows *Loading …* instead of freezing (which matters when the workbook lives on a
+  network drive), and even a sheet with a thousand columns opens and scrolls at once.
+
+**Load / Reload / Save / Save As** work on the whole workbook: your edits on *every*
+sheet are written back, preserving all other sheets and styling; large sheets load
+instantly (lazy).
 
 ![Excel — Crops](figures/screenshot_excel_crops.png)
 
@@ -260,23 +436,46 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
 11. **Exit**: **File ▸ Exit** prompts to save if there are unsaved changes.
 
 ### Data Validation Workflow
-1. Open the Check Data window (Tools ▸ Check Data).
-2. Select the output file (CSV) for check results.
+1. Open the Check Data window (Tools ▸ Check Data) — it is not modal, so the settings
+   editor stays reachable beside it.
+2. Optionally change where the result CSV is written (default `<PathOut>/check_cwatm1.csv`).
 3. Optionally select a discharge NetCDF file for comparison.
-4. Optionally **Restore settings from discharge map**.
-5. Run the check (CWatM check mode).
-6. Review the results table (file paths, parameters, validation status).
+4. Optionally **Restore settings from discharge map** — opens it in *Restore settingsfile*.
+5. Run the check (CWatM check mode); it runs in the background, with its output in the
+   log pane and an elapsed-time counter.
+6. Review the results: problem rows are tinted and counted, **Select trouble** isolates
+   them, and a double-click jumps to that key in the settings file.
 
 ## User Interface Layout
 
 ### Top
 - **Banner**: CWatM icon + "CWatM GUI" title, centered "The Community Water Model User
   Interface", IIASA logo.
-- **Menu bar** (below the banner): File · Settings · **Excel** · Tools ·
+- **Menu bar** (below the banner): File · Settings · Tools ·
   RUN CWATM · Configure │ Analyse │ **CWatM AI** · Help · Info (see the Menu Bar
-  section in `CLAUDE.md`). Recently opened files (up to 6) are listed directly in the
-  **File** menu — there is no separate History menu.
-- **Colour modes** (Configure ▸ Mode): switch the whole GUI between **Normal**
+  section in `CLAUDE.md`), and a **⋮** button in the bar's right corner. The Excel
+  workbook editor lives in **Tools ▸ Excel Crops/Reservoirs**; there is no Excel
+  menu. Recently
+  opened files (up to 6) are listed directly in the **File** menu — there is no
+  separate History menu.
+- **Preferences** (**Configure ▸ Preferences…**, **Ctrl+,**, or the **⋮** button on
+  the right of the menu bar): one window holding every GUI setting, on five pages you
+  pick from the list on the left:
+  - **Output** — the file the output box is written to, and whether it is written.
+  - **Startup & Model** — reload the last settings file at start; use MODFLOW.
+  - **Display** — colour mode, header banner, decimals shown, initial map
+    transparency, default background map, sparkline animal.
+  - **Editor & Dates** — skill level (how much of the settings file **and of the
+    menus** is shown: *Beginner* hides the advanced entries, e.g. Batch Run, Hidden
+    Run, Check Data, the Excel editor and the water-balance analyses), the
+    date picker style, the date timeline, auto-bookmark on change.
+  - **Run History** — where the Journal of Runs is kept and for how long.
+
+  Nothing changes while you are clicking around: **Apply** puts the current page's
+  choices into effect and keeps the window open, **OK** applies them and closes, and
+  **Cancel** throws away anything you have not applied yet. All settings are
+  remembered for the next session (except *Write output box*, which always starts off).
+- **Colour modes** (Preferences ▸ Display ▸ Mode): switch the whole GUI between **Normal**
   (classic light), **Dark Mode**, and **Mikhail** (black background with amber
   font, CRT style). The choice applies immediately — including the settings
   editor's syntax colours and the changed/duplicate line highlights — and is
@@ -284,10 +483,10 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
   Analyse windows follow the mode too (Analyse plots switch to a dark Plotly
   style); a window that is already open keeps its colours until it is reopened.
   Map/data content (OSM tiles, the basin canvas) stays in its natural colours.
-- **Use Modflow** (Configure): when on, the GUI pre-loads the MODFLOW coupling library
+- **Use Modflow** (Preferences ▸ Startup & Model): when on, the GUI pre-loads the MODFLOW coupling library
   (flopy) so MODFLOW-coupled runs and checks are ready; when off (default), flopy is not
   loaded, keeping startup fast. Persisted across sessions.
-- **Select animal** (Configure, below Transparency): pick the little animal that
+- **Select animal** (Preferences ▸ Display): pick the little animal that
   occasionally appears on the live discharge sparkline (Fish / Otter / Beaver / Sailboat).
 
 ### Control Panel (Left Side)
@@ -344,3 +543,5 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
 - **Resource cleanup** (on stop, on error, and on shutdown): close `netCDF4.Dataset`
   objects and `io.IOBase` file handles, then garbage-collect to release references —
   preventing file locks and leaks.
+
+
