@@ -125,7 +125,8 @@ def check():
 
     # 5. Every module the docs promise exists.
     for required in ("src/gui/utils/temp_page.py", "src/gui/utils/open_path.py",
-                     "src/gui/utils/gui_log.py", "requirements.txt"):
+                     "src/gui/utils/gui_log.py", "requirements.txt",
+                     "requirements_dev.txt", "tests/conftest.py"):
         if not os.path.exists(required):
             problems.append(f"missing: {required}")
 

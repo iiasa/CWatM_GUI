@@ -22,6 +22,11 @@ __pycache__/
 # dependency - rasterio ships its own GDAL (see the note in requirements.txt).
 *.whl
 
+# --- Test artefacts --------------------------------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+
 # --- Editor / OS / tooling -------------------------------------------------
 .idea/
 .vscode/

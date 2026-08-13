@@ -1,12 +1,29 @@
 # CWatM GUI — improvement backlog (reviewed 2026-08-13)
 
-> **Done 2026-08-13:** items **1, 2, 3, 4, 6, 7**, then **8, 9, 10, 11, 12, 13, 15**.
+> **Done 2026-08-13:** items **1–13 and 15**. Only **item 14 (i18n)** remains, open by
+> choice — worth starting only if a non-English user base is actually targeted.
 >
-> **Still open: item 5 (no automated tests)** — now the only substantial one left, and
-> the highest-value: `settings_check.py` was extracted precisely to make the check engine
-> testable, and CI (item 11) is in place to run a suite the moment one exists.
-> **Item 14 (i18n)** is open by choice — worth starting only if a non-English user base
-> is actually targeted.
+> **Item 5 (tests)** landed last: `tests/` holds **290 tests + 5 xfail**, covering
+> `cell_formula`, `cell_fill`, `metrics`, `var_dims`, `tab_manager.next_copy_path`,
+> `temp_page`, `run_ledger` and the `settings_check` semantic pass. Three findings came
+> out of writing them:
+> - **`cell_formula` computes hyphenated text.** `1-2` → `-1.0` and `10-2020` → `-2010.0`
+>   are written to the workbook as numbers. `cell_fill._as_number()` deliberately keeps
+>   `1-2` as text, so the two modules disagree about the same cell. A date like
+>   `2026-08-13` is claimed by `is_formula()` and then fails to evaluate, so the cell
+>   shows `#SYNTAX`. Recorded as `xfail(strict=True)`, **not fixed** — the fix changes
+>   user-visible cell behaviour and is the owner's call.
+> - **Absolute references only work inside a range.** `=SUM($A$1:$C$1)` computes;
+>   `=$B$2` raises `#SYNTAX`, because `_rewrite_ranges` strips the `$` only from a
+>   matched range. Also `xfail(strict=True)`.
+> - **`run_ledger._entry_key` can collide** — (ts to the millisecond, settings, pathout).
+>   Two runs of the same file into the same folder finishing in the same millisecond are
+>   indistinguishable, so removing one removes both. Not practically reachable (Batch Run
+>   refuses duplicate PathOuts); pinned by a test that documents it.
+>
+> One test expectation of mine was simply **wrong**, and the code was right:
+> `OUT_TSS_Daily = none` *is* an error, because CWatM's sentinel test is `!= "None"`,
+> case-sensitive (`configuration.py:249`, `output.py:198/1037/1178`).
 >
 > Notes from the second round:
 > - **Item 12 needed no work** — the exit-status policy had already been settled in

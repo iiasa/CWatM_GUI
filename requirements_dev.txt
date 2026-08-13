@@ -1,0 +1,14 @@
+# CWatM GUI - test-only dependencies.
+#
+# The runtime stack is requirements.txt; this adds what `pytest` needs. The suite
+# under tests/ covers the pure logic (formulas, autofill, metrics, array indices,
+# the settings checks, the run ledger, ...) and needs no display: the few tests
+# that touch Qt build a QApplication with QT_QPA_PLATFORM=offscreen, which
+# conftest.py sets for them.
+#
+#   pip install -r requirements.txt -r requirements_dev.txt
+#   pytest
+
+-r requirements.txt
+
+pytest==9.1.1

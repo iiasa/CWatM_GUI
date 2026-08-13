@@ -854,6 +854,7 @@ cwatm_gui.py
 ```bash
 pip install -r requirements.txt          # runtime (pinned, UTF-8)
 pip install -r requirements_build.txt    # + PyInstaller, only for building the exe
+pip install -r requirements_dev.txt      # + pytest, only for running the tests
 python cwatm_gui.py
 ```
 Do **not** install the GDAL wheel — the rasterio wheel ships its **own** GDAL (in
@@ -1059,6 +1060,39 @@ widget in sync with its template when the CWatM water-balance variables change:
 Both GUI widgets differ from their template only in that they run over the
 **slider-selected month window** (not a hardcoded year range) and read the station
 lon/lat + settings `Title` from the csv header instead of hardcoded strings.
+
+## Tests & CI
+
+```bash
+pytest                       # the whole suite (~290 tests)
+python tools/check_invariants.py    # the structural rules below, no dependencies
+python tools/check_requirements.py  # every requirements file parses, -r includes resolve
+python tools/import_all.py          # import all of src/gui + build the main window
+```
+
+`tests/` covers the **pure logic** — the layer that is otherwise only ever exercised by
+hand: `cell_formula` (the ast whitelist, and that `is_formula` does not over-claim),
+`cell_fill`, `metrics`, `var_dims`, `tab_manager.next_copy_path`, `temp_page`,
+`run_ledger`, and the **Check settingsfile semantic pass** (`settings_check`, run on a
+bare host object — its only `self` use is a pure method, so it needs no window).
+`conftest.py` sets `QT_QPA_PLATFORM=offscreen` before the first PySide6 import, so
+nothing needs a display.
+
+Two rules for this suite:
+- **Match the code, not the assumption.** Where a test disagreed with the code, the code
+  was checked against `cwatm/` first — `OUT_TSS_Daily = none` really is an error, because
+  CWatM's sentinel test is `!= "None"`, case-sensitive (`configuration.py:249`).
+- **A known defect gets an `xfail(strict=True)`, never a softened assertion** — the suite
+  stays green, the bug stays recorded, and a fix turns the xfail into a failure instead
+  of rotting. Two are recorded in `tests/test_cell_formula.py::TestKnownBugs`.
+
+`tools/check_invariants.py` enforces what this file states as always-true: no silent
+`except: pass`, no literal exotic line separator in a source file (a stray **U+2029**
+in `main_window.py` used to put every line-based tool one line out of step —
+`str.splitlines()` breaks on it, the tokenizer does not; it is written as an escape),
+no `os.startfile` outside `open_path.py`, and no heavy import on the startup path.
+`.github/workflows/ci.yml` runs all of it plus a Windows job that installs the pinned
+stack and imports every GUI module.
 
 ## Development Notes
 - Built with PySide6 for cross-platform compatibility

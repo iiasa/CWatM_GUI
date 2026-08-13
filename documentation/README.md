@@ -190,6 +190,19 @@ a local disk first (PyInstaller over a network share is the dominant cost) and c
 compile the per-user installer with Inno Setup. See the *Building on the local disk*
 section of [CLAUDE.md](../CLAUDE.md).
 
+## Tests
+
+```bash
+pip install -r ../requirements.txt -r ../requirements_dev.txt
+pytest
+```
+
+The suite covers the pure logic — cell formulas and autofill, goodness-of-fit metrics,
+output-variable indices, the Copy Tab naming rule, the temp-page lifetime, the run
+ledger, and the Check settingsfile semantic pass. No display is needed. Three standalone
+checks run alongside it (and in CI): `tools/check_invariants.py`,
+`tools/check_requirements.py` and `tools/import_all.py`.
+
 ## License & contact
 
 See the `LICENSE` file. Developed by IIASA — info@iiasa.ac.at ·

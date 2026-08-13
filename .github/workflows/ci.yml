@@ -30,6 +30,18 @@ jobs:
       - name: Requirements files resolve
         run: python tools/check_requirements.py
 
+      # The bulk of the suite is pure logic (formulas, autofill, metrics, array
+      # indices, the Copy Tab naming rule, the run ledger) and needs neither the
+      # scientific stack nor a display, so it runs in this fast job. The settings
+      # checks need PySide6 + rasterio and run in the Windows job below.
+      - name: Install test dependencies (Qt-free subset)
+        run: pip install pytest
+
+      - name: Unit tests (no heavy dependencies)
+        run: >
+          pytest tests/test_cell_fill.py tests/test_cell_formula.py
+          tests/test_metrics.py tests/test_var_dims.py tests/test_tab_manager.py
+
   # The real thing: install the pinned stack on Windows and import every GUI
   # module. An import error in a rarely opened window is invisible until a user
   # clicks the menu item; this surfaces it on every push.
@@ -44,10 +56,15 @@ jobs:
           cache: pip
 
       # Also proves requirements.txt is actually installable, not merely parsable.
-      - name: Install pinned runtime dependencies
+      - name: Install pinned runtime + test dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt -r requirements_dev.txt
 
       - name: Import every GUI module + construct the main window
         run: python tools/import_all.py
+
+      # The whole suite, including the settings checks (which need PySide6 for QDate
+      # and rasterio for the placeholder resolver).
+      - name: Full test suite
+        run: pytest
