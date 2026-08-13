@@ -11,6 +11,10 @@ import pytest
 
 from src.gui.utils.temp_page import TempPageMixin
 
+# Needs Qt: temp_page imports PySide6.QtCore (QUrl).
+# The dependency-free CI job selects with `pytest -m "not qt"`.
+pytestmark = pytest.mark.qt
+
 
 class FakeView:
     """Stands in for QWebEngineView - the mixin only calls .load()."""

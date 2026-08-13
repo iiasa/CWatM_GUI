@@ -145,6 +145,22 @@ class TestAbsoluteReferences:
     def test_same_result_as_the_relative_form(self):
         assert ev("=$B$2") == ev("=B2")
 
+    @pytest.mark.parametrize("text,expected", [
+        ('="Price $10"', "Price $10"),
+        ('="$5"', "$5"),
+        ('="see $B$2"', "see $B$2"),
+        ("='cost $3'", "cost $3"),
+    ])
+    def test_a_dollar_inside_a_string_literal_is_left_alone(self, text, expected):
+        """Regression: the first version of the '$' fix substituted over the whole
+        expression, so `="Price $10"` evaluated to "Price 10" - and the computed value
+        is what gets written into the workbook."""
+        assert ev(text) == expected
+
+    def test_a_dollar_that_is_not_a_reference_marker_is_left_alone(self):
+        # No letter+digit after it, so it is not an absolute reference.
+        assert ev('="100 $"') == "100 $"
+
 
 class TestArithmetic:
     @pytest.mark.parametrize("text,expected", [

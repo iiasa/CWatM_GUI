@@ -20,6 +20,31 @@ os.environ.setdefault("CWATM_GUI_NO_MAXIMIZE", "1")
 import pytest  # noqa: E402
 
 
+def _qt_available():
+    try:
+        import PySide6  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+# A marker alone is not enough to keep a Qt-free run working: pytest **imports** every
+# test module during collection, before it filters on markers, so a module whose import
+# needs PySide6 fails to collect even under `-m "not qt"`. When Qt is missing, drop
+# those files from collection outright. The list is derived from the files themselves
+# (they declare `pytestmark = pytest.mark.qt`) rather than hand-kept here, because a
+# hand-kept list is exactly what drifted before.
+collect_ignore = []
+if not _qt_available():
+    _here = os.path.dirname(os.path.abspath(__file__))
+    for _name in sorted(os.listdir(_here)):
+        if not _name.startswith("test_") or not _name.endswith(".py"):
+            continue
+        with open(os.path.join(_here, _name), encoding="utf-8") as _fh:
+            if "pytest.mark.qt" in _fh.read():
+                collect_ignore.append(_name)
+
+
 @pytest.fixture(scope="session")
 def qapp():
     """One QApplication for the whole session (Qt allows only one)."""

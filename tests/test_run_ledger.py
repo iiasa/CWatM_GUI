@@ -13,6 +13,10 @@ import pytest
 
 from src.gui.utils import run_ledger
 
+# Needs Qt: run_ledger imports PySide6.QtCore (QSettings).
+# The dependency-free CI job selects with `pytest -m "not qt"`.
+pytestmark = pytest.mark.qt
+
 
 @pytest.fixture
 def ledger(tmp_path, monkeypatch):

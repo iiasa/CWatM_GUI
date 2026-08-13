@@ -259,13 +259,28 @@ def _rewrite_ranges(expr):
 # inside a matched range, which used to leave a standalone '=$B$2' raising #SYNTAX.
 # Dropping it loses nothing: absolute vs relative only matters when a formula is
 # copied to another cell, and the editor copies a formula's *value*, never rewrites
-# its references. Ranges are already string literals by this point, so their content
-# is untouched.
-_ABS_MARK_RE = re.compile(r"\$(?=[A-Za-z0-9])")
+# its references.
+#
+# Two things keep this from eating a '$' that is not a reference marker - both matter,
+# because the computed value is what gets written into the workbook:
+#   * only **reference positions** match: a '$' before a column letter that is followed
+#     by a row number ('$B2', '$B$2'), or a '$' between letters and digits ('B$2');
+#   * **string literals are skipped entirely**, so `="Price $10"` stays "Price $10".
+#     A blanket sub turned it into "Price 10" - the same silent text corruption the
+#     _DATA_NOT_FORMULA_RE rule above exists to prevent.
+_ABS_MARK_RE = re.compile(r"\$(?=[A-Za-z]{1,3}\$?[0-9])|(?<=[A-Za-z])\$(?=[0-9])")
+_STRING_RE = re.compile(r'"[^"]*"|\'[^\']*\'')
 
 
 def _strip_abs_marks(expr):
-    return _ABS_MARK_RE.sub("", expr)
+    """Remove Excel's absolute-reference '$' markers, leaving string literals alone."""
+    out, pos = [], 0
+    for m in _STRING_RE.finditer(expr):
+        out.append(_ABS_MARK_RE.sub("", expr[pos:m.start()]))
+        out.append(m.group(0))              # a literal is copied verbatim
+        pos = m.end()
+    out.append(_ABS_MARK_RE.sub("", expr[pos:]))
+    return "".join(out)
 
 
 def evaluate(text, resolver, range_resolver=None):

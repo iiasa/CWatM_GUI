@@ -333,6 +333,7 @@ def _install_qt_message_handler():
         the focused widget, the widget under the mouse and the active window, each
         as "<class> objectName". Best-effort - never let diagnostics raise."""
         try:
+            from PySide6.QtCore import QThread
             from PySide6.QtGui import QCursor
             from PySide6.QtWidgets import QApplication
 
@@ -345,6 +346,14 @@ def _install_qt_message_handler():
             app_ = QApplication.instance()
             if app_ is None:
                 return ""
+            # Qt calls the message handler on whatever thread emitted the message, and
+            # QtWebEngine/Chromium logs from its own threads. focusWidget/widgetAt walk
+            # the widget hierarchy and call into the platform layer, which is only safe
+            # on the GUI thread - off it this can fault at the C++ level, where the
+            # try/except below cannot help. Diagnostics must never be the thing that
+            # takes the app down, so off-thread we just say so.
+            if QThread.currentThread() != app_.thread():
+                return "(non-GUI thread - widget context not read)"
             return (f"focus={_name(app_.focusWidget())} "
                     f"under-mouse={_name(app_.widgetAt(QCursor.pos()))} "
                     f"active-window={_name(app_.activeWindow())}")

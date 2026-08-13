@@ -7,7 +7,13 @@ already exists would destroy the earlier copy.
 
 import os
 
+import pytest
+
 from src.gui.components.tab_manager import next_copy_path
+
+# Needs Qt: tab_manager imports PySide6.QtWidgets at module level.
+# The dependency-free CI job selects with `pytest -m "not qt"`.
+pytestmark = pytest.mark.qt
 
 
 def name(path):

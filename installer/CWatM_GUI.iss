@@ -24,9 +24,16 @@
 #define VerLine
 #define MyAppVersion "NOTFOUND"
 
+; Match the ASSIGNMENT, not any line mentioning __version__: the file's own comment
+; ("keep the literal on one line as `__version__ = "X.YZ"`") also contains the word and
+; a quoted string, so a looser test picked it up too. It happened to be harmless only
+; because the real assignment comes later and overwrote it - a comment placed *below*
+; the assignment would have shipped a wrong version without tripping the #error guard,
+; which only catches NOTFOUND. Requiring the trimmed line to START with __version__
+; rules the comment out (it starts with '#').
 #sub ScanVersionLine
   #expr VerLine = FileRead(VerFile)
-  #if Pos("__version__", VerLine) > 0
+  #if Pos("__version__", Trim(VerLine)) == 1 && Pos('"', VerLine) > 0
     #expr MyAppVersion = Copy(VerLine, Pos('"', VerLine) + 1, RPos('"', VerLine) - Pos('"', VerLine) - 1)
   #endif
 #endsub

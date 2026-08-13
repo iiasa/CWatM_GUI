@@ -13,6 +13,10 @@ import pytest
 
 from src.gui.components.settings_check import SettingsCheckMixin
 
+# Needs Qt: settings_check imports QDate, and pulls rasterio in via basin_viewer.
+# The dependency-free CI job selects with `pytest -m "not qt"`.
+pytestmark = pytest.mark.qt
+
 
 class Host(SettingsCheckMixin):
     """Minimal carrier for the mixin - the method under test needs nothing else."""

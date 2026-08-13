@@ -30,17 +30,16 @@ jobs:
       - name: Requirements files resolve
         run: python tools/check_requirements.py
 
-      # The bulk of the suite is pure logic (formulas, autofill, metrics, array
-      # indices, the Copy Tab naming rule, the run ledger) and needs neither the
-      # scientific stack nor a display, so it runs in this fast job. The settings
-      # checks need PySide6 + rasterio and run in the Windows job below.
-      - name: Install test dependencies (Qt-free subset)
+      # The tests whose module under test imports Qt are marked `qt` (see pytest.ini);
+      # everything else is pure logic - formulas, autofill, metrics, array indices -
+      # and runs here with nothing but pytest installed. Selecting by marker rather
+      # than by a file list is deliberate: the list drifted the moment a Qt-importing
+      # test was added to it. The full suite runs in the Windows job below.
+      - name: Install test dependencies (no Qt, no scientific stack)
         run: pip install pytest
 
-      - name: Unit tests (no heavy dependencies)
-        run: >
-          pytest tests/test_cell_fill.py tests/test_cell_formula.py
-          tests/test_metrics.py tests/test_var_dims.py tests/test_tab_manager.py
+      - name: Unit tests (dependency-free subset)
+        run: pytest -m "not qt"
 
   # The real thing: install the pinned stack on Windows and import every GUI
   # module. An import error in a rarely opened window is invisible until a user
