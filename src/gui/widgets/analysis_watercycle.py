@@ -19,23 +19,20 @@ the Timeseries window.
 """
 
 import os
-import re
 import sys
 import csv
 import datetime
 from calendar import monthrange
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QMessageBox, QWidget, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QPointF, Signal
 from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QBrush
 
-from src.gui.utils.window_geometry import GeometryMemoryMixin
-from src.gui.utils.temp_page import TempPageMixin
 from src.gui.utils import theme
-from src.gui.widgets.analysis_timeseries import resolved_pathout_dir
+from src.gui.widgets.analysis_plot_base import PlotlyWindowBase
 
 from src.gui.utils.gui_log import get_logger
 
@@ -185,8 +182,10 @@ class RangeSlider(QWidget):
             self.setHigh(val)
 
 
-class WatercycleWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
+class WatercycleWindow(PlotlyWindowBase):
     """Window showing the overall water balance of a WaterCycle csv as a sunburst."""
+
+    _save_fallback = "watercycle"
 
     def __init__(self, csv_path, parent=None):
         super().__init__(parent)
@@ -505,23 +504,7 @@ class WatercycleWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
         layout.addLayout(btn_row)
         self._update_station_nav()
 
-    def _save_html(self):
-        """Save the currently rendered plot HTML to a user-chosen file."""
-        if not self._temp_html or not os.path.exists(self._temp_html):
-            QMessageBox.information(self, "Save HTML", "Nothing to save yet.")
-            return
-        base = os.path.splitext(os.path.basename(str(self.csv_path)))[0] or "watercycle"
-        base = re.sub(r'[^\w\-.]+', '_', base).strip('_')
-        default = os.path.join(resolved_pathout_dir(self), base + ".html")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save plot as HTML", default, "HTML files (*.html)")
-        if not path:
-            return
-        try:
-            import shutil
-            shutil.copyfile(self._temp_html, path)
-        except Exception as e:
-            QMessageBox.warning(self, "Save HTML", f"Could not save the file:\n{e}")
+    # _save_html is inherited from PlotlyWindowBase.
 
     def _on_range_changed(self, low, high):
         """Slider moved: update the selected window + labels live, debounce a rebuild."""

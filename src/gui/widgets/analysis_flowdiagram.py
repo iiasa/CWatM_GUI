@@ -15,7 +15,6 @@ slider-selected month window.
 """
 
 import os
-import re
 import sys
 import json
 import colorsys
@@ -23,16 +22,14 @@ from calendar import monthrange
 from collections import Counter, defaultdict
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QMessageBox,
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 
-from src.gui.utils.window_geometry import GeometryMemoryMixin
-from src.gui.utils.temp_page import TempPageMixin
 from src.gui.utils import theme
-from src.gui.widgets.analysis_timeseries import resolved_pathout_dir
+from src.gui.widgets.analysis_plot_base import PlotlyWindowBase
 
 from src.gui.utils.gui_log import get_logger
 
@@ -344,12 +341,16 @@ def _build_balance_links(b):
     return nodes, links
 
 
-class FlowDiagramWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
+class FlowDiagramWindow(PlotlyWindowBase):
     """Window showing the overall water balance of a WaterCycle csv as a Sankey.
 
     Reuses the Watercycle window's csv parsing (station coords, settings Title,
     monthly-totals loading) and its two-handle month range slider; only the
     figure differs."""
+
+    _save_fallback = "flowdiagram"
+    # Suffix so saving a Sankey does not overwrite the sunburst of the same csv.
+    _save_suffix = "_sankey"
 
     # Reuse the Watercycle csv-parsing helpers verbatim (identical csv layout).
     # (Accessing a @staticmethod on the class already yields the plain function.)
@@ -495,23 +496,7 @@ class FlowDiagramWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
         """Station navigation rebuilds the Sankey (not the Watercycle sunburst)."""
         self._show_sankey()
 
-    def _save_html(self):
-        """Save the currently rendered plot HTML to a user-chosen file."""
-        if not self._temp_html or not os.path.exists(self._temp_html):
-            QMessageBox.information(self, "Save HTML", "Nothing to save yet.")
-            return
-        base = os.path.splitext(os.path.basename(str(self.csv_path)))[0] or "flowdiagram"
-        base = re.sub(r'[^\w\-.]+', '_', base).strip('_') + "_sankey"
-        default = os.path.join(resolved_pathout_dir(self), base + ".html")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save plot as HTML", default, "HTML files (*.html)")
-        if not path:
-            return
-        try:
-            import shutil
-            shutil.copyfile(self._temp_html, path)
-        except Exception as e:
-            QMessageBox.warning(self, "Save HTML", f"Could not save the file:\n{e}")
+    # _save_html is inherited from PlotlyWindowBase.
 
     def _on_range_changed(self, low, high):
         """Slider moved: update the selected window + labels live, debounce a rebuild."""

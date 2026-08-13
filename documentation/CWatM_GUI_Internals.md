@@ -890,6 +890,170 @@ See `ai.md` for the full plan/history.
   "put this in the settings" phrases, and `main_window.ai_put_text_in_settings` +
   `_parse_settings_block`/`_apply_settings_entries` — were **removed**.)
 
+### Settings-file tabs (Expert level)
+`src/gui/components/tab_manager.py` — `SettingsTabsMixin` + `SettingsTab`. The
+always-true rules (the bar's visibility condition, "the active tab is the application
+state", "one file, one tab", and what is fanned out to every tab) are in `CLAUDE.md`;
+this is the rest.
+
+**The bar.** Directly below the button row, above the editor. A **new tab** comes from
+the small **`+` tab** right of the last one (`add_tab_plus`, a `QToolButton` sharing the
+`_tabs_row` layout with the bar, because a `QTabBar` has no corner widget; styled from
+theme tokens like a tab and sized to the real tabs' height in `_style_tab_chrome`, which
+`_retheme` also calls). That is the **only** way to add one — the right-click menu has no
+*Add empty Tab* item, and there is deliberately no Add Tab button in the button row. The
+**✕** appears **on the hovered tab only** (`HoverCloseTabBar`: `setTabsClosable(True)`
+with every button hidden except the hovered one, so tab widths never jump) and runs the
+same `close_settings_tab` as *Delete Tab*. A tab is captioned with the file's base name
+(`untitled` when empty) and a leading **`*`** while it has unsaved edits.
+
+**Per-tab state.** Each tab owns its own `SettingsEditor` + `LineNumberGutter` page in a
+`QStackedWidget`, so undo stack, bookmarks, folds, changed-line highlights and check
+marks are per tab by construction.
+
+**What a switch re-points.** `text_area` / `line_number_gutter` / `text_display` /
+`file_manager.current_file_path` / `original_content` / `_clean_content` / `_is_dirty` /
+`_filename_state` / `_working_dir_override` / the mask cache, and then it refreshes the
+left panel the way a load does (labels, dates, PathOut, MaskMap, Gauges, warnings,
+`os.chdir`).
+
+**Three rules that keep that honest:**
+1. The outgoing tab's debounced field changes are **flushed** before the switch — its
+   content is then authoritative, and the boxes are re-derived from it on the way back
+   in. Stale boxes would poison `_live_content()` and the next save.
+2. `_on_doc_modified` / `_on_editor_text_changed` ignore signals from a **background**
+   editor (`_is_active_editor_signal`).
+3. Closing a tab **stores the active tab first**, because the close ends in
+   `_activate_tab`, which restores the window from the tab object.
+
+**Where a load goes.** Into the active tab (the first one at startup), and so does a
+dropped file; the **`+`** tab opens an empty one first. The one-file-one-tab guard
+(`guard_duplicate_file` / `same_file`, paths compared absolute + `normcase`) makes a load
+of an already-open file switch to the tab that has it — History, drag & drop, the Load
+dialog and the startup restore all funnel through `load_recent_file`, while
+`File ▸ Load .ini` only picks the path (`file_manager.choose_load_path`). **Save As**
+onto another tab's file is refused **without** switching away. Re-loading a tab's own
+file (Reload) is unaffected — the guard excludes the active tab.
+
+**Right-click a tab:**
+- *Delete Tab* — unsaved prompt; deleting the **last** tab empties it instead of leaving
+  none.
+- *Copy Tab* — writes the tab's **current** content, unsaved edits included, to
+  `next_copy_path()` (`settings.ini` → `settings_2.ini` → `settings_3.ini`, skipping
+  names that exist) and opens the copy in a new tab right of the source.
+- *Run CWatM* — opens a **Windowed Run CWatM** window on *this tab's* file
+  (`open_hidden_run(tab.file_path)`), independent of the main run and the other tabs.
+  Disabled while the tab has no file, and it runs the file **as saved on disk**.
+- *Link scrolling* (checkable, `set_tab_link_scroll`) — **greyed out on the first tab**,
+  which has no predecessor.
+
+**Link scrolling.** Ticking it scrolls this tab and the **previous** one together **and
+mirrors the folded sections** (`_on_editor_folding` → `apply_folds(folded_sections())`) —
+without the fold mirror the two would stop being at the same place the moment a section
+collapsed. The flag lives on the *later* tab of each pair, so a run of ticked tabs forms
+one chain (`_linked_group`). The mirrored value is the vertical scrollbar's position
+clamped to each partner's own maximum; `_scroll_sync` / `_fold_sync` guard the
+reentrancy, and the fold mirror also skips a **load** and a **tab switch** — both emit
+`foldingChanged` without the user folding anything, and a load would otherwise unfold the
+partner. `_normalize_links` clears the flag off whatever becomes tab 0 after a close or a
+drag. Only one tab is visible at a time, so what this buys is that **switching** between
+two linked tabs lands you on the same lines. In-memory per session, not persisted.
+
+### Change Options (Tools menu)
+`src/gui/widgets/options_window.py` — `OptionsWindow`: the `[OPTIONS]` boolean switches
+as tick boxes. **Non-modal** (each tick is applied at once, so there is nothing to
+accept), geometry key `options`.
+
+- Rows are **grouped by topic** (`option_help.GROUPS`, unknown ones under *Other*),
+  carry an **ⓘ badge** with the switch's explanation and a **changed dot** vs the file as
+  opened, and are narrowed by a **filter box** + *Changed only*.
+- **Revert all** puts them back; **Add option…** offers a known switch the file does not
+  define yet and appends `name = False` at the end of `[OPTIONS]`.
+- **Two invariants.** The parse **strips an inline comment before the boolean test** —
+  `includeGlaciers = False  # …` used to make the switch disappear from the window
+  entirely; and `_rewrite_value` **keeps whatever followed the value** when writing (the
+  comment used to be dropped). The edit goes to the editor through
+  `set_content_preserving`, so a tick is **one undo step**.
+
+The badge text lives in `src/gui/utils/option_help.py`: `text(option)` (wrapped, and it
+does not repeat the name — the tooltip already hangs off that option), `has()`, plus
+`GROUPS`/`KNOWN`/`group_of()` for the grouping and the *Add option…* list. Adding a
+switch is one entry.
+
+### Check Data (Tools menu)
+`src/gui/widgets/check_data_window.py` — `CheckDataWindow`, CWatM's `-c` data analysis
+over the loaded settings. **Three invariants:**
+
+1. The check runs in a **`QThread`** (`_CheckWorker`) — it opens every input file, and in
+   the GUI thread it froze the app.
+2. The window is therefore **not modal** (a modal dialog would block the GUI just the
+   same; `main_window.open_check_data_window` uses `show()`).
+3. Its output is mirrored into the window's **own log pane** — `_LogTee` wraps
+   `sys.stdout`/`sys.stderr` **filtered to the worker thread**, so unrelated GUI prints
+   stay out. Everything used to go to the main output box *behind* a modal dialog.
+
+Also: a **double-click on a result row jumps to that settings key** (column "Name" of
+CWatM's check table is the key — `cwatm/management_modules/checks.py`); an
+unsaved-changes prompt, because CWatM reads the file from **disk**;
+`_check_maskmap_supported` (coordinate MaskMap → Run Check disabled, with the reason in
+the tooltip); one renderer for the full and the trouble view (`_render_results_table`,
+whole-row tint + `_CheckItem` numeric sorting); a filter box + `_summarize` count line;
+`Export CSV` of the visible rows; `<PathOut>/check_cwatm1.csv` as the default; and
+*Restore settings from discharge map* delegating to `RestoreSettingsWindow` — its own
+copy iterated the `version_settingsfile` **string character by character**, writing one
+character per line.
+
+### Add output variables (Tools menu)
+`src/gui/widgets/output_variables_window.py` — `OutputVariablesWindow`, a filterable,
+**topic-grouped** picker of the metaNetcdf output variables.
+
+- **Grouping** (`_GROUPS`/`group_of`): substring patterns, `=name` for exact, first match
+  wins, unmatched → *Other*; a header hides itself when a filter empties it.
+- **What is offered**: `meta_netcdf.output_varnames()` (data variables; no-type,
+  `_`-prefixed, list-table and scalar-type vars excluded), narrowed to those that fit the
+  loaded `[OPTIONS]` (`_FEATURE_VAR_PATTERNS` hides glacier/modflow/small-lake/waterbody/
+  water-demand/runoff-conc/environ vars when their switch is off). By default only
+  `priority="high"` vars (116 of 580 in the shipped xml); the **Load all Variable**
+  toggle shows every fitting one, and **whatever the settings file already writes is
+  listed in either view** — a used-but-low-priority variable could otherwise be neither
+  seen nor clicked off.
+- **The filter searches the metadata too** (`_haystack`: name + unit + long_name +
+  description, so "evapo" finds `actualET`).
+- **Marks**: `_file_vars()` → `_make_item`/`_refresh_marks` mark a used variable **✓ bold
+  green** with its keys/lines in the tooltip; the **Only variables already in the
+  settings file** tick filters on that mark. Each tooltip also carries `unit:` +
+  `Dimension:` (`meta_netcdf.dim_of`).
+- **Array variables** are suffixed `[index]`, and both click styles resolve the index
+  through `var_dims.index_options` — `_pick_index` (a named menu at the mouse) for a
+  left-click, an index submenu under each time step for a right-click, `QInputDialog` for
+  per-crop. A left-click toggle matches on the **base** name, so one click removes
+  `actualET[1]`.
+- **Left-click toggles** the varname on the editor's current line — inserted at the
+  cursor with auto comma separators if absent, removed if already present — but only on
+  an `OUT_TSS_…`/`OUT_MAP_…` line (else it warns + beeps). **Removal deletes the whole
+  output line** when the varname was the last one on it (`_remove_output`, shared by both
+  click styles, so a line the right-click menu just created disappears again on a second
+  pick).
+- **Right-click needs no cursor position**: `_on_context_menu` builds a two-level `QMenu`
+  (`setToolTipsVisible`) — **Timeseries (TSS)** with the ten `_TIME_TYPES` plus an
+  **upstream calculation** submenu branching into `AreaSum`/`AreaAvg` (`_AREA_AGGS`),
+  each listing the seven `_AREA_TIME_TYPES` (TSS-only), and **Map (MAP)** with the same
+  ten types. Every entry's tooltip explains the time step (`_TYPE_TOOLTIPS`) and shows
+  the resulting line. `_add_output` appends to the existing `OUT_<TSS|MAP>_<sel>` line
+  (preferring a hit inside `[OUTPUT]`; a `None`/empty value is replaced rather than
+  appended to) or creates the key at the end of `[OUTPUT]` (`_insert_output_line`, same
+  placement as `add_output_watercycle`), written through `set_content_preserving` so it
+  is **one undo step** that keeps folding, then jumps the cursor there (`_goto_row` +
+  `reveal_cursor`).
+- **No Refresh button**: `changeEvent` re-reads on activation, calling `_refresh_marks`
+  (cheap, keeps scroll + filter) and rebuilding only when `_current_signature()` shows a
+  gating option changed.
+- `OUT_TSS_TotalEnd` is shown **disabled** — `outputTypTss` (cwatm `globals.py`) has no
+  `totalend`, it is map-only.
+- Safety net: if a future `cwatm/metaNetcdf.xml` shipped **without** `priority` flags the
+  default view would be empty, so `_available_varnames` falls back to the full list and
+  says so in the status line (`_priority_missing`). It does not fire with the current xml.
+
 ## Data Visualization internals
 
 ### Basin viewer infrastructure (`src/gui/widgets/basin_viewer.py`)

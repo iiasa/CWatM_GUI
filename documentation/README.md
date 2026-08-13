@@ -45,7 +45,7 @@ windows blank rather than failing loudly.
 1. **File ▸ Load .ini** (Ctrl+O) — load a settings file (parses automatically).
 2. Edit **Start/Spin/End Date, PathOut, MaskMap, Gauges** — changes auto-apply to the
    content in memory; **Save / Save As** turn blue to show unsaved changes.
-   *(What changed in the current release: `CWatM_GUI_Version_1.05.md`.)*
+   *(What changed in this and earlier releases: [CHANGELOG.md](CHANGELOG.md).)*
 3. **File ▸ Save .ini** (Ctrl+S) — write to disk.
 4. **RUN CWATM ▸ Run CWATM** (Ctrl+R) — run the model (select again to stop).
 

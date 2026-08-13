@@ -26,9 +26,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 
-from src.gui.utils.window_geometry import GeometryMemoryMixin
-from src.gui.utils.temp_page import TempPageMixin
 from src.gui.utils import theme
+# resolved_pathout_dir is re-exported: several modules (and CLAUDE.md) refer to it as
+# analysis_timeseries.resolved_pathout_dir, which is where it used to be defined.
+from src.gui.widgets.analysis_plot_base import (
+    PlotlyWindowBase, resolved_pathout_dir)
 
 from src.gui.utils.gui_log import get_logger
 
@@ -44,20 +46,6 @@ except Exception as _ts_err:  # pragma: no cover - import guard
     _TS_AVAILABLE = False
     _TS_IMPORT_ERROR = f"{type(_ts_err).__name__}: {_ts_err}"
     print(f"Timeseries analysis unavailable: {_TS_IMPORT_ERROR}", file=sys.stderr)
-
-
-def resolved_pathout_dir(widget):
-    """Resolved PathOut directory from the main window (found by walking up the
-    widget's parent chain), or "". Used as the suggested folder for Save HTML."""
-    w = widget.parent() if widget is not None else None
-    while w is not None:
-        try:
-            if hasattr(w, "_resolved_pathout_dir"):
-                return w._resolved_pathout_dir() or ""
-            w = w.parent()
-        except Exception:
-            return ""
-    return ""
 
 
 def open_timeseries(parent=None):
@@ -134,8 +122,10 @@ def open_comparison(parent, paths, labels=None):
     return win
 
 
-class TimeseriesWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
+class TimeseriesWindow(PlotlyWindowBase):
     """Window showing a CWatM result .csv time series as a Plotly scatter plot."""
+
+    _save_fallback = "timeseries"
 
     def __init__(self, csv_path, parent=None, preloaded=None):
         super().__init__(parent)
@@ -469,24 +459,7 @@ class TimeseriesWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
         self.next_button.setVisible(multi)
         layout.addLayout(btn_row)
 
-    def _save_html(self):
-        """Save the currently rendered plot HTML to a user-chosen file."""
-        if not self._temp_html or not os.path.exists(self._temp_html):
-            QMessageBox.information(self, "Save HTML", "Nothing to save yet.")
-            return
-        base = os.path.splitext(os.path.basename(str(self.csv_path)))[0] or "timeseries"
-        base = re.sub(r'[^\w\-.]+', '_', base).strip('_')  # point labels contain "@ ,"
-        # Suggest saving into the resolved PathOut (output) directory
-        default = os.path.join(resolved_pathout_dir(self), base + ".html")
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save plot as HTML", default, "HTML files (*.html)")
-        if not path:
-            return
-        try:
-            import shutil
-            shutil.copyfile(self._temp_html, path)
-        except Exception as e:
-            QMessageBox.warning(self, "Save HTML", f"Could not save the file:\n{e}")
+    # _save_html is inherited from PlotlyWindowBase.
 
     # ------------------------------------------------------------- save as csv
     @staticmethod

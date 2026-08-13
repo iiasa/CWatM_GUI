@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Fast, dependency-free structural checks: seconds to run, and the job that
+  # should stay green at all times.
+  invariants:
+    name: Invariants + byte-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # Catches syntax errors anywhere, including in windows nobody opened.
+      - name: Byte-compile every source file
+        run: python -m compileall -q src cwatm_gui.py cwatm_model.py tools
+
+      # Silent `except: pass`, exotic line separators, os.startfile outside
+      # open_path.py, heavy imports on the startup path.
+      - name: Project invariants
+        run: python tools/check_invariants.py
+
+      - name: Requirements files resolve
+        run: python tools/check_requirements.py
+
+  # The real thing: install the pinned stack on Windows and import every GUI
+  # module. An import error in a rarely opened window is invisible until a user
+  # clicks the menu item; this surfaces it on every push.
+  import-check:
+    name: Install + import all GUI modules (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      # Also proves requirements.txt is actually installable, not merely parsable.
+      - name: Install pinned runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Import every GUI module + construct the main window
+        run: python tools/import_all.py

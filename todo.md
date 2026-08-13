@@ -1,7 +1,27 @@
 # CWatM GUI — improvement backlog (reviewed 2026-08-13)
 
-> **Done 2026-08-13:** items **1, 2, 3, 4, 6, 7**. Remaining: **5** (tests), **8**–**15**.
-> Notes from doing them:
+> **Done 2026-08-13:** items **1, 2, 3, 4, 6, 7**, then **8, 9, 10, 11, 12, 13, 15**.
+>
+> **Still open: item 5 (no automated tests)** — now the only substantial one left, and
+> the highest-value: `settings_check.py` was extracted precisely to make the check engine
+> testable, and CI (item 11) is in place to run a suite the moment one exists.
+> **Item 14 (i18n)** is open by choice — worth starting only if a non-English user base
+> is actually targeted.
+>
+> Notes from the second round:
+> - **Item 12 needed no work** — the exit-status policy had already been settled in
+>   `cwatm_gui.py`'s own uncommitted changes. Verified: a clean quit returns 0 silently,
+>   a non-zero code is propagated to the caller. My grep had matched the docstring
+>   describing the fix and the deliberate `handle_exception` interception.
+> - **Item 9** covers Timeseries / Watercycle / Flow Diagram only. **NetCDF keeps its own
+>   `_save_html` on purpose**: its page is served through the `osmtile://` scheme rather
+>   than a temp file, and it saves the page *string* with its own caveat about basemap
+>   tiles. Forcing it into the base would have obscured a genuinely different shape.
+> - **Item 8**: 128 KB → 110 KB (17.7k → ~14.5k words). The detail was *moved*, not
+>   deleted — Internals gained four sections (Settings-file tabs, Change Options, Check
+>   Data, Add output variables) and grew to 1356 lines.
+>
+> Notes from the first round:
 > - Item 7's "Set max Gauge" claim was **backwards** — the code says `Set max Gauge`, so
 >   the README was right and CLAUDE.md was stale. CLAUDE.md is now fixed, and two menu
 >   items it never listed (**File ▸ Change Working Dir**, **Help ▸ CWatM Homepage**)
