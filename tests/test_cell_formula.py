@@ -81,35 +81,69 @@ class TestIsFormula:
         assert not is_formula("1+" * 400)
 
 
-class TestKnownBugs:
-    """Two real defects found while writing these tests. Both are `xfail(strict=True)`,
-    so the suite stays green **and** the day someone fixes one, the test flips to
-    "unexpectedly passed" and fails loudly instead of quietly rotting.
-    """
+class TestDataIsNotArithmetic:
+    """Regression guard for a silent data-loss bug: values that are only numbers joined
+    by '-' or '/' were auto-detected as formulas, so the *computed number* was written
+    into the workbook - '1-2' became -1.0 and '10-2020' became -2010.0, in a file CWatM
+    then reads. They are dates, ids and ranges, and must stay text."""
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "BUG: a hyphenated text value is computed as a subtraction and the NUMBER is "
-        "written to the workbook. '1-2' -> -1.0, '10-2020' -> -2010.0. Note "
-        "cell_fill._as_number() deliberately keeps '1-2' as text, so the two modules "
-        "disagree about the same cell. Dates fare differently but no better: "
-        "'2026-08-13' is claimed by is_formula() and then fails evaluation, so the "
-        "cell shows #SYNTAX instead of the date (the leading zero in '08' is not a "
-        "valid Python literal)."))
-    @pytest.mark.parametrize("text", ["1-2", "10-2020", "2026-08-13", "13/08/2026"])
-    def test_hyphenated_text_should_stay_text(self, text):
+    @pytest.mark.parametrize("text", [
+        "1-2", "10-2020", "400001-2", "2026-08-13", "13/08/2026", "2026-08",
+        "10/2", "1.5-2.5", "1 - 2", "01-02-2026",
+    ])
+    def test_kept_as_text(self, text):
         assert not is_formula(text)
 
-    @pytest.mark.xfail(strict=True, reason=(
-        "BUG: an absolute reference only works inside a range. _rewrite_ranges() "
-        "strips the '$' from a matched range, so '=SUM($A$1:$C$1)' computes, but a "
-        "standalone '=$B$2' reaches ast.parse() with the '$' still there and raises "
-        "#SYNTAX - even though parse_ref('$B$2') resolves it fine."))
-    def test_standalone_absolute_reference_should_evaluate(self):
+    @pytest.mark.parametrize("text,expected", [
+        ("=1-2", -1), ("=10/2", 5), ("=1.5-2.5", -1.0),
+    ])
+    def test_an_explicit_equals_still_computes(self, text, expected):
+        # The escape hatch: a user who really wants the arithmetic types '='.
+        assert ev(text) == pytest.approx(expected)
+
+    @pytest.mark.parametrize("text", [
+        "2+3.5",        # '+' cannot be mistaken for a date or an id
+        "2*3",
+        "(1+2)/3",      # parentheses signal intent
+        "2 + A1",       # a cell reference does too
+        "A1-B1",
+        "SUM(A1:C1)",
+        "A1/B1",
+    ])
+    def test_real_formulas_are_unaffected(self, text):
+        assert is_formula(text)
+
+    def test_the_two_modules_now_agree_about_a_hyphenated_value(self):
+        """cell_fill deliberately keeps '1-2' as text (_as_number returns None); before
+        the fix cell_formula turned the same cell into -1.0."""
+        from src.gui.utils.cell_fill import extend_series
+        assert not is_formula("1-2")
+        assert extend_series(["1-2", "3-4"], 2) == ["1-2", "3-4"]
+
+
+class TestAbsoluteReferences:
+    """'$' is Excel's absolute marker. It used to work inside a range and nowhere else,
+    because only _rewrite_ranges stripped it; a standalone '=$B$2' reached ast.parse
+    with the '$' still there and raised #SYNTAX."""
+
+    def test_standalone(self):
         assert ev("=$B$2") == pytest.approx(5)
 
-    def test_absolute_reference_inside_a_range_does_work(self):
-        # The half that works today - kept so a fix for the above cannot break it.
+    def test_column_only(self):
+        # $B2 = column B, row 2 -> 5 (the '$' fixes the column, not the row)
+        assert ev("=$B2") == pytest.approx(5)
+
+    def test_row_only(self):
+        assert ev("=B$1") == pytest.approx(2)
+
+    def test_inside_a_range_still_works(self):
         assert ev("=SUM($A$1:$C$1)") == pytest.approx(6)
+
+    def test_mixed_with_arithmetic(self):
+        assert ev("=$A$1 + $B$1") == pytest.approx(3)
+
+    def test_same_result_as_the_relative_form(self):
+        assert ev("=$B$2") == ev("=B2")
 
 
 class TestArithmetic:

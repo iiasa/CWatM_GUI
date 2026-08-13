@@ -169,6 +169,20 @@ _TOKEN_RE = re.compile(r"""
 """, re.VERBOSE)
 
 
+# Values that are nothing but numbers joined by '-' or '/' are DATA, not arithmetic:
+# a date (2026-08-13, 13/08/2026), an id or a range (1-2, 10-2020, 400001-2). Without
+# this they were auto-detected as formulas and the *computed number* was written to
+# the workbook - '1-2' became -1.0 and '10-2020' became -2010.0, silently, in a file
+# CWatM then reads. Excel does not compute these either: it needs a leading '=', which
+# still works here ('=1-2' is 1 minus 2).
+#
+# Deliberately narrow. Anything with a cell reference ('2 + I3'), a function
+# ('SUM(A1:C1)'), parentheses ('(1+2)/3') or another operator ('2+3.5', '2*3') is
+# unaffected, because none of those can be mistaken for a date or an id.
+_DATA_NOT_FORMULA_RE = re.compile(
+    r"^\s*\d+(?:\.\d+)?(?:\s*[-/]\s*\d+(?:\.\d+)?)+\s*$")
+
+
 def _tokens(text):
     """Tokenize; returns None as soon as an unexpected character shows up."""
     out, pos, n = [], 0, len(text)
@@ -191,6 +205,8 @@ def is_formula(text):
     if t.startswith("="):
         return True
     if not t or len(t) > 500:
+        return False
+    if _DATA_NOT_FORMULA_RE.match(t):
         return False
     toks = _tokens(t)
     if not toks:
@@ -238,6 +254,20 @@ def _rewrite_ranges(expr):
     return _RANGE_RE.sub(sub, expr)
 
 
+# A '$' anywhere else is Excel's absolute-reference marker ('$B$2'). It is not valid
+# Python, so it has to go before ast.parse - _rewrite_ranges only strips the ones
+# inside a matched range, which used to leave a standalone '=$B$2' raising #SYNTAX.
+# Dropping it loses nothing: absolute vs relative only matters when a formula is
+# copied to another cell, and the editor copies a formula's *value*, never rewrites
+# its references. Ranges are already string literals by this point, so their content
+# is untouched.
+_ABS_MARK_RE = re.compile(r"\$(?=[A-Za-z0-9])")
+
+
+def _strip_abs_marks(expr):
+    return _ABS_MARK_RE.sub("", expr)
+
+
 def evaluate(text, resolver, range_resolver=None):
     """Compute ``text`` (with or without a leading ``=``).
 
@@ -245,7 +275,7 @@ def evaluate(text, resolver, range_resolver=None):
     ``range_resolver(r0, c0, r1, c1)`` the list of values of a range (defaults to
     calling ``resolver`` for each cell). Raises ``FormulaError``.
     """
-    expr = _rewrite_ranges(normalize(text)).replace("^", "**")
+    expr = _strip_abs_marks(_rewrite_ranges(normalize(text))).replace("^", "**")
     if not expr:
         raise FormulaError("#SYNTAX")
     try:

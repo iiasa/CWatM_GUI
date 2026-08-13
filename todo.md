@@ -3,23 +3,25 @@
 > **Done 2026-08-13:** items **1–13 and 15**. Only **item 14 (i18n)** remains, open by
 > choice — worth starting only if a non-English user base is actually targeted.
 >
-> **Item 5 (tests)** landed last: `tests/` holds **290 tests + 5 xfail**, covering
-> `cell_formula`, `cell_fill`, `metrics`, `var_dims`, `tab_manager.next_copy_path`,
-> `temp_page`, `run_ledger` and the `settings_check` semantic pass. Three findings came
-> out of writing them:
-> - **`cell_formula` computes hyphenated text.** `1-2` → `-1.0` and `10-2020` → `-2010.0`
->   are written to the workbook as numbers. `cell_fill._as_number()` deliberately keeps
->   `1-2` as text, so the two modules disagree about the same cell. A date like
->   `2026-08-13` is claimed by `is_formula()` and then fails to evaluate, so the cell
->   shows `#SYNTAX`. Recorded as `xfail(strict=True)`, **not fixed** — the fix changes
->   user-visible cell behaviour and is the owner's call.
-> - **Absolute references only work inside a range.** `=SUM($A$1:$C$1)` computes;
->   `=$B$2` raises `#SYNTAX`, because `_rewrite_ranges` strips the `$` only from a
->   matched range. Also `xfail(strict=True)`.
-> - **`run_ledger._entry_key` can collide** — (ts to the millisecond, settings, pathout).
->   Two runs of the same file into the same folder finishing in the same millisecond are
->   indistinguishable, so removing one removes both. Not practically reachable (Batch Run
->   refuses duplicate PathOuts); pinned by a test that documents it.
+> **Item 5 (tests)** landed last: `tests/` holds **320 tests**, covering `cell_formula`,
+> `cell_fill`, `metrics`, `var_dims`, `tab_manager.next_copy_path`, `temp_page`,
+> `run_ledger` and the `settings_check` semantic pass. Writing them turned up three
+> defects, **all since fixed** (the tests that recorded them as `xfail` are now ordinary
+> passing tests):
+> - **`cell_formula` computed hyphenated text.** `1-2` → `-1.0`, `10-2020` → `-2010.0`,
+>   written into the workbook as numbers — silent data loss in a file CWatM reads.
+>   Fixed by `_DATA_NOT_FORMULA_RE`: a value that is only numbers joined by `-` or `/`
+>   is data (a date, an id, a range), never auto-detected arithmetic. A leading `=`
+>   still computes it, which is Excel's own rule. `cell_fill` and `cell_formula` now
+>   agree about such a cell.
+> - **Absolute references only worked inside a range.** `=$B$2` raised `#SYNTAX` while
+>   `=SUM($A$1:$C$1)` computed, because only `_rewrite_ranges` stripped the `$`. Fixed
+>   with `_strip_abs_marks` in `evaluate`.
+> - **`run_ledger._entry_key` could collide** — (ts to the millisecond, settings,
+>   pathout), so two parallel runs of the same file into the same folder were
+>   indistinguishable and deleting one deleted both. `make_entry` now stamps a `uid`;
+>   `_entry_key` prefers it and falls back to the old tuple, so **existing journals keep
+>   working**.
 >
 > One test expectation of mine was simply **wrong**, and the code was right:
 > `OUT_TSS_Daily = none` *is* an error, because CWatM's sentinel test is `!= "None"`,

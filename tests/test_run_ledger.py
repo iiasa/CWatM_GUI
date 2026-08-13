@@ -185,15 +185,56 @@ class TestNotesAndRemoval:
         noted = [r["title"] for r in run_ledger.load_entries() if r.get("note")]
         assert noted == ["run1"]
 
-    def test_rows_sharing_a_key_are_treated_as_one(self, ledger):
-        """Documented consequence, not a recommendation: two entries with the same
-        timestamp-to-the-millisecond AND the same settings AND the same PathOut are
-        indistinguishable, so removing one removes both and a note lands on both.
-        Reachable only by two runs of the same file writing to the same folder and
-        finishing in the same millisecond."""
-        ts = time.time()
-        run_ledger.add_entry(entry(title="a", ts=ts, pathout="same"))
-        run_ledger.add_entry(entry(title="b", ts=ts, pathout="same"))
-        first = run_ledger.load_entries()[0]
-        run_ledger.remove_entries([first])
-        assert run_ledger.load_entries() == []
+class TestEntryIdentity:
+    """Rows are identified across a reload by `_entry_key`. Entries built by
+    `make_entry` carry a unique `uid`; older/hand-edited rows fall back to
+    (ts, settings, pathout), which can collide."""
+
+    def test_make_entry_gives_every_run_a_unique_id(self, ledger):
+        uids = {run_ledger.make_entry("s.ini", "t", "o", time.time(), True, 0)["uid"]
+                for _ in range(50)}
+        assert len(uids) == 50
+
+    def test_two_runs_in_the_same_millisecond_stay_distinct(self, ledger,
+                                                            monkeypatch):
+        """The collision that used to make deleting one row delete both: same file,
+        same PathOut, same instant - as parallel Windowed Runs can produce."""
+        monkeypatch.setattr(run_ledger.time, "time", lambda: 1_700_000_000.0)
+        a = run_ledger.make_entry("s.ini", "a", "same", None, True, 0)
+        b = run_ledger.make_entry("s.ini", "b", "same", None, True, 0)
+        assert a["ts"] == b["ts"]                       # genuinely the same instant
+        assert run_ledger._entry_key(a) != run_ledger._entry_key(b)
+
+        run_ledger.add_entry(a)
+        run_ledger.add_entry(b)
+        run_ledger.remove_entries([run_ledger.load_entries()[0]])
+        left = run_ledger.load_entries()
+        assert len(left) == 1, "removing one row must not remove its twin"
+
+    def test_a_note_on_one_twin_does_not_touch_the_other(self, ledger, monkeypatch):
+        monkeypatch.setattr(run_ledger.time, "time", lambda: 1_700_000_000.0)
+        run_ledger.add_entry(run_ledger.make_entry("s.ini", "a", "same", None, True, 0))
+        run_ledger.add_entry(run_ledger.make_entry("s.ini", "b", "same", None, True, 0))
+        target = [r for r in run_ledger.load_entries() if r["title"] == "a"][0]
+        run_ledger.set_note(target, "just this one")
+        noted = [r["title"] for r in run_ledger.load_entries() if r.get("note")]
+        assert noted == ["a"]
+
+    def test_a_pre_uid_journal_still_works(self, ledger):
+        """Backward compatibility: rows written before uid existed have none, and must
+        still be deletable through the old (ts, settings, pathout) fallback."""
+        now = time.time()
+        for i in range(3):
+            legacy = entry(title=f"old{i}", ts=now + i, pathout=f"out{i}")
+            assert "uid" not in legacy
+            run_ledger.add_entry(legacy)
+        victim = [r for r in run_ledger.load_entries() if r["title"] == "old1"]
+        run_ledger.remove_entries(victim)
+        assert {r["title"] for r in run_ledger.load_entries()} == {"old0", "old2"}
+
+    def test_uid_and_legacy_rows_coexist(self, ledger):
+        run_ledger.add_entry(entry(title="legacy"))
+        run_ledger.add_entry(run_ledger.make_entry("s.ini", "modern", "o",
+                                                   time.time(), True, 0))
+        rows = run_ledger.load_entries()
+        assert len({run_ledger._entry_key(r) for r in rows}) == 2

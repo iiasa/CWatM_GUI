@@ -1084,7 +1084,20 @@ Two rules for this suite:
   CWatM's sentinel test is `!= "None"`, case-sensitive (`configuration.py:249`).
 - **A known defect gets an `xfail(strict=True)`, never a softened assertion** — the suite
   stays green, the bug stays recorded, and a fix turns the xfail into a failure instead
-  of rotting. Two are recorded in `tests/test_cell_formula.py::TestKnownBugs`.
+  of rotting. (There are none open right now; the three the suite found are fixed.)
+
+Three invariants the suite exists to hold, each a defect it caught:
+- **A cell value that is only numbers joined by `-` or `/` is data, not arithmetic**
+  (`cell_formula._DATA_NOT_FORMULA_RE`). `1-2`, `10-2020`, `2026-08-13` are ids, ranges
+  and dates; they used to be auto-detected as formulas and the **computed number** was
+  written into the workbook CWatM then reads. A leading `=` still computes them — that
+  is Excel's rule too — and `cell_fill._as_number()` agrees about the same cell.
+- **`$` is stripped before `ast.parse`** (`cell_formula._strip_abs_marks`), so an
+  absolute reference works standalone (`=$B$2`) and not only inside a range.
+- **A journal row is identified by its `uid`** (`run_ledger.make_entry` /`_entry_key`).
+  The old (ts, settings, pathout) key could not tell two parallel runs of the same file
+  apart, so deleting one deleted both; it is kept as the fallback for journals written
+  before the uid existed.
 
 `tools/check_invariants.py` enforces what this file states as always-true: no silent
 `except: pass`, no literal exotic line separator in a source file (a stray **U+2029**

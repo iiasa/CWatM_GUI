@@ -18,6 +18,7 @@ import os
 import re
 import json
 import time
+import uuid
 import shutil
 import tempfile
 
@@ -187,7 +188,18 @@ def clear():
 
 
 def _entry_key(entry):
-    """What identifies a journal entry across a reload (the window works on copies)."""
+    """What identifies a journal entry across a reload (the window works on copies).
+
+    New entries carry a unique ``uid`` (see :func:`make_entry`), which is what this
+    returns. Entries written before that existed - and any hand-edited row - fall back
+    to (timestamp, settings, pathout). That fallback can collide: two runs of the same
+    settings file into the same PathOut finishing within the same millisecond are
+    indistinguishable, so deleting one deletes both and a note lands on both. The uid
+    removes the ambiguity going forward without invalidating an existing journal.
+    """
+    uid = entry.get("uid")
+    if uid:
+        return ("uid", uid)
     try:
         ts = round(float(entry.get("ts", 0)), 3)
     except (TypeError, ValueError):
@@ -268,6 +280,11 @@ def make_entry(settings_path, title, pathout, started_at, success, last_dis,
     now = time.time()
     dur = max(0.0, now - started_at) if started_at else 0.0
     entry = {
+        # Identifies this row for delete/note across a reload. Parallel runs (Batch
+        # Run, several Windowed Runs) can finish in the same millisecond with the same
+        # settings file, which the old (ts, settings, pathout) key could not tell
+        # apart - see _entry_key.
+        "uid": uuid.uuid4().hex,
         "ts": now,
         "kind": kind,                         # run | hidden | batch | stopped
         "settings": settings_path or "",
