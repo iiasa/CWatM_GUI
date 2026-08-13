@@ -169,7 +169,7 @@ class _ScenarioLog:
                 self._fh.write("\n")
                 self._fh.close()
             except Exception:
-                pass
+                log.debug("close: ignored", exc_info=True)
             self._fh = None
 
     def text(self):
@@ -206,7 +206,7 @@ def open_batch_runner(parent=None):
             lambda *_: parent._batch_runner_windows.remove(win)
             if win in parent._batch_runner_windows else None)
     except Exception:
-        pass
+        log.debug("open_batch_runner: ignored", exc_info=True)
     return win
 
 
@@ -266,7 +266,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("_set_window_icon: ignored", exc_info=True)
 
     @staticmethod
     def _read_key(content, key):
@@ -523,7 +523,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         try:    # flash the taskbar entry - a batch is long enough to walk away from
             QApplication.alert(self, 0)
         except Exception:
-            pass
+            log.debug("_finish_batch_line: ignored", exc_info=True)
 
     def _apply_theme(self):
         self.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
@@ -806,7 +806,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
                 try:
                     os.remove(old)
                 except Exception:
-                    pass
+                    log.debug("_write_scenario_ini: ignored", exc_info=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(content)
         return path
@@ -1145,7 +1145,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             try:
                 info["worker"].stop()
             except Exception:
-                pass
+                log.debug("_stop_all: ignored", exc_info=True)
             self._close_log(row)
             # A stopped scenario is part of the history too, and its temp .ini has no
             # reason to survive (both used to be dropped silently).

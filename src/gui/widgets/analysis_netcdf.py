@@ -186,7 +186,7 @@ class NetcdfWindow(NetcdfDataBase):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("__init__: ignored", exc_info=True)
 
         # Qt timer that drives Play (the folium overlay has no built-in animation).
         self._play_timer = QTimer(self)
@@ -530,7 +530,7 @@ class NetcdfWindow(NetcdfDataBase):
             try:
                 profile.removeUrlSchemeHandler(self._tile_handler)
             except Exception:
-                pass
+                log.debug("_show_map: ignored", exc_info=True)
             profile.installUrlSchemeHandler(b"osmtile", self._tile_handler)
             self.web_view.loadFinished.connect(self._on_loaded)
             self.web_view.load(QUrl("osmtile://ncmap/"))
@@ -867,7 +867,7 @@ class NetcdfWindow(NetcdfDataBase):
             val = float(self.frames[self._ti][lati, loni])
             z = val if np.isfinite(val) else None
         except Exception:
-            pass
+            log.debug("_on_web_title: ignored", exc_info=True)
         self._clicked = (lonc, latc, z)
         self._js("if(window.setPending) setPending(%f,%f);" % (latc, lonc))
         # Coordinate/value read-out (like Show Basin's info label).
@@ -1013,14 +1013,14 @@ class NetcdfWindow(NetcdfDataBase):
             self.ts_progress.setRange(0, total)
             self.ts_progress.setValue(done)
         except RuntimeError:
-            pass
+            log.debug("_on_ts_progress: ignored", exc_info=True)
 
     def _on_ts_failed(self, msg):
         try:
             QMessageBox.warning(self, "Display timeserie",
                                 f"Could not read the time series:\n{msg}")
         except RuntimeError:
-            pass
+            log.debug("_on_ts_failed: ignored", exc_info=True)
 
     def _on_ts_worker_finished(self):
         """Reader thread finished: hide the bar, re-enable the buttons, chain the next
@@ -1031,7 +1031,7 @@ class NetcdfWindow(NetcdfDataBase):
             self.ts_button.setEnabled(True)
             self.ts_fast_button.setEnabled(True)
         except RuntimeError:
-            pass
+            log.debug("_on_ts_worker_finished: ignored", exc_info=True)
         if self._ts_next is not None:
             self._run_next_ts_read()
 
@@ -1043,11 +1043,11 @@ class NetcdfWindow(NetcdfDataBase):
             try:
                 old.finished.disconnect(self._on_ts_closed)
             except Exception:
-                pass
+                log.debug("_close_ts_window: ignored", exc_info=True)
             try:
                 old.close()
             except Exception:
-                pass
+                log.debug("_close_ts_window: ignored", exc_info=True)
 
     def _build_ts_window(self, series_list, pts, open_if_closed, full=True):
         """(Re)build the Timeseries window from the precomputed series (main thread).
@@ -1128,7 +1128,7 @@ class NetcdfWindow(NetcdfDataBase):
         try:
             self._play_timer.stop()
         except Exception:
-            pass
+            log.debug("closeEvent: ignored", exc_info=True)
         # Let a running point-series read finish so its QThread is not destroyed while
         # active (it only reads files + emits signals, so this is a short wait).
         worker = getattr(self, "_ts_worker", None)
@@ -1138,14 +1138,14 @@ class NetcdfWindow(NetcdfDataBase):
                 worker.finished_ok.disconnect()
                 worker.progress.disconnect()
             except Exception:
-                pass
+                log.debug("closeEvent: ignored", exc_info=True)
             try:
                 worker.wait(4000)
             except Exception:
-                pass
+                log.debug("closeEvent: ignored", exc_info=True)
         try:
             if self._temp_html and os.path.exists(self._temp_html):
                 os.remove(self._temp_html)
         except Exception:
-            pass
+            log.debug("closeEvent: ignored", exc_info=True)
         super().closeEvent(event)

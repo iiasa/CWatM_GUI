@@ -26,15 +26,16 @@ log = get_logger("run_controller")
 class RunControllerMixin:
     """Run/stop CWatM, track its progress and clean up afterwards."""
 
-    def open_hidden_run(self):
-        """RUN CWATM > Hidden Run CWatM: open an independent window that runs CWatM in
-        its own OS process, pre-loaded with the current settings file. It does not
-        touch the main run or the main GUI, and several can be open/running at once."""
+    def open_hidden_run(self, settings_path=None):
+        """RUN CWATM > Windowed Run CWatM: open an independent window that runs CWatM
+        in its own OS process, pre-loaded with `settings_path` (default: the current
+        settings file). It does not touch the main run or the main GUI, and several
+        can be open/running at once."""
         # Lazy import (fast-startup rule): only pulls light Qt/subprocess modules.
         from src.gui.widgets.hidden_run_window import HiddenRunWindow
         if not hasattr(self, "_hidden_run_windows"):
             self._hidden_run_windows = []  # keep refs so the non-modal windows live
-        win = HiddenRunWindow(self)
+        win = HiddenRunWindow(self, settings_path or None)
         # Drop the reference when the window is closed so the list does not grow.
         win.destroyed.connect(
             lambda *_: self._hidden_run_windows.remove(win)
@@ -364,14 +365,14 @@ class RunControllerMixin:
             try:
                 btn.setEnabled(enabled)
             except RuntimeError:
-                pass
+                log.debug("_set_tools_enabled: ignored", exc_info=True)
         # File > Save .ini menu action.
         act = getattr(self, "_save_menu_action", None)
         if act is not None:
             try:
                 act.setEnabled(enabled)
             except RuntimeError:
-                pass
+                log.debug("_set_tools_enabled: ignored", exc_info=True)
 
     def set_cwatm_button_running_state(self):
         """Set RUN CWatM button to running state (light red)"""
@@ -543,7 +544,7 @@ class RunControllerMixin:
                         
         except ImportError:
             # netCDF4 not available
-            pass
+            log.debug("_cleanup_netcdf_files: ignored", exc_info=True)
         except Exception as e:
             print(f"Error in netCDF cleanup: {str(e)}", file=sys.stderr)
     

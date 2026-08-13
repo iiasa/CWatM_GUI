@@ -134,6 +134,13 @@ class MenuBuilderMixin:
             "Show the differences between the current settings file and another one "
             "side by side")
         compare_action.triggered.connect(lambda: self.open_compare_settings())
+        # Last item: colour the lines that differ from the neighbouring TAB, in
+        # place (a toggle - F8 again removes the colouring).
+        compare_tab_action = settings_menu.addAction("Compare Tab")
+        compare_tab_action.setShortcut("F8")
+        compare_tab_action.setToolTip("Compares a tab with the neighbor one")
+        compare_tab_action.triggered.connect(lambda: self.toggle_compare_tab())
+        self.compare_tab_action = compare_tab_action
 
         # Tools menu (right of File) — same actions as the side buttons
         tools_menu = menu_bar.addMenu("Tools")
@@ -198,12 +205,10 @@ class MenuBuilderMixin:
             "Show the journal of past runs; reopen their results or reload/compare "
             "their settings")
         ledger_action.triggered.connect(lambda: self.open_run_ledger())
-        # Hidden Run: open an independent window that runs CWatM in its own process
+        # Windowed Run: open an independent window that runs CWatM in its own process
         # (does not touch the main run or the main GUI); several can run in parallel.
-        hidden_run_action = run_menu.addAction("Hidden Run CWatM")
-        hidden_run_action.setToolTip(
-            "Open a separate window that runs CWatM in its own process, without "
-            "interfering with the main GUI (several can run at once)")
+        hidden_run_action = run_menu.addAction("Windowed Run CWatM")
+        hidden_run_action.setToolTip("Run CWatM in a separate window")
         hidden_run_action.triggered.connect(lambda: self.open_hidden_run())
         run_menu.addSeparator()
         batch_action = run_menu.addAction("Batch Run…")
@@ -329,6 +334,11 @@ class MenuBuilderMixin:
             hidden_run_action, batch_action,                    # RUN CWATM
             analyse_watercycle_action, flowdiagram_action,      # Analyse
         ]
+        # Entries only an **Expert** sees. Compare Tab works on the settings-file
+        # tabs, and those are Expert-only themselves (Preferences ▸ Use Tabs ×
+        # Expert), so the menu item follows them - a Beginner/Advanced has no tab
+        # bar for it to act on.
+        self._expert_only_actions = [compare_tab_action]        # Settings
         self._apply_menu_level()
 
     def _init_configure_state(self):
@@ -409,14 +419,18 @@ class MenuBuilderMixin:
                 padding: 4px 6px;
             }}
             /* the ⋮ Preferences button in the right corner (a narrow, tall glyph -
-               a slightly larger font and symmetric padding keep the hover box square) */
+               a slightly larger font and symmetric padding keep the hover box square).
+               The size is in **pt**, not px: a pixel font-size leaves the widget's
+               QFont with pointSize() == -1, and a QToolButton is one of the widgets
+               Qt's style asks for a *point* size - that is where the console warning
+               "QFont::setPointSize: Point size <= 0 (-1)" comes from. */
             QMenuBar QToolButton {{
                 background-color: transparent;
                 color: {theme.c('text')};
                 border: none;
                 border-radius: 3px;
                 padding: 0px 9px;
-                font-size: 18px;
+                font-size: 13pt;
                 font-weight: bold;
             }}
             QMenuBar QToolButton:hover {{
@@ -461,14 +475,24 @@ class MenuBuilderMixin:
         ``_beginner_hidden_actions`` (scenario runs, the Excel workbook, Check Data,
         the Run Ledger, the water-balance analyses, …) is hidden - the same idea as
         the settings sections the level hides in the editor. Advanced and Expert see
-        the full menus. Called when the menus are built and from
-        ``set_experience_level``."""
-        beginner = getattr(self, "_experience_level", "Expert") == "Beginner"
+        those. ``_expert_only_actions`` goes the other way: **Expert alone** sees
+        them (Settings ▸ Compare Tab, which needs the Expert-only tab bar). Called
+        when the menus are built and from ``set_experience_level``."""
+        level = getattr(self, "_experience_level", "Expert")
+        beginner = level == "Beginner"
         for action in getattr(self, "_beginner_hidden_actions", []):
             try:
                 action.setVisible(not beginner)
             except RuntimeError:          # QAction deleted on the C++ side
                 log.debug("level: action already gone", exc_info=True)
+        for action in getattr(self, "_expert_only_actions", []):
+            try:
+                # Disabled as well as hidden: an invisible QAction can still fire
+                # its shortcut, and F8 must do nothing for a Beginner/Advanced.
+                action.setVisible(level == "Expert")
+                action.setEnabled(level == "Expert")
+            except RuntimeError:
+                log.debug("level: expert-only action already gone", exc_info=True)
         # A section title with nothing left under it is noise - hide it too.
         headers = set(getattr(self, "_section_headers", []))
         if not headers:
@@ -494,7 +518,7 @@ class MenuBuilderMixin:
         try:
             header.setVisible(any(a.isVisible() for a in items) if items else True)
         except RuntimeError:
-            pass
+            log.debug("_set_header_visible: ignored", exc_info=True)
 
     def _add_recent_file(self, path):
         """Record a settings file at the top of the recent-files (History) list."""
@@ -532,5 +556,5 @@ class MenuBuilderMixin:
                 self._history_actions.append(act)
         except RuntimeError:
             # File menu C++ object transiently gone - nothing to populate
-            pass
+            log.debug("_populate_history_menu: ignored", exc_info=True)
 

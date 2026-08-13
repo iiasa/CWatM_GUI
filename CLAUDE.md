@@ -26,11 +26,11 @@ This is a graphical user interface for the Community Water Model (CWatM) develop
 **In this file (CLAUDE.md):**
 - **UI & behaviour** — [Menu Bar & Keyboard Shortcuts](#menu-bar--keyboard-shortcuts-current-ui) · [Preferences window](#preferences-window-configure--preferences) · [Behavioral notes](#behavioral-notes) · [Gauges, mask and PathOut checks](#gauges-mask-and-pathout-checks) · [Check settingsfile](#check-settingsfile-settings-menu) · [Output-box log file](#output-box-log-file-preferences--output)
 - **Architecture** — [Core Modules](#core-modules) · [Module Dependencies](#module-dependencies) · [CWatM Integration](#cwatm-integration)
-- **Build & deps** — [Technical Details / Requirements](#requirements) · [Installation](#installation) · [Virtual environment & building the executable](#virtual-environment--building-the-executable) · [Watercycle template scripts](#watercycle-template-scripts-repo-root--canonical-balance-computation)
+- **Build & deps** — [Technical Details / Requirements](#requirements) · [Installation](#installation) · [Virtual environment & building the executable](#virtual-environment--building-the-executable) · **[Building on the local disk — `build_release.ps1`](#building-on-the-local-disk--build_releaseps1)** (how a release is actually built) · [Watercycle template scripts](#watercycle-template-scripts-repo-root--canonical-balance-computation)
 - **Development Notes** (fast-startup, thread-safety, styling rules)
 
 **In [`documentation/CWatM_GUI_Internals.md`](documentation/CWatM_GUI_Internals.md)** (deep dives, kept out of the always-loaded reference):
-- **Secondary windows** — Excel sheet editor · Compare settings · Output Explorer · Hidden Run CWatM · Batch Run · Journal of Runs · Restore settingsfile · CWatM AI
+- **Secondary windows** — Excel sheet editor · Compare settings · Output Explorer · Windowed Run CWatM · Batch Run · Journal of Runs · Restore settingsfile · CWatM AI
 - **Data visualization** — Basin viewer (infra + folium) · Timeseries · NetCDF · Watercycle · Flow Diagram
 
 > **Editing the docs:** keep *always-true rules and invariants* in `CLAUDE.md`; put
@@ -57,6 +57,7 @@ button in the bar's **right corner** that opens the Preferences window.
 | File | Reload | Ctrl+L | Reload the current file from disk (prompts if there are unsaved changes) |
 | File | Save .ini | Ctrl+S | Save to current file |
 | File | Save As | Ctrl+Alt+S | Save to a new file |
+| File | Change Working Dir | — | Pick the directory relative settings paths resolve against (`_working_dir_override`, per tab) |
 | File | 1. … 6. (recent files) | — | Up to 6 recent settings files listed **directly** in the File menu between Save As and Exit (persisted via `QSettings`); rebuilt on open |
 | File | Exit | — | Quit (prompts Save/Discard/Cancel if there are unsaved changes) |
 | Settings | _(section headers)_ | — | The Settings menu is grouped into **five titled sections** — **View** · **Find & Replace** · **Edit** · **Bookmarks & Changes** · **Check & Compare** — rendered as bold, disabled header rows via `menu_builder._add_menu_section` (same helper as the Tools sections; **not** `QMenu.addSection`). The rows below follow that order |
@@ -76,20 +77,21 @@ button in the bar's **right corner** that opens the Preferences window.
 | Settings | Clear all Bookmarks | Ctrl+Shift+F2 | Remove every bookmark |
 | Settings | Goto last change | F5 | Jump to the most recently changed line (after a separator; unfolds if hidden) |
 | Settings | Check settingsfile / Clear checking | F4 | **One toggle item** (`toggle_check_settings`): when no marks are shown it scans the editor content — every value identified as a filename/path whose file does not exist gets its line **marked red + bookmarked** (F2 to jump), **plus semantic checks** (StepStart ≤ SpinUp ≤ StepEnd date ordering, **option dependencies** e.g. modflow-on-without-its-keys, and the run window inside the **meteo forcing** NetCDF time coverage), a summary is written to the output box, and the item **relabels to "Clear checking"**; pressing F4 again (now "Clear checking") removes the red marks + check-owned bookmarks (the user's own bookmarks are kept) and relabels back. The label is re-synced to the real state (`_error_rows`/`_inactive_rows`, via `_refresh_check_settings_label`) whenever the Settings menu opens — see Check settingsfile below |
-| Settings | Compare settings | — | (last item, separator above) Side-by-side diff of two settings files — left = the current settings (preloaded), right has a **Load** button; files aligned with gray filler, differing lines **orange**, one synced scrollbar on the right, Next/Previous Diff, File/History/Settings menus — see `CWatM_GUI_Internals.md` |
+| Settings | Compare settings | — | (last item, separator above) Side-by-side diff of two settings files — left = the **active tab**'s settings (preloaded), right has a **Load** button and, **with more than one tab open, is preloaded with the neighbouring tab** (the one left of the active tab, or right of it when the active tab is the first — `compare_partner_source`); files aligned with gray filler, differing lines **orange**, one synced scrollbar on the right, Next/Previous Diff, File/History/Settings menus — see `CWatM_GUI_Internals.md` |
+| Settings | Compare Tab | F8 | _(last item, **Expert only** — `_expert_only_actions`, hidden **and disabled** for Beginner/Advanced so F8 does nothing there; it acts on the tabs, which are Expert-only themselves)_ **In-place** diff against the **neighbouring tab** (the same partner as Compare settings: the tab left of the active one, or right of it when the active tab is the first — `compare_partner_index`): every differing line is coloured **light green at 50 % opacity** in **both** tabs, so switching between them shows the differences from either side. A **toggle** — F8 again clears the colouring (`toggle_compare_tab` / `compare_marks_shown` / `clear_compare_tab`, rows from `diff_line_rows`; **no** alignment filler, the marks sit on the documents' own line numbers). Nothing is written; needs a second tab |
 | Tools | Excel Crops/Reservoirs | — | _(Setup & Data, directly below Change Options — there is **no** top-level Excel menu any more)_ Open the settings `Excel_settings_file` (placeholders resolved) in an editable table that reproduces the sheet's cell colours. **All** the workbook's sheets (Crops, Reservoirs, Reservoirs_downstream, …) sit on an Excel-style **tab bar below the table** (above the rows×columns info line); works like Excel — **formulas** (`2+3.5`, `2 + I3`, `=SUM(C2:C10)`), **Ctrl+C/X/V + Delete** on selected blocks, a **fill handle** for autofill, **word-wrapped half-width text columns**, a **symbol toolbar** at the top left (copy/cut/paste/delete │ **B**old │ **undo/redo**) and per-sheet **undo/redo** (Ctrl+Z / Ctrl+Y) over cell edits *and* column/row inserts+deletes; bottom buttons **Load / Reload / Save / Save As / Close**, and Reload / Load / **closing the window** ask Save-Discard-Cancel while a sheet holds edits — see `CWatM_GUI_Internals.md` |
 | Tools | _(section headers)_ | — | The Tools menu is grouped into **three titled sections** — **Basin & Gauges** · **Outputs** · **Setup & Data** — rendered as bold, disabled header rows via `menu_builder._add_menu_section` (same helper as the Settings sections; **not** `QMenu.addSection`, whose title text the native windows11 style does not draw). The rows below are listed by section |
 | Tools | Change Options | — | _(Setup & Data)_ Open the Options window (tooltip: "Display a popup with the settingsfile [Options]"); **Excel Crops/Reservoirs** is the row directly below it (see its own row above) |
 | Tools | Show Basin | — | Open the basin viewer — the folium (Leaflet) **EPSG:4326** map (`basin_viewer2.py`); ups.nc/mask overlays in native lon/lat over an OSM WMS basemap. (This is the former "Show Basin2"; the classic native-canvas / Mercator viewer was removed.) **Projected (non lat/lon) grids** — x/y coordinates, e.g. Norway UTM33 (`grid_is_latlon` in `basin_viewer.py`) — are shown in Leaflet **CRS.Simple** on the raw x/y **without** an OSM basemap (basemap selector + OSM-transparency slider disabled, overlay fully opaque, read-outs labelled X/Y); everything else (mask, gauges, clicks, Copy Mask/Gauge) works unchanged |
-| Tools | Set Gauge | — | Set Gauges to the largest-upstream point inside the mask |
+| Tools | Set max Gauge | — | Set Gauges to the largest-upstream point inside the mask. (The menu label is **"Set max Gauge"**; the in-app gauge warning and `find_largest_ups_gauge`'s error still say "Set Gauge" — `main_window.py:1146, 2100`) |
 | Tools | Add output Watercycle | — | Insert `OUT_TSS_AreaSum_MonthTot = WaterCycle` under `[OUTPUT]` if absent |
 | Tools | Add output variables | — | (separator below) **Jumps the editor to the end of the file first** (`jump_to_bottom`, same as Settings ▸ Down — `[OUTPUT]` is the last section, so the `OUT_…` lines and the insert cursor are on screen), then opens a picker of the metaNetcdf.xml output variables that **fit the current `[OPTIONS]`** (glacier/modflow/small-lake/… vars hidden when their feature is off), **grouped by topic** (snow · meteo · evaporation · soil · groundwater · lakes · routing · demand · crops · balance totals · static maps · Other); the filter box searches **unit / long name / description** as well as the name; a **✓ green bold** marks every variable the settings file already writes (its keys + line numbers in the tooltip) with an **Only variables already in the settings file** tick; variables needing an index are marked `[index]` and **both click styles ask which one, by name** ("1 - grassland"); shows only `priority="high"` vars by default, a **Load all Variable** toggle shows every fitting var (what the file uses is listed either way). **Left-click** inserts at the editor cursor — only on an `OUT_TSS_…`/`OUT_MAP_…` line; **right-click** opens a type menu (Timeseries (TSS) ▸ time step / **upstream calculation** ▸ `AreaSum`\|`AreaAvg` ▸ time step, or Map (MAP) ▸ time step) that builds `OUT_<TSS\|MAP>_<selection>` and appends the variable to that line, creating the key under `[OUTPUT]` if absent. **No Refresh button** — activating the window re-reads the file — see `CWatM_GUI_Internals.md` |
 | Tools | Check Data | — | Open the Check Data window — runs CWatM's `-c` data analysis **in a worker thread** (the window is **non-modal**, the GUI stays usable, elapsed time shown) with **CWatM's output in the window's own log pane**; warns when the editor has unsaved changes (the check reads the file from **disk**); result table **sortable + filter box**, whole-row tint for a problem row, a **summary line** counting them, **Export CSV** of what is shown, and a **double-click jumps to that key** in the settings editor. **Run Check is disabled for a coordinate MaskMap** (with the reason in the tooltip), the csv defaults to `<PathOut>/check_cwatm1.csv`, and *Restore settings from discharge map* opens **Restore settingsfile** |
 | Tools | Create PathOut Folder | — | _(Outputs, **first** item)_ Create the resolved PathOut directory if missing — CWatM does not create it |
 | Tools | Restore settingsfile | — | Open a CWatM output NetCDF (`dis*.nc`) and show its stored run metadata (**summary card** + attribute table, all read in **one** file open). **Preview settingsfile** shows the stored `version_settingsfile` read-only (→ Save as / **Load into editor unsaved** / Compare), **Compare with current** diffs it against the loaded settings, **Restore settingsfile** writes + loads it (suggested `<title>_<date>.ini`), **Show Inputfiles** lists `version_inputfiles` **and checks** each file (still there? still the same version?), **Show in Journal** jumps to the run that wrote the file; Ctrl+C / right-click / **Export as CSV** on both tables. Buttons the file cannot serve are greyed with the reason — see `CWatM_GUI_Internals.md` |
 | RUN CWATM | Run CWATM | Ctrl+R | Run / stop the CWatM model |
-| RUN CWATM | Journal of Runs | — | _(2nd item; was Tools ▸ Run Ledger — the window, the storage module `utils/run_ledger.py` and `run_ledger.json` keep their names)_ Table of past runs (time, Title, PathOut, duration, success, last discharge) with a **filter box** and **sortable** columns; per row: open results (Output Explorer) · **Show log** · load settings · **Re-run** (in a Hidden Run window) · **Compare settings** (2 marked) · **Compare results** (≥2 marked, overlaid in one Timeseries) · **Delete**. Scenarios of one batch fold into one row (**Group batches**, via `batch_id`), and runs **in progress** (main, Hidden, batch) appear live at the top, refreshed every 2 s. A **missing** PathOut/settings path is greyed out, the last column is an editable **Note** stored in the journal (`run_ledger.set_note`), **Export CSV** writes the rows currently shown, and a **right-click** adds *Open output folder* + *Copy PathOut / settings path* — see `CWatM_GUI_Internals.md` |
-| RUN CWATM | Hidden Run CWatM | — | Open a **separate, non-modal window** that runs CWatM in its **own OS process**, independent of the main run and main GUI — several can run in parallel — see `CWatM_GUI_Internals.md` |
+| RUN CWATM | Journal of Runs | — | _(2nd item; was Tools ▸ Run Ledger — the window, the storage module `utils/run_ledger.py` and `run_ledger.json` keep their names)_ Table of past runs (time, Title, PathOut, duration, success, last discharge) with a **filter box** and **sortable** columns; per row: open results (Output Explorer) · **Show log** · load settings · **Re-run** (in a Windowed Run window) · **Compare settings** (2 marked) · **Compare results** (≥2 marked, overlaid in one Timeseries) · **Delete**. Scenarios of one batch fold into one row (**Group batches**, via `batch_id`), and runs **in progress** (main, Hidden, batch) appear live at the top, refreshed every 2 s. A **missing** PathOut/settings path is greyed out, the last column is an editable **Note** stored in the journal (`run_ledger.set_note`), **Export CSV** writes the rows currently shown, and a **right-click** adds *Open output folder* + *Copy PathOut / settings path* — see `CWatM_GUI_Internals.md` |
+| RUN CWATM | Windowed Run CWatM | — | _(was "Hidden Run CWatM"; tooltip "Run CWatM in a separate window". The module `hidden_run_window.py`, the geometry key `hidden_run` and the journal's `kind="hidden"` keep the old name)_ Open a **separate, non-modal window** that runs CWatM in its **own OS process**, independent of the main run and main GUI — several can run in parallel. `open_hidden_run(settings_path=None)` takes the file to preload (default: the current one), which is how the tab bar's right-click ▸ **Run CWatM** runs one tab's file — see `CWatM_GUI_Internals.md` |
 | RUN CWATM | Batch Run… | — | Run many scenarios from the loaded settings file — a table where each row overrides a few keys + its own PathOut → a temp `.ini` run in its own process, **up to N in parallel** — see `CWatM_GUI_Internals.md` |
 | Configure | Preferences… | Ctrl+, | **The only item in the menu.** Opens the **Preferences window** — every GUI setting, on five categorised pages, with OK / Cancel / Apply (see [Preferences window](#preferences-window-configure--preferences) below) |
 | _(menu bar)_ | ⋮ | — | A `QToolButton` in the menu bar's **right corner** (`menu_bar.setCornerWidget(…, Qt.TopRightCorner)`, `self._preferences_button`) — a second way into the same Preferences window. Styled from theme tokens inside `_menu_bar_stylesheet` (`QMenuBar QToolButton`), so a Mode switch re-themes it with the bar |
@@ -103,6 +105,7 @@ button in the bar's **right corner** that opens the Preferences window.
 | Help | CWatM GUI Documentation | — | Render `documentation/CWatM_GUI_Documentation.md` as markdown |
 | Help | CWatM GUI Features | — | Render `documentation/CWatM_GUI_Features.md` (the user-facing feature tour) as markdown |
 | Help | FAQ | — | Render `documentation/CWatM_GUI_FAQ.md` (common questions & troubleshooting) as markdown |
+| Help | CWatM Homepage | — | Open the CWatM website in the desktop browser |
 | Info | About CWatM | — | About dialog |
 
 - **Save locked while CWatM runs**: during a run all functionality stays available
@@ -139,18 +142,21 @@ second implementation of it**. Adding a setting = one control + one `_read_state
 |------|---------|-----------|
 | Output | Output box file | Custom output-box log file + **Browse…** (kept in memory, `_output_file_override`); empty = the default `<PathOut>/cwatm_out.txt`, shown as the field's placeholder |
 | Output | Write output box | Writes the run log to that file (can slow down a run). Backed by the standalone `write_output_action` QAction — `run_controller` reads `.isChecked()` |
-| Startup & Model | Load previous settings at start | Persisted `startup/load_previous`, default OFF; when ticked the most recently used settings file is re-opened on the next startup (handled in `cwatm_gui.py main()` when no file is passed on the command line) |
+| Startup & Model | Load previous settings at start | Persisted `startup/load_previous`, default OFF; when ticked **every tab** of the last session is re-opened on the next startup (`tabs/files` + `tabs/active` → `open_files_in_tabs`; a pre-tabs session falls back to the most recently used file). Handled in `cwatm_gui.py main()` when no file is passed on the command line — a command-line file wins and opens a single tab |
 | Startup & Model | Use Modflow | Persisted `modflow/enabled`, default OFF; ON **pre-imports flopy** (the CWatM↔MODFLOW library — heavy, pulls the matplotlib stack) so in-process MODFLOW use is ready; OFF never loads flopy, keeping startup fast (`src/gui/utils/modflow.py`, `_on_use_modflow_toggled`) |
 | _(not exposed)_ | ~~Run model in separate process~~ | Not shown anywhere, but the functionality is kept: `run_subprocess_action` is created standalone in `_init_configure_state` (default ON, persisted `run/subprocess`) and still drives `_run_subprocess_enabled` (own OS process = real Stop, crash isolation). Add it to a Preferences page to expose it again |
 | Display | Mode | Colour theme of the whole GUI: **Normal** (classic light) / **Dark Mode** / **Mikhail** (black + amber); switches live (the open dialog re-themes itself), persisted `display/theme` |
 | Display | Show Header | Persisted `display/show_header`, default ON: show the top **banner** (CWatM icon + title + "The Community Water Model User Interface" + IIASA logo). Unticked hides it (`_banner_widget.setVisible(False)`) so everything below moves up (`_on_show_header_toggled`) |
+| Display | Font of settingsfile | Family the **settings editor** renders with — a `QFontComboBox` filtered to the **monospaced** fonts (columns + the gutter's fixed-width digits), persisted `editor/font_family`. Empty (the default) = the built-in fallback chain of `_editor_style()` (`'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace` — Consolas on Windows), so an untouched install renders exactly as before; a chosen family is put **in front of** that chain (`main_window._editor_font_css`). The box opens on the family actually rendered (`main_window.editor_font_family()` → the persisted choice, else `fontInfo().family()`), and `_select_font` inserts that family if the monospaced filter does not list it, so the box can never show a different font than the editor uses |
+| Display | Font size of settingsfile | Size of the settings editor in **px**, 6–32, persisted `editor/font_size` (default 13). The **same** setting as the **Font+ / Font-** buttons right of *Down* — both go through `main_window._set_editor_font_size`, and the dialog reads the live value when it opens, so the two can never drift |
 | Display | Show decimals | How many decimals numeric values show throughout all displays (default 3, range 0–12), persisted `display/decimals` |
 | Display | Initial map transparency | The **start** value (0–100 %) of the transparency slider the **NetCDF** and **Show Basin** viewers open with, default 100, persisted `display/transparency` |
 | Display | Default openstreet map | Default basemap for **Show Basin** — its EPSG:4326 WMS layers (OSM / Topographic / Terrain / Dark), persisted `basin/default_basemap`. The list is `preferences_window.BASEMAPS`, kept in sync with `basin_viewer2._B2_PROVIDERS`; an old XYZ key migrates to `OSM-WMS` (`_saved_basemap`) |
 | Display | Select animal | The cameo shown now and then on the live discharge sparkline: **Fish · Otter · Beaver · Sailboat**, persisted `display/animal` (default Fish); applied live via `discharge_sparkline.set_animal` (edit the `ANIMALS` registry to change the set) |
-| Editor & Dates | Skill of user | **Beginner / Advanced / Expert** — how much of the settings file **and of the menus** is shown (hides the sections, and for Beginner the advanced menu entries, the level may not see). In sync with the colour-coded level button right of the editor's `-` button; persisted `editor/level`, default Expert (see the Skill of User behavioral note) |
+| Editor & Dates | Skill of user | **Beginner / Advanced / Expert** — how much of the settings file **and of the menus** is shown (hides the sections, and for Beginner the advanced menu entries, the level may not see). In sync with the colour-coded level button right of the editor's `Font-` button; persisted `editor/level`, default Expert (see the Skill of User behavioral note) |
 | Editor & Dates | Web-style date picker | Persisted `display/date_picker_web`, default ON: Start/Spin/End dates picked via a 📅 button + frameless shadowed calendar popup; unticked = classic `QDateEdit` drop-down calendar (see the Date calendar popups behavioral note) |
 | Editor & Dates | Date timeline | Persisted `display/date_timeline`, default ON: show the three-handle **Start/Spin/End timeline** below the date fields — drag a handle (or click the track to jump the nearest one) to set the date; the light band behind the track is the meteo-forcing coverage |
+| Editor & Dates | Use Tabs | _(last item)_ Persisted `editor/use_tabs`, default ON: show the **settings-file tab bar**, so several settings files can be open at once. Only ever shown in the **Expert** level (`tabs_enabled` = the tick **and** Expert); unticking hides just the chrome, never the open tabs' content (`_on_use_tabs_toggled` → `update_tabs_visible`) — see the Settings-file tabs note |
 | Editor & Dates | Bookmark Change | Persisted `editor/bookmark_change`; when ticked a changed settings line is **auto-bookmarked** — but skipped if a bookmark already sits 1 or 2 lines above/below it |
 | Run History | Run history folder | The general folder where the **Journal of Runs** (`run_ledger.json`) is stored + **Browse…** (`history/folder`, default `%LOCALAPPDATA%/CWatM_GUI`); a path that is not an existing directory is ignored |
 | Run History | Run history retention | How many days of runs to keep in the Journal of Runs, `history/retention_days`, default 60; **0 shows as "keep forever"** (`setSpecialValueText`) |
@@ -190,6 +196,83 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   (Start/Spin/End Date, PathOut, MaskMap, Gauges) differ from the loaded/saved file
   — a hint that the run uses the new values. Baseline captured on load/save
   (`_capture_field_baseline` via `_mark_clean`).
+- **Settings-file tabs** (optional, **Expert only**): several settings files can be
+  open at once, one per **tab** in the bar directly **below the button row and above
+  the editor** (`src/gui/components/tab_manager.py`, `SettingsTabsMixin`). The bar
+  is shown when **Preferences ▸ Editor & Dates ▸ Use Tabs**
+  is ticked (persisted `editor/use_tabs`, **default ON**) **and** the skill level is
+  **Expert** — `tabs_enabled()` / `update_tabs_visible()`, re-evaluated by
+  `set_experience_level` and `_on_use_tabs_toggled`. Hiding them hides **only the
+  chrome**: open tabs keep their content and the active one stays in the editor, so
+  switching the option off and on never loses work (a startup restore with tabs off
+  reopens just the last active file). A **new tab** comes from the small **`+` tab** right of the
+  last tab (`add_tab_plus`, a `QToolButton` sharing the `_tabs_row` layout with the
+  bar, since a `QTabBar` has no corner widget; styled from theme tokens like a tab
+  and sized to the real tabs' height in `_style_tab_chrome`, which `_retheme` also
+  calls) — the **only** way to add one (the tab's right-click menu has no *Add empty
+  Tab* item any more), and there is deliberately **no Add Tab button** in the button row. The ✕ that closes a tab appears **on the tab
+  under the mouse only** (`HoverCloseTabBar`: `setTabsClosable(True)` with every
+  button hidden except the hovered one, so the tab widths never jump), and it runs
+  the same `close_settings_tab` as *Delete Tab*. Each tab owns its
+  own `SettingsEditor` + `LineNumberGutter` page in a `QStackedWidget`, so undo
+  stack, bookmarks, folds, changed-line highlights and check marks are per tab
+  by construction. **The active tab is the application state**: switching one
+  re-points `text_area` / `line_number_gutter` / `text_display` /
+  `file_manager.current_file_path` / `original_content` / `_clean_content` /
+  `_is_dirty` / `_filename_state` / `_working_dir_override` / the mask cache and
+  then refreshes the left panel the way a load does (labels, dates, PathOut,
+  MaskMap, Gauges, warnings, `os.chdir`) — so every feature that reads
+  `file_manager.get_current_file_path()` (RUN CWATM, Compare, Excel, Check Data,
+  Show Basin, Output Explorer) follows the active tab **without knowing tabs
+  exist**. Rules that keep it honest: the outgoing tab's debounced field changes
+  are **flushed** before the switch (its content is then authoritative, and the
+  boxes are re-derived from it on the way back in — stale boxes would poison
+  `_live_content()` and the next save); `_on_doc_modified` /
+  `_on_editor_text_changed` ignore signals from a **background** editor
+  (`_is_active_editor_signal`); and closing a tab **stores the active tab first**,
+  because the close ends in `_activate_tab`, which restores the window from the
+  tab object. **Load goes into the active tab** (the first one at startup), and so
+  does a **dropped** file — the **`+`** tab opens an empty one first. **One file, one tab** (`guard_duplicate_file` / `same_file`,
+  paths compared absolute + `normcase`): the same settings file in two tabs would
+  mean two independent copies of the text, the second Save silently discarding the
+  first tab's work, and the checks/run reading a third version off disk — so a
+  **load** of an already-open file switches to the tab that has it instead
+  (History, drag & drop, the Load dialog and the startup restore all funnel through
+  `load_recent_file`; `File ▸ Load .ini` only picks the path,
+  `file_manager.choose_load_path`), and **Save As** onto another tab's file is
+  refused **without** switching away. Re-loading a tab's own file (Reload) is
+  unaffected — the guard excludes the active tab. Global settings are **fanned out to every tab**: theme
+  (`_retheme`), editor font + size (`_restyle_all_editors`), the level's locked
+  sections (`_apply_experience_level`) and Bookmark-Change. A tab is captioned
+  with the file's base name (`untitled` when empty) and a leading **`*`** while it
+  has unsaved edits; **Exit prompts once per dirty tab**
+  (`confirm_all_tabs_saved`). **Right-click a tab**: *Delete Tab* (unsaved prompt;
+  deleting the **last** tab empties it instead of leaving none), *Copy Tab*
+  (writes the tab's **current** content — unsaved edits included — to
+  `next_copy_path()`: `settings.ini` → `settings_2.ini`, `settings_2.ini` →
+  `settings_3.ini`, skipping names that exist, then opens the copy in a new tab
+  right of the source), **Run CWatM** (opens a **Windowed Run CWatM** window on
+  *this tab's* file — `open_hidden_run(tab.file_path)`, so the run is independent of
+  the main run and of the other tabs; disabled while the tab has no file, and it runs
+  the file **as saved on disk**), and the checkable **Link scrolling**
+  (`set_tab_link_scroll`, **greyed out on the first tab** — it has no predecessor):
+  ticking it scrolls this tab and the **previous** one together **and mirrors the
+  folded sections** (`_on_editor_folding` → `apply_folds(folded_sections())`, so
+  folding `[OPTIONS]` away in one folds it in the other — otherwise the two would no
+  longer be at the same place the moment a section collapses), in both directions.
+  The flag lives on the *later* tab of each pair, so a run of ticked tabs forms one
+  chain (`_linked_group`); the mirrored value is the vertical scrollbar's position
+  clamped to each partner's own maximum, `_scroll_sync` / `_fold_sync` guard the
+  reentrancy (the fold mirror also skips a **load** and a **tab switch** — both emit
+  `foldingChanged` without the user folding anything, and a load would otherwise
+  unfold the partner), and
+  `_normalize_links` clears the flag off whatever becomes tab 0 after a close or a
+  drag. Only one tab is visible at a time, so what this buys is that **switching**
+  between two linked tabs lands you on the same lines — reading two settings files
+  against each other. In-memory (per session), not persisted. The open files + the active one are
+  persisted (`tabs/files`, `tabs/active`), and **Preferences ▸ Startup & Model ▸
+  Load previous settings at start reopens them all** (`open_files_in_tabs`; a file
+  on the command line still wins and opens a single tab).
 - **Plain-text editor (report §3.2)**: the settings editor is a `SettingsEditor`
   (`QPlainTextEdit` + `IniHighlighter` syntax highlighting —
   `src/gui/widgets/settings_editor.py`); the document **is** the settings file at
@@ -199,7 +282,7 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   a folded section (`reveal_cursor`). Fold a section by **double-clicking its
   `[SECTION]` header** or clicking the ▾/▸ marker in the gutter.
 - **Skill of User / experience level (Beginner / Advanced / Expert)**: a
-  **colour-coded button** right of the editor's `-` font button cycles
+  **colour-coded button** right of the editor's `Font-` button cycles
   Beginner → Advanced → Expert → Beginner (`cycle_experience_level` /
   `set_experience_level`, persisted `editor/level`, default **Expert**). It is
   mirrored by **Preferences ▸ Editor & Dates ▸ Skill of user** (a combo box,
@@ -223,8 +306,11 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   `_apply_menu_level`, run when the menus are built and from `set_experience_level`):
   a **Beginner** does not see Tools ▸ *Add output Watercycle* · *Change Options* ·
   *Excel Crops/Reservoirs* · *Check Data* · *Restore settingsfile* · *Journal of Runs*,
-  RUN CWATM ▸ *Hidden Run CWatM* · *Batch Run…*, Analyse ▸ *Watercycle* ·
-  *Flow Diagram*; Advanced and Expert see the full menus. A **section header** whose
+  RUN CWATM ▸ *Windowed Run CWatM* · *Batch Run…*, Analyse ▸ *Watercycle* ·
+  *Flow Diagram*; Advanced and Expert see those. The reverse list
+  (`_expert_only_actions`) is shown to **Expert alone**: Settings ▸ *Compare Tab*,
+  which works on the (Expert-only) settings-file tabs — hidden **and** disabled
+  below Expert, since an invisible QAction would still answer its F8 shortcut. A **section header** whose
   items are all hidden is hidden with it (`_section_headers`, filled by
   `_add_menu_section`), so no title is left standing with nothing under it. Driven by
   `main_window._apply_experience_level` (`_LEVEL_ALLOWED`) →
@@ -235,7 +321,11 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   stays correct across files.
 - **Editor extras**: a **line-number gutter** showing **file line numbers**
   (numbers jump across a folded section) plus the ▾/▸ fold markers
-  (`src/gui/widgets/line_number_gutter.py`), and **hover
+  (`src/gui/widgets/line_number_gutter.py`; its font follows the editor's —
+  `_gutter_font()` shrinks the **pixel** size, because the editor's font comes
+  from a stylesheet in px and its `pointSizeF()` is therefore -1; capped at 16 px
+  so a long line number cannot run into the fold marker in the fixed 62 px
+  width), and **hover
   tooltips**: hovering a CWatM variable name (e.g. `discharge`) shows its
   long_name / unit / description from `cwatm/metaNetcdf.xml` (cached in
   `src/gui/utils/meta_netcdf.py`, shared with both Analyse windows — report §3.3).
@@ -282,14 +372,17 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   (`duplicate_line`, strong red) < Compare-settings **diff** (`diff_line`, orange —
   `set_diff_rows`) < alignment **filler** (`filler_line`, light gray —
   `set_filler_rows`) < **current** jumped-to diff (`current_diff_line`, darker orange —
-  `set_current_diff_rows`). The last three are used only by the Compare settings window.
+  `set_current_diff_rows`) < **Compare Tab** (`compare_line`, light green painted at
+  **alpha 128** so the colour underneath still shows — `set_compare_rows`, Settings ▸
+  Compare Tab / F8). The three `diff`/`filler`/`current_diff` levels are used only by
+  the Compare settings window.
 - **Date calendar popups**: the Start/Spin/End date fields use `CWatMCalendar`
   (`date_manager.py`, subclass of `QCalendarWidget` with a custom `paintCell`):
   selected day = filled accent circle, today = thin accent ring, the **other two
   date fields** shown as small dots (green = Start, orange = Spin, red = End;
   side by side when equal), and days **outside the meteo-forcing time coverage
   dimmed** — the coverage comes from `_forcing_time_range` (the same F4 semantic
-  check) via `main_window._forcing_range_for_calendar`, computed lazily on the
+  check) via `settings_check._forcing_range_for_calendar`, computed lazily on the
   first popup open and cached in `DateManager` until the next file load
   (`invalidate_forcing_range` in `set_dates_from_config`). All colours are theme
   tokens read at paint time; the popup chrome (nav bar, headers, no grid/week
@@ -424,7 +517,12 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   (Normal keeps `plotly_white`, byte-identical output). Saturated branded
   buttons (RUN blue/red, basin blue/red/gray, Compare) are white-on-colour and
   intentionally theme-independent. **Rule: never hardcode a colour in GUI
-  chrome — use a theme token.**
+  chrome — use a theme token.** Second rule from the same family: a **`QToolButton`
+  stylesheet sizes its font in `pt`, not `px`** (the menu bar's ⋮, the tab bar's `+`,
+  the Excel toolbar). A pixel size leaves the widget's `QFont` with
+  `pointSize() == -1`, and a QToolButton is one of the widgets Qt's style asks for a
+  *point* size — that is the source of the console line `QFont::setPointSize: Point
+  size <= 0 (-1)`. Everything else (editor, labels, plain buttons) keeps px.
 - **Asset paths**: never load assets with a relative path (`QPixmap("assets/...")`
   only worked when the CWD happened to contain an assets/ copy — in the frozen
   build assets live in `_internal/`, not next to the .exe). Always resolve through
@@ -465,7 +563,8 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   warning.
 
 ### Check settingsfile (Settings menu)
-`main_window.check_settingsfile` walks the **editor content** (not the saved file) line
+`SettingsCheckMixin.check_settingsfile` (`src/gui/components/settings_check.py`, mixed
+into the main window) walks the **editor content** (not the saved file) line
 by line. A value is treated as a **filename/path** if it contains a `$(…)` placeholder,
 ends in a known data extension (`.nc/.tif/.map/.txt/.csv/.xlsx/…`), or is an absolute
 path (`X:\`, `\\`); coordinate pairs, dates (`DD/MM/YYYY`) and plain numbers are skipped.
@@ -551,7 +650,7 @@ each: `line N: key = value` (+ `-> resolved` inline when it differs), in dark re
 `_error_rows` clears on file load.
 - **Bookmarks added by the check are tagged check-owned** (`_BlockMarks.check`), and each
   run first calls `clear_checking` so re-running doesn't accumulate stale marks.
-- **Clearing the check** (`main_window.clear_checking` → `SettingsEditor.clear_checking`)
+- **Clearing the check** (`settings_check.clear_checking` → `SettingsEditor.clear_checking`)
   clears `_error_rows` (removes the red) and unsets **only the check-owned** bookmarks —
   the user's own bookmarks survive — and logs a note to the output box. It is reached by
   pressing **F4 a second time**: Check settingsfile is a **single toggle** menu item
@@ -632,7 +731,7 @@ each: `line N: key = value` (+ `-> resolved` inline when it differs), in dark re
 The per-feature deep dives for the secondary windows live in
 [`documentation/CWatM_GUI_Internals.md`](documentation/CWatM_GUI_Internals.md) (kept out
 of this always-loaded reference to keep it lean): **Excel sheet editor · Compare settings ·
-Output Explorer · Hidden Run CWatM · Batch Run · Journal of Runs · Restore settingsfile ·
+Output Explorer · Windowed Run CWatM · Batch Run · Journal of Runs · Restore settingsfile ·
 CWatM AI**. Their menu entries + one-line behaviour are in the Menu Bar table above; their
 module files in [Core Modules](#core-modules) below.
 
@@ -643,10 +742,14 @@ The application is structured with a modular architecture for better maintainabi
 ### Core Modules
 
 - **`cwatm_gui.py`**: Main entry point and application launcher with global exception handling
-- **`src/gui/components/main_window.py`**: Main window class orchestrating all components (inherits the three mixins below)
+- **`src/gui/components/main_window.py`**: Main window class orchestrating all components (inherits the mixins below)
 - **`src/gui/components/menu_builder.py`**: `MenuBuilderMixin` — builds the full menu bar and maintains the History menu
 - **`src/gui/components/run_controller.py`**: `RunControllerMixin` — start/stop the threaded CWatM run, progress/finish/error handling, run-log file, menu locking, post-run cleanup
 - **`src/gui/components/output_box.py`**: `OutputBoxMixin` — the CWatM output box (throttled appends, `\r` progress overwrite, copy actions)
+- **`src/gui/components/tab_manager.py`**: `SettingsTabsMixin` + `SettingsTab` — the **settings-file tabs** (tab bar below the button row, one `SettingsEditor`/`LineNumberGutter`/`TextDisplayManager` page per tab in a `QStackedWidget`, the per-tab state the main window is re-pointed at on every switch, the Delete/Copy/Add-empty context menu, the `tabs/files` persistence and `open_files_in_tabs` used by *Load previous settings at start*), plus the pure `next_copy_path()` naming rule — see the Settings-file tabs behavioral note
+- **`src/gui/components/settings_check.py`**: `SettingsCheckMixin` — the whole **Check settingsfile** (F4) pass: the file-existence walk over the editor content (placeholder resolution, the `path*`-key strict rule, the section/key/value gating tables, the MODFLOW-soft rule, wrong-extension detection), `_semantic_settings_problems` (date ordering, `_OPTION_REQUIRES` dependencies, `out_*` grammar + varname/index validation), `_forcing_time_range`, and the toggle/clear/label plumbing — see [Check settingsfile](#check-settingsfile-settings-menu)
+- **`src/gui/components/find_replace.py`**: `FindReplaceMixin` — the combined non-modal **Find & Replace** window (shared Find box + Find/Replace tabs, Count, "Replace all in selection", its own status bar) plus `find_next`/`find_previous`/`_find_in_editor`; searches the **active tab's** editor through `self.text_area`
+- **`src/gui/components/main_window_styles.py`**: `MainWindowStyleMixin` — the main window's stylesheet builders (left/right panel, field, output box, editor + font css, run button, modern/save-dirty buttons, level button, filename + gauges state colours). Pure presentation, every colour a `theme.c(token)`; owns `_LEVEL_COLORS`
 - **`src/gui/components/config_parser.py`**: Configuration file parsing and formatting logic
 - **`src/gui/managers/date_manager.py`**: Date input validation and management
 - **`src/gui/managers/file_manager.py`**: File I/O operations and management
@@ -676,7 +779,7 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/utils/run_ledger.py`**: Persistent run log (`run_ledger.json`) — `add_entry`/`load_entries`/`make_entry`/`remove_entries`/`set_note`, per-run **settings snapshots** (`snapshots/`, diffed by Compare settings), plus the configurable folder + retention (Preferences ▸ Run History). `make_entry` also records `log_path` (the run's output log, for the journal's *Show log*) and `batch_id` (shared by one Batch Run's scenarios, so the journal can fold them into one row)
 - **`src/gui/utils/metrics.py`**: Goodness-of-fit scores (KGE / NSE / PBIAS / RMSE) for the Timeseries observed-vs-simulated comparison
 - **`src/gui/utils/cwatm_process_worker.py`**: Subprocess CWatM worker (QProcess; default run mode — real Stop, crash isolation). Optional `output_sink(text, is_error)` ctor arg routes run output to a caller's box instead of the global `sys.stdout`/`sys.stderr` (used by the Hidden Run windows; default `None` = main-window behaviour)
-- **`src/gui/widgets/hidden_run_window.py`**: RUN CWATM ▸ Hidden Run CWatM — `HiddenRunWindow`, a non-modal window that runs CWatM in its own process (via `CWatMProcessWorker` + `output_sink`) with a bold-green settings label, Load / Run-Stop buttons and its own output box; several can run in parallel. Also: a **progress bar + elapsed/remaining** from the worker's `progress` signal (freezing as `run time`/`failed after`/`stopped after`, plus a taskbar flash on finish), a **pre-flight** that reads the settings file and creates its resolved PathOut before starting, a **Journal of Runs** entry (`kind="hidden"`, with content snapshot) on success/error/stop, `GeometryMemoryMixin` key `hidden_run` **cascaded** 28 px per already-open window, and a **confirmation** before closing a window (or the whole GUI) while a run is in progress. The header carries the settings **Title + resolved PathOut** (+ an Open PathOut button), the path label uses the `ok_color` **token** (not a hardcoded green), the file can be set by **drag & drop** or **Use current** (the main window's file *now*), and the output box has *Copy all / Save as / Find / Clear* plus **Ctrl+F / F3**
+- **`src/gui/widgets/hidden_run_window.py`**: RUN CWATM ▸ Windowed Run CWatM (the module keeps the older "hidden run" name) — `HiddenRunWindow`, a non-modal window that runs CWatM in its own process (via `CWatMProcessWorker` + `output_sink`) with a bold-green settings label, Load / Run-Stop buttons and its own output box; several can run in parallel. Also: a **progress bar + elapsed/remaining** from the worker's `progress` signal (freezing as `run time`/`failed after`/`stopped after`, plus a taskbar flash on finish), a **pre-flight** that reads the settings file and creates its resolved PathOut before starting, a **Journal of Runs** entry (`kind="hidden"`, with content snapshot) on success/error/stop, `GeometryMemoryMixin` key `hidden_run` **cascaded** 28 px per already-open window, and a **confirmation** before closing a window (or the whole GUI) while a run is in progress. The header carries the settings **Title + resolved PathOut** (+ an Open PathOut button), the path label uses the `ok_color` **token** (not a hardcoded green), the file can be set by **drag & drop** or **Use current** (the main window's file *now*), and the output box has *Copy all / Save as / Find / Clear* plus **Ctrl+F / F3**
 - **`src/gui/utils/cwatm_model_runner.py`**: Child-process side of the subprocess run (no Qt; stdout marker protocol)
 - **`cwatm_model.py`** (root): entry script of `CWatM_model.exe` (the frozen child process)
 - **`src/gui/utils/cwatm_worker.py`**: Threaded CWatM execution worker (in-process fallback)
@@ -688,6 +791,7 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/utils/gui_log.py`**: Diagnostic logging — swallowed exceptions go to a rotating `%LOCALAPPDATA%/CWatM_GUI/gui.log` (UI behaviour unchanged)
 - **`src/gui/utils/warning_filters.py`**: The third-party warnings the GUI silences — currently only rasterio 1.5.0 × numpy 2.5 ("Setting the shape on a NumPy array has been deprecated", raised inside `rasterio._io.read()` but **attributed to the caller**, i.e. `cwatm/management_modules/data_handling.py:317/654`, so it looks like a CWatM problem). Three nets, because a user's machine may enable DeprecationWarnings (`PYTHONWARNINGS`, IDE, older build): `apply()` installs the message-matched filter **and** exports `PYTHONWARNINGS` (called at the top of `cwatm_gui.py` and of `cwatm_model_runner.py`, before numpy/rasterio/cwatm are imported; `cwatm_process_worker.start()` also puts it in the child's `QProcessEnvironment`), and `LineSuppressor` drops the warning's lines on the way to the output box (`cwatm_process_worker._forward` for every child run — main/Hidden/Batch — and `print_redirector` for in-process prints). Delete the module + its call sites once a fixed rasterio ships
 - **`src/gui/utils/window_geometry.py`**: `GeometryMemoryMixin` — persists window size/position of the Analyse/Basin windows via QSettings
+- **`src/gui/utils/temp_page.py`**: `TempPageMixin` — temp-file lifetime for the Plotly viewers (Timeseries / Watercycle / Flow Diagram). `_load_temp_page(html, prefix)` writes the rendered page, **deletes the one it replaces** and loads it into `self.web_view`; the window drops its last page in `done()` (the funnel both the X button and Esc reach — a `closeEvent` override alone misses Esc). Those pages inline plotly.js, so each is several MB and each redraw — every tick of a debounced range slider — used to orphan one. Mix it in **before** `GeometryMemoryMixin`/`QDialog`
 - **`src/gui/utils/meta_netcdf.py`**: Cached varname → (unit, long_name, description) lookup from `cwatm/metaNetcdf.xml` (editor hover tooltips); also `all_varnames()` (Check settingsfile output-name validation), `output_varnames(high_only=)` (Add output variables — data vars, excluding no-type / `_`-prefixed names, `list(...)` tables and Flag/Number/String scalar types; `high_only` keeps only `priority="high"`), and `dim_of()`/`priority_of()` (the metaNetcdf `dim`/`priority` attributes, parsed alongside the type)
 - **`src/gui/widgets/line_number_gutter.py`**: Line-number gutter widget for the settings editor
 - **`src/gui/widgets/notebooklm_window.py`**: CWatM AI — `NotebookLMWindow` (Gemini/NotebookLM chat: persistent transcript + question history, Up/Down recall, login-state colouring; see CWatM AI section)
@@ -703,6 +807,11 @@ cwatm_gui.py
             ├── src/gui/components/menu_builder.py    (mixin)
             ├── src/gui/components/run_controller.py  (mixin)
             ├── src/gui/components/output_box.py      (mixin)
+            ├── src/gui/components/tab_manager.py     (mixin; owns the per-tab
+            │       settings_editor.py + line_number_gutter.py + text_display.py)
+            ├── src/gui/components/settings_check.py  (mixin; Check settingsfile)
+            ├── src/gui/components/find_replace.py    (mixin; Find & Replace)
+            ├── src/gui/components/main_window_styles.py (mixin; QSS builders)
             ├── src/gui/components/config_parser.py
             ├── src/gui/managers/date_manager.py
             ├── src/gui/managers/file_manager.py
@@ -797,7 +906,11 @@ pip install -r requirements.txt          # runtime (pinned, UTF-8)
 pip install -r requirements_build.txt    # + PyInstaller, only for building the exe
 python cwatm_gui.py
 ```
-Do **not** install the GDAL wheel — rasterio ships its own GDAL (see `cwtmexe.md`).
+Do **not** install the GDAL wheel — the rasterio wheel ships its **own** GDAL (in
+`rasterio.libs/`). A GDAL-less rasterio borrowing its DLL from the `osgeo` wheel breaks
+the moment GDAL is removed (`ImportError: DLL load failed while importing _base`); the
+cure is `pip install --force-reinstall --no-deps rasterio`. Full note at the top of
+`requirements.txt`.
 
 The application starts in maximized window mode for optimal viewing of configuration files.
 
@@ -893,8 +1006,11 @@ The invariants that belong here:
   dependencies next to itself there — never rename `_internal` or the model exe's
   bootstrap breaks). The GUI looks for it in `_internal/` first, then the folder
   root (older builds).
-- Build: `python -m PyInstaller cwatm_gui_dir.spec --noconfirm` (UPX disabled for faster builds).
-- Reference docs in this folder: **`cwtmexe.md`** (rasterio/xarray/GDAL packaging fixes), **`makeitfaster.md`** (PyInstaller speed), **`nuitka_plan.md`** (optional Nuitka build for faster runtime), **`cwatm_gui_linux.md`** (install & run on Linux, incl. remote X displays).
+- Build: `python -m PyInstaller cwatm_gui_dir.spec --noconfirm` (UPX disabled for faster
+  builds) — but **run it through `build_release.ps1`, not here**: see
+  [Building on the local disk](#building-on-the-local-disk--build_releaseps1) below,
+  which is the standard procedure for both the exe and the installer.
+- Reference doc in this folder: **`cwatm_gui_linux.md`** (install & run on Linux, incl. remote X displays).
 
 ### Installer (per-user, no admin) — `installer/CWatM_GUI.iss`
 An **Inno Setup 7** script packages the one-folder build into a single
@@ -923,8 +1039,9 @@ the `#for {…}` braces. Keep the literal on one line as `__version__ = "X.YZ"`.
 fixed `AppId` GUID so upgrades/uninstall track correctly. The manual
 (`documentation/CWatM_GUI_Documentation.md`: title header + §18 prose and table) still
 needs its own edit per release.
-- **Build the installer**: first `python -m PyInstaller cwatm_gui_dir.spec --noconfirm`
-  (produces `dist\CWatM_GUI\`), then `ISCC installer\CWatM_GUI.iss` →
+- **Build the installer**: `build_release.ps1` does it (step `installer`). By hand it is
+  `python -m PyInstaller cwatm_gui_dir.spec --noconfirm` (produces `dist\CWatM_GUI\`),
+  then `ISCC installer\CWatM_GUI.iss` →
   `installer\Output\CWatM_GUI_Setup.exe` (~260 MB, lzma2/max solid). `ISCC.exe` is the
   Inno Setup 7 compiler; **its location differs per machine — probe both known paths**:
   `C:\Apps\Inno Setup 7\ISCC.exe` and
@@ -933,6 +1050,39 @@ needs its own edit per release.
   script uses only 6-era directives, which 7 compiles unchanged.
 - The setup is **unsigned**, so SmartScreen / FortiClient may warn on first run even
   though it installs fine — Authenticode-sign the setup + both exes to avoid that.
+
+### Building on the local disk — `build_release.ps1`
+**The standard procedure for producing `CWatM_GUI.exe` and `CWatM_GUI_Setup.exe`.**
+Development happens here in `P:\watmodel\cwatmpublic\gui`, but **the build itself never
+runs on P:** — PyInstaller reads tens of thousands of small files (site-packages, the
+collected Qt/GDAL/matplotlib trees) and writes ~950 MB, and Inno Setup then reads all of
+it again; over SMB that is the dominant cost of a release. The build therefore runs in a
+**local working copy, `C:\work\CWatM_GUI`** (override with `-Work`), which is refreshed
+from the repo on every build:
+
+```powershell
+pwsh -NoProfile -Command "& '.\build_release.ps1'"          # full release
+pwsh -NoProfile -Command "& '.\build_release.ps1' -Steps sync,build"   # exe only
+pwsh -NoProfile -Command "& '.\build_release.ps1' -ForceVenv"          # after a pip install
+```
+(Call it with `-Command`, not `-File`: with `-File` the shell passes `-Steps a,b` as one
+string and the `ValidateSet` rejects it.)
+
+Five steps, selectable with `-Steps`:
+
+| Step | What it does |
+|------|--------------|
+| `venv` | Mirrors the repo `venv\` to `C:\work\CWatM_GUI\venv` **once** (1.3 GB) — so site-packages is read locally too, which is half the win. Skipped when it is already there; `-ForceVenv` re-mirrors it after a `pip install`/upgrade. The copy works because the venv's `home` is the local `C:\Python312`; nothing hardcodes the P: path except the console scripts, and the script always invokes `venv\Scripts\python.exe -m PyInstaller`. |
+| `sync` | Robocopy `/MIR` of what the build reads — `src`, `cwatm`, `assets`, `documentation`, `installer` (minus `Output`) — plus `cwatm_gui.py`, `cwatm_model.py`, `cwatm_gui_dir.spec`, `LICENSE`. Nothing else is needed: the spec bundles code through `collect_submodules('cwatm'/'src')` and only assets, `metaNetcdf.xml`, the Help markdown + figures and the t5 routing libraries as data. |
+| `build` | `venv\Scripts\python.exe -m PyInstaller cwatm_gui_dir.spec --noconfirm` in the working copy, then asserts `dist\CWatM_GUI\CWatM_GUI.exe` **and** `dist\CWatM_GUI\_internal\CWatM_model.exe` exist. |
+| `installer` | `ISCC installer\CWatM_GUI.iss` in the working copy (probing the per-machine ISCC paths). Both the spec and the `.iss` resolve everything relative to their own location — including the version the `.iss` scrapes from `src\gui\__init__.py` — so the local copy builds exactly what the repo would. |
+| `copyback` | `dist\CWatM_GUI` → `P:\…\gui\dist\CWatM_GUI` (robocopy `/MIR`, so removed files disappear) and `installer\Output\CWatM_GUI_Setup.exe` → `P:\…\gui\installer\Output\`, overwriting the previous release. **This is the only P: write of the whole build**, and it is a straight sequential copy. |
+
+Consequences to keep in mind: `C:\work\CWatM_GUI` is a **build artefact, never a second
+working copy** — edit here, and `sync` overwrites anything changed there; and the exe
+that is tested/shipped is the one *copied back*, so `copyback` is not optional. The
+spec's `_netsafe_copyfile` patch (SMB `OSError 22` on large writes) stays for anyone who
+still runs PyInstaller directly on P:.
 
 ### Watercycle template scripts (repo root — canonical balance computation)
 The two Analyse water-balance windows do **not** invent their own maths — each
@@ -978,7 +1128,7 @@ lon/lat + settings `Title` from the csv header instead of hardcoded strings.
 - **Global Exception Handling**: Comprehensive error handling prevents application crashes
 - **Thread Safety**: All CWatM operations run in separate threads with proper signal handling
 - **Resource Management**: Automatic cleanup of file handles and NetCDF datasets after an interrupted run; the process std streams, the `gui.log` stream and the run-log handle are protected from this cleanup (`_protected_file_objects`)
-- **Diagnostic log**: swallowed/guarded exceptions are recorded in `%LOCALAPPDATA%/CWatM_GUI/gui.log` (rotating, via `src/gui/utils/gui_log.py`) — check it when "nothing happened"
+- **Diagnostic log**: swallowed/guarded exceptions are recorded in `%LOCALAPPDATA%/CWatM_GUI/gui.log` (rotating, via `src/gui/utils/gui_log.py`) — check it when "nothing happened". **Qt's own messages land there too** (`cwatm_gui._install_qt_message_handler`, installed in `_create_app` before the `QApplication`): a warning/critical is logged **with the Python stack that triggered it**, plus Qt's own `QMessageLogContext` (category/file/line — usually only filled in a debug build) and a **widget line** (`focus=` / `under-mouse=` / `active-window=`, class + objectName). The stack names the call site when Python caused it; when the stack stops at `app.exec()` the message came from **inside Qt's C++ event loop** (`QFont::setPointSize: Point size <= 0 (-1)` is one of those — Qt's stylesheet font resolution meeting the editor's **pixel**-sized font; harmless, Qt keeps the current size) and the widget line is the only clue left. Chromium/QtWebEngine messages arrive from C++ callbacks the same way. **Three lines are filtered off the console** (`expected_messages`) because they are Chromium complaining about the configuration `_configure_qtwebengine` deliberately asks for — *"Sandboxing disabled by user"* (`--no-sandbox`, needed to launch `QtWebEngineProcess.exe` from a network share), *"--use-gl=angle is set with --disable-gpu. Expect troubles!"* and *"GPUInfo not initialized on GpuInfoUpdate"* (software WebGL with the GPU off). They are still recorded in `gui.log` at DEBUG, and **`CWATM_GUI_QT_VERBOSE=1`** puts them back on the console. Never silence a message here without that pairing: filtered means *logged elsewhere*, not lost. The message is still written to the **real** console (`sys.__stderr__`, `None`-guarded for `pythonw.exe`) and never to the redirected `sys.stderr`, so a run from a terminal looks unchanged and Qt chatter stays out of the CWatM output box
 - **Native Qt Graphics**: Custom drawing routines for high-performance data visualization
 
 ## Data Visualization internals → `documentation/CWatM_GUI_Internals.md`

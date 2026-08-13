@@ -241,7 +241,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
             try:
                 return _parse_coord_pairs(mw.gauges_field.text()) or []
             except Exception:
-                pass
+                log.debug("_field_gauges: ignored", exc_info=True)
         return []
 
     def __init__(self, basin_data, lats, lons, title="Basin Display",
@@ -297,7 +297,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
             if os.path.exists(icon):
                 self.setWindowIcon(QIcon(icon))
         except Exception:
-            pass
+            log.debug("__init__: ignored", exc_info=True)
 
         self._build_ui(title)
         self._show_map()
@@ -680,7 +680,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
             try:
                 profile.removeUrlSchemeHandler(self._tile_handler)
             except Exception:
-                pass
+                log.debug("_show_map: ignored", exc_info=True)
             profile.installUrlSchemeHandler(b"osmtile", self._tile_handler)
             self.web_view.loadFinished.connect(self._on_loaded)
             self.web_view.load(QUrl("osmtile://map2/"))
@@ -945,7 +945,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
                 try:
                     os.remove(temp_path)
                 except Exception:
-                    pass
+                    log.debug("_create_new_mask: ignored", exc_info=True)
             if not result:
                 print("Failed to create new mask - no result from CWatM",
                       file=sys.stderr)
@@ -987,5 +987,5 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
             if self._temp_html and os.path.exists(self._temp_html):
                 os.remove(self._temp_html)
         except Exception:
-            pass
+            log.debug("closeEvent: ignored", exc_info=True)
         super().closeEvent(event)

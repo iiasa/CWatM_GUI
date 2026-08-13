@@ -806,7 +806,7 @@ class OutputVariablesWindow(GeometryMemoryMixin, QDialog):
                 from PySide6.QtWidgets import QApplication
                 QApplication.beep()
             except Exception:
-                pass
+                log.debug("_insert: ignored", exc_info=True)
             return
         key_disp = s[:eq].strip()
         # Toggle: if the variable is already in this output line's value list, a second
@@ -883,7 +883,7 @@ class OutputVariablesWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("_set_window_icon: ignored", exc_info=True)
 
     @staticmethod
     def _blue_button_style():

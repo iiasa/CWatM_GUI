@@ -18,17 +18,21 @@ import os
 import re
 import sys
 import csv
-import tempfile
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QMessageBox, QApplication
 )
-from PySide6.QtCore import Qt, QUrl, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 
 from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.temp_page import TempPageMixin
 from src.gui.utils import theme
+
+from src.gui.utils.gui_log import get_logger
+
+log = get_logger("analysis_timeseries")
 
 # Optional dependencies: Plotly for the figure, QtWebEngine to render it.
 try:
@@ -119,7 +123,7 @@ def open_comparison(parent, paths, labels=None):
                                     "x": win._parse_dates(dates),
                                     "series": series})
         except Exception:
-            pass                                 # skip a file that cannot be read
+            log.debug("open_comparison: ignored", exc_info=True)  # skip a file that cannot be read
     if win is None:
         QMessageBox.warning(parent, "Compare results",
                             "None of the result files could be read.")
@@ -130,7 +134,7 @@ def open_comparison(parent, paths, labels=None):
     return win
 
 
-class TimeseriesWindow(GeometryMemoryMixin, QDialog):
+class TimeseriesWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
     """Window showing a CWatM result .csv time series as a Plotly scatter plot."""
 
     def __init__(self, csv_path, parent=None, preloaded=None):
@@ -186,7 +190,7 @@ class TimeseriesWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("__init__: ignored", exc_info=True)
 
         self._temp_html = None
         self._build_ui()
@@ -284,7 +288,7 @@ class TimeseriesWindow(GeometryMemoryMixin, QDialog):
                             return t
                     break
         except Exception:
-            pass
+            log.debug("_read_settings_title: ignored", exc_info=True)
         # 2) Fall back to the settings currently loaded in the main window
         try:
             mw = self.parent()
@@ -293,7 +297,7 @@ class TimeseriesWindow(GeometryMemoryMixin, QDialog):
                 if t:
                     return t
         except Exception:
-            pass
+            log.debug("_read_settings_title: ignored", exc_info=True)
         return ""
 
     @staticmethod
@@ -682,7 +686,7 @@ class TimeseriesWindow(GeometryMemoryMixin, QDialog):
                 nm, vals = series[0]
                 return dates, vals, (nm or "observed")
         except Exception:
-            pass
+            log.debug("_parse_observed: ignored", exc_info=True)
         # 2) Simple date,value CSV (header rows whose 2nd cell is not numeric are skipped)
         dates, values = [], []
         with open(path, encoding="utf-8", errors="ignore", newline="") as f:
@@ -887,23 +891,19 @@ class TimeseriesWindow(GeometryMemoryMixin, QDialog):
             try:
                 fig.update_xaxes(range=[to_axis(x_lo), to_axis(x_hi)])
             except TypeError:
-                pass
+                log.debug("_show_current: ignored", exc_info=True)
         else:
             xvals = [v for arr in all_x for v in arr if v is not None]
             if xvals:
                 try:
                     fig.update_xaxes(range=[to_axis(min(xvals)), to_axis(max(xvals))])
                 except TypeError:
-                    pass  # mixed date/category types - let Plotly auto-range
+                    log.debug("_show_current: ignored", exc_info=True)  # mixed date/category types - let Plotly auto-range
 
         # Inline plotly.js so no CDN is needed (the runtime environment may block it).
         html = theme.themed_plot_page(fig.to_html(include_plotlyjs=True, full_html=True))
 
         # Write to a temp file and load via file:// (the HTML is fully self-contained,
-        # so there are no cross-origin subresource requests to worry about).
-        tmp = tempfile.NamedTemporaryFile(
-            prefix="cwatm_ts_", suffix=".html", delete=False, mode="w", encoding="utf-8")
-        tmp.write(html)
-        tmp.close()
-        self._temp_html = tmp.name
-        self.web_view.load(QUrl.fromLocalFile(tmp.name))
+        # so there are no cross-origin subresource requests to worry about). The page
+        # this one replaces is deleted by _load_temp_page - this runs on every redraw.
+        self._load_temp_page(html, "cwatm_ts_")

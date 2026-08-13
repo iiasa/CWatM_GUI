@@ -70,7 +70,7 @@ def open_run_ledger(parent=None):
             lambda *_: parent._run_ledger_windows.remove(win)
             if win in parent._run_ledger_windows else None)
     except Exception:
-        pass
+        log.debug("open_run_ledger: ignored", exc_info=True)
     return win
 
 
@@ -111,7 +111,7 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("_set_window_icon: ignored", exc_info=True)
 
     # --------------------------------------------------------------------- UI
     def _build_ui(self):
@@ -183,7 +183,7 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
         self.log_button.clicked.connect(self._show_log)
         self.rerun_button = QPushButton("Re-run")
         self.rerun_button.setToolTip(
-            "Run this run's settings again in a Hidden Run window")
+            "Run this run's settings again in a Windowed Run window")
         self.rerun_button.setEnabled(False)
         self.rerun_button.clicked.connect(self._rerun)
         self.compare_button = QPushButton("Compare settings")
@@ -785,7 +785,8 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
                 return
         if QMessageBox.question(
                 self, "Re-run",
-                f"Run this settings file again in a Hidden Run window?\n\n{path}{note}",
+                f"Run this settings file again in a Windowed Run window?\n\n"
+                f"{path}{note}",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes) != QMessageBox.Yes:
             return
         try:

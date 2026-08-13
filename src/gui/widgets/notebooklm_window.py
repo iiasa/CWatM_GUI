@@ -139,7 +139,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("_set_window_icon: ignored", exc_info=True)
 
     def _build_ui(self):
         layout = QVBoxLayout(self)

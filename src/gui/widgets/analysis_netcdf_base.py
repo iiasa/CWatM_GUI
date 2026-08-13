@@ -30,6 +30,10 @@ from PySide6.QtGui import QIcon, QGuiApplication
 from src.gui.utils.window_geometry import GeometryMemoryMixin
 from src.gui.utils import theme
 
+from src.gui.utils.gui_log import get_logger
+
+log = get_logger("analysis_netcdf_base")
+
 
 def _position_offset(win, frac):
     """Place ``win`` shifted horizontally from the screen centre by ``frac`` of the
@@ -40,7 +44,7 @@ def _position_offset(win, frac):
         y = geo.y() + (geo.height() - win.height()) // 2
         win.move(max(geo.x(), x), max(geo.y(), y))
     except Exception:
-        pass
+        log.debug("_position_offset: ignored", exc_info=True)
 
 # Optional dependencies: xarray for reading the file, Plotly for the figure and
 # QtWebEngine to render it.
@@ -112,7 +116,7 @@ def _open_dataset_safe(path):
     try:
         return xr.open_dataset(path, decode_times=True, mask_and_scale=True)
     except Exception:
-        pass  # fall through to the tolerant path below
+        log.debug("_open_dataset_safe: ignored", exc_info=True)  # fall through to the tolerant path below
     ds = xr.open_dataset(path, decode_times=False, mask_and_scale=True)
     try:
         for name, var in list(ds.variables.items()):
@@ -125,7 +129,7 @@ def _open_dataset_safe(path):
                 try:
                     bad |= vals == float(fill)
                 except Exception:
-                    pass
+                    log.debug("_open_dataset_safe: ignored", exc_info=True)
             if bad.any() and not bad.all():
                 # Keep only the written time steps (usually the leading ones).
                 ds = ds.isel({var.dims[0]: np.nonzero(~bad)[0]})
@@ -239,7 +243,7 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
             try:
                 ds.close()
             except Exception:
-                pass
+                log.debug("_load: ignored", exc_info=True)
 
     @staticmethod
     def _fmt_time(v):
@@ -249,7 +253,7 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
             if np.issubdtype(np.asarray(v).dtype, np.datetime64):
                 return str(pd.to_datetime(v).date())
         except Exception:
-            pass
+            log.debug("_fmt_time: ignored", exc_info=True)
         return str(v)
 
     @classmethod
@@ -267,7 +271,7 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
             if np.issubdtype(arr.dtype, np.datetime64):
                 return list(np.datetime_as_string(arr, unit="D"))
         except Exception:
-            pass
+            log.debug("_fmt_time_array: ignored", exc_info=True)
         return [cls._fmt_time(v) for v in arr]
 
     def _guess_coord(self, ds, names):
@@ -336,7 +340,7 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
                 if t:
                     return t
         except Exception:
-            pass
+            log.debug("_read_settings_title: ignored", exc_info=True)
         try:
             mw = self.parent()
             if mw is not None and hasattr(mw, "original_content"):
@@ -344,7 +348,7 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
                 if t:
                     return t
         except Exception:
-            pass
+            log.debug("_read_settings_title: ignored", exc_info=True)
         return ""
 
     # ----------------------------------------------------------------- UI
@@ -373,4 +377,4 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
             try:
                 ds.close()
             except Exception:
-                pass
+                log.debug("_point_series: ignored", exc_info=True)

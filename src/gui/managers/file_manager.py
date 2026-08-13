@@ -35,12 +35,34 @@ class FileManager:
         self.parent = parent_window
         self.current_file_path = None
         
+    def choose_load_path(self):
+        """Ask for a settings file and return its path ('' when cancelled).
+
+        Split out of load_file so the caller can run its checks - the
+        duplicate-tab guard (one settings file must never be open in two tabs) -
+        *before* anything is read or the current file path is replaced.
+        """
+        file_path, _ = QFileDialog.getOpenFileName(
+            self.parent, "Load Configuration File", "",
+            "INI Files (*.ini);;Text Files (*.txt);;All Files (*)"
+        )
+        return file_path
+
+    def choose_save_path(self):
+        """Ask where to save ('' when cancelled) - same split as choose_load_path,
+        so Save As can be checked against the other tabs before it writes."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self.parent, "Save File As", "",
+            "INI Files (*.ini);;Text Files (*.txt);;All Files (*)"
+        )
+        return file_path
+
     def load_file(self):
         """Load a configuration file through file dialog.
-        
+
         Opens a file dialog to select an INI configuration file,
         reads the content, and updates the current file path.
-        
+
         Returns
         -------
         tuple
@@ -48,11 +70,8 @@ class FileManager:
             or None if failed, and filename is the base filename or
             error message
         """
-        file_path, _ = QFileDialog.getOpenFileName(
-            self.parent, "Load Configuration File", "", 
-            "INI Files (*.ini);;Text Files (*.txt);;All Files (*)"
-        )
-        
+        file_path = self.choose_load_path()
+
         if file_path:
             try:
                 with open(file_path, 'r', encoding='utf-8') as file:
@@ -91,13 +110,12 @@ class FileManager:
         except Exception as e:
             return False, f"Error saving file: {str(e)}"
     
-    def save_as_file(self, content):
-        """Save content to a new file"""
-        file_path, _ = QFileDialog.getSaveFileName(
-            self.parent, "Save File As", "", 
-            "INI Files (*.ini);;Text Files (*.txt);;All Files (*)"
-        )
-        
+    def save_as_file(self, content, file_path=None):
+        """Save content to a new file (asking for the path when none is given -
+        main_window passes one it has already checked against the other tabs)."""
+        if file_path is None:
+            file_path = self.choose_save_path()
+
         if file_path:
             success, message = self.save_file(content, file_path)
             if success:

@@ -396,7 +396,7 @@ def _format_value(value):
         if isinstance(value, np.ndarray):
             value = ", ".join(str(v) for v in value.tolist())
     except Exception:
-        pass
+        log.debug("_format_value: ignored", exc_info=True)
     return str(value)
 
 
@@ -445,7 +445,7 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("_set_window_icon: ignored", exc_info=True)
 
     # ---------------------------------------------------------------------- UI
     def _build_ui(self):
@@ -683,7 +683,7 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
             try:
                 self._preview_window.reject()
             except Exception:
-                pass
+                log.debug("_on_compare: ignored", exc_info=True)
         self.accept()               # let the non-modal diff window take over
         try:
             from src.gui.widgets.compare_settings_window import CompareSettingsWindow
@@ -773,7 +773,7 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
             if mw is not None and hasattr(mw, "_resolved_pathout_dir"):
                 start_dir = mw._resolved_pathout_dir() or start_dir
         except Exception:
-            pass
+            log.debug("_restore_dir: ignored", exc_info=True)
         return start_dir
 
     def _confirm_unsaved(self):
@@ -845,7 +845,7 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
             try:
                 self._preview_window.accept()
             except Exception:
-                pass
+                log.debug("_on_restore: ignored", exc_info=True)
         self.accept()   # close so the restored file is visible in the main window
 
     # --------------------------------------------------------- show input files
@@ -1002,7 +1002,7 @@ class SettingsPreviewWindow(GeometryMemoryMixin, QDialog):
             try:
                 owner.accept()
             except Exception:
-                pass
+                log.debug("_on_load: ignored", exc_info=True)
 
     def _on_compare(self):
         owner = self._owner

@@ -1,5 +1,6 @@
 """
-Hidden Run CWatM window (RUN CWATM > Hidden Run CWatM).
+Windowed Run CWatM window (RUN CWATM > Windowed Run CWatM; the module, its geometry
+key and the journal's `kind="hidden"` keep the older "hidden run" name).
 
 A small, self-contained window that runs CWatM on a settings file in its **own OS
 process**, completely independent of the main window and of every other Hidden Run
@@ -88,7 +89,7 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         # main window (an .ini in that file's directory).
         self._settings_path = settings_path or self._current_main_settings()
 
-        self.setWindowTitle("Hidden Run CWatM")
+        self.setWindowTitle("Windowed Run CWatM")
         # Non-modal so the main GUI (and other Hidden Run windows) stay interactive.
         self.setModal(False)
         # Delete on close so a closed window frees its resources (and its parent's
@@ -293,7 +294,7 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
             self.run_button.setEnabled(True)
             self._read_settings_facts()
             name = self._title or os.path.basename(self._settings_path)
-            self.setWindowTitle(f"Hidden Run CWatM - {name}")
+            self.setWindowTitle(f"Windowed Run CWatM - {name}")
             parts = []
             if self._title:
                 parts.append(f"Title: {self._title}")
@@ -312,7 +313,7 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
             self.current_button.setEnabled(
                 not self._running and bool(self._current_main_settings()))
         except RuntimeError:
-            pass
+            log.debug("_refresh_settings_label: ignored", exc_info=True)
 
     def _on_open_pathout(self):
         from src.gui.utils.open_path import open_path
@@ -461,7 +462,7 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         try:
             QApplication.alert(QApplication.activeWindow(), 0)
         except Exception:
-            pass
+            log.debug("_notify: ignored", exc_info=True)
 
     def _stop_run(self):
         if self._worker is not None:
@@ -624,7 +625,7 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
             name = os.path.basename(self._settings_path or "this settings file")
             elapsed = _fmt_dur(time.time() - self._started) if self._started else ""
             if QMessageBox.question(
-                    self, "Hidden Run",
+                    self, "Windowed Run",
                     f"CWatM is still running on {name}"
                     + (f" ({elapsed} so far)" if elapsed else "") + ".\n\n"
                     "Stop it and close this window?",

@@ -102,7 +102,9 @@ A pre-built **`CWatM_GUI.exe`** (one-folder build) or the per-user **installer**
   with a live *changed-fields* hint and warning label, the circular **progress clock**
   and the live **discharge sparkline**.
 - **Right panel**: the **settings editor** (plain-text with syntax highlighting, a
-  line-number gutter with fold markers, and bookmarks).
+  line-number gutter with fold markers, and bookmarks), with the **tab bar** above it —
+  one tab per open settings file, so several can be open at once
+  ([§6](#6-editing-settings)).
 - **Output box** (below): a read-only, copyable log of the model run, with the
   progress clock and sparkline beneath it.
 
@@ -141,7 +143,8 @@ right of the menu bar opens the same window.
 | Settings | Clear all Bookmarks | **Ctrl+Shift+F2** | Remove every bookmark |
 | Settings | Goto last change | **F5** | Jump to the most recently changed line |
 | Settings | **Check settingsfile** | **F4** | **Toggle:** flag missing files/paths (relabels to *Clear checking*); press F4 again to clear — see [§8](#8-check-settingsfile) |
-| Settings | Compare settings | — | Side-by-side diff of two settings files (differing lines orange, synced scrolling, Next/Previous Diff) |
+| Settings | Compare settings | — | Side-by-side diff of two settings files (differing lines orange, synced scrolling, Next/Previous Diff). With several tabs open, the **active** tab and the tab next to it are preloaded |
+| Settings | **Compare Tab** | **F8** | *(Expert only)* **Toggle:** colour every line that differs from the neighbouring tab light green, **in both tabs**, right in the editor; F8 again clears it — see [§6](#6-editing-settings) |
 | Tools | **Excel Crops/Reservoirs** | — | (directly below *Change Options*) Open the settings Excel workbook — all its sheets (*Crops*, *Reservoirs*, *Reservoirs_downstream*, …) on tabs below the table |
 | Tools | Change Options | — | Boolean `[OPTIONS]` window |
 | Tools | Show Basin | — | Basin viewer on an OSM map |
@@ -153,7 +156,7 @@ right of the menu bar opens the same window.
 | Tools | Restore settingsfile | — | Open a CWatM output `dis*.nc`: summary card + all its metadata, **preview** the settings file stored inside, **compare** it with the loaded one, restore it to a new file, list **and check** its input files, or jump to that run in the Journal |
 | RUN CWATM | Run CWATM | **Ctrl+R** | Run / stop the model |
 | RUN CWATM | **Journal of Runs** | — | Table of past runs; reopen results, reload settings, or Compare settings of two runs — see [§9](#9-running-the-model) |
-| RUN CWATM | Hidden Run CWatM | — | Separate window that runs CWatM in its own process (several in parallel) — see [§9](#9-running-the-model) |
+| RUN CWATM | Windowed Run CWatM | — | *Run CWatM in a separate window* — its own process, several in parallel (was called *Hidden Run CWatM*) — see [§9](#9-running-the-model) |
 | RUN CWATM | **Batch Run…** | — | Run many scenarios from the loaded file (base .ini + per-row overrides, N in parallel) — see [§9](#9-running-the-model) |
 | Configure | **Preferences…** | **Ctrl+,** | The window holding **every** GUI setting, on five pages — see [§15](#15-configuration-and-appearance) |
 | _(menu bar)_ | **⋮** | — | The button on the far right of the menu bar — opens the same Preferences window |
@@ -204,6 +207,47 @@ see. Highlights:
   the value is preserved.
 
 ![Options window](figures/screenshot_options.png)
+
+### Several settings files at once (tabs)
+
+The bar above the editor holds **one tab per settings file**, so a base run and its
+variants can be open side by side. A loaded file — from **File ▸ Load .ini**, the recent
+files, or dropped onto the window — goes into the **active** tab; the small **+** right
+of the last tab opens an empty one for the next file.
+
+- **The active tab is what everything works on**: RUN CWATM, the date / PathOut /
+  MaskMap / Gauges fields, Check settingsfile, Show Basin, Check Data, Compare, the Excel
+  editor and the Analyse windows all use the file of the tab you are looking at.
+  Switching tabs swaps the whole left panel with it.
+- **Each tab keeps its own** undo history, bookmarks, folded sections, changed-line
+  highlights and Check-settingsfile marks. A tab with unsaved edits shows a **`*`**;
+  **Save** only ever writes the active tab, and on exit you are asked once per unsaved
+  file.
+- **The same file can only be open once.** Loading a file another tab already has brings
+  you to that tab, and *Save As* onto another tab's file is refused — two tabs on one
+  file would mean two versions of the text, and the second save would quietly discard the
+  first tab's work.
+- **Close** a tab with the **✕** that appears on it under the mouse; **reorder** tabs by
+  dragging them.
+
+**Right-click a tab** for:
+
+| Item | What it does |
+|------|--------------|
+| **Delete Tab** | Close it (asking about unsaved changes). Deleting the last tab empties it instead. |
+| **Copy Tab** | Write what the tab currently shows — unsaved edits included — to a new file in the same folder (`settings.ini` → `settings_2.ini`) and open it in a new tab next to it. |
+| **Run CWatM** | Run **this tab's** settings file (as saved on disk) in its own **Windowed Run** window — independent of the main run and of the other tabs, so a second scenario can run beside the first. See [§9](#9-running-the-model). |
+| **Link scrolling** | Scroll this tab and the **previous** one together and keep the **same sections folded** in both, so switching between them lands you on the same lines. Greyed out on the first tab; ticking several in a row links them all. |
+
+Two comparisons use the tabs: **Settings ▸ Compare Tab (F8)** colours every line that
+differs from the neighbouring tab light green **in both tabs** (F8 again clears it,
+nothing is written), and **Settings ▸ Compare settings** opens with the active tab left
+and the neighbouring tab right.
+
+Tabs belong to the **Expert** skill level and can be switched off in **Preferences ▸
+Editor & Dates ▸ Use Tabs** (on by default) — that hides only the bar, never the open
+files. With **Load previous settings at start** (Preferences ▸ Startup & Model) ticked,
+all open tabs are reopened on the next start.
 
 ### Adding output variables
 
@@ -313,19 +357,28 @@ while it runs.
 - **Output-box log file** (Preferences ▸ Output): the run log can be appended to a file
   (`<PathOut>/cwatm_out.txt` by default, or a custom path).
 
-Every finished run — main, Hidden or Batch — is recorded in the **Journal of Runs** (below).
+Every finished run — main, Windowed or Batch — is recorded in the **Journal of Runs** (below).
 
-### Hidden Run CWatM
+### Windowed Run CWatM
 
-**RUN CWATM ▸ Hidden Run CWatM** opens a small **separate window** that runs CWatM on
+**RUN CWATM ▸ Windowed Run CWatM** opens a small **separate window** that runs CWatM on
 a settings file in its **own process**, independent of the main window — so the main
-GUI stays fully usable and **several Hidden Run windows can run at once** (e.g. to run
+GUI stays fully usable and **several Windowed Run windows can run at once** (e.g. to run
 different settings files in parallel).
 
+*(This is the feature that was called **Hidden Run CWatM** in earlier versions — same
+window, clearer name.)*
+
 Each window opens **pre-loaded** with the settings file currently open in the main
-window (shown in **bold green**); a **Load** button picks a different `.ini`. Press
-**Run CWatM** (it toggles to **Stop CWatM** while running) and the run streams into
-that window's own output box.
+window (shown in **bold green**); a **Load** button picks a different `.ini`, **Use
+current** takes whatever the main window has loaded now, and an `.ini` can be dropped
+onto the window. Press **Run CWatM** (it toggles to **Stop CWatM** while running) and the
+run streams into that window's own output box, with a progress bar and elapsed/remaining
+time; the run is recorded in the Journal of Runs like any other.
+
+Two other places open the same window on a file of their own: a **right-click on a
+settings tab ▸ Run CWatM** ([§6](#6-editing-settings)) runs that tab's file, and the
+Journal of Runs' **Re-run** starts a past run again.
 
 ### Batch Run
 
@@ -353,7 +406,7 @@ combination) are filled in for you.
 
 ### Journal of Runs
 
-**RUN CWATM ▸ Journal of Runs** (the 2nd item in that menu) is a table of your **past runs** (main, Hidden and Batch) — time,
+**RUN CWATM ▸ Journal of Runs** (the 2nd item in that menu) is a table of your **past runs** (main, Windowed and Batch) — time,
 Title, PathOut, duration, success and last discharge. Select a run and:
 
 - **Open results** — its PathOut in the Output Explorer;
@@ -682,8 +735,9 @@ always starts off).
 
 **Startup & Model**
 
-- **Load previous settings at start** — re-open the last settings file automatically at
-  the next startup.
+- **Load previous settings at start** — re-open **all** the tabs of the last session
+  automatically at the next startup (the file you were working in on top). A settings
+  file passed on the command line wins and opens on its own.
 - **Use Modflow** — pre-load the MODFLOW coupling library (flopy) so MODFLOW runs/checks
   are ready; off (default) keeps startup fast. *(A MODFLOW run also needs `xmipy` and the
   MODFLOW 6 library `libmf6`, whose path you set in the settings — the GUI does not ship
@@ -695,6 +749,9 @@ always starts off).
   (black + amber). Switches live and is remembered.
 - **Show Header** — show or hide the top banner (CWatM icon + title + IIASA logo).
   Turning it off moves the menu, panels and editor up to reclaim the space.
+- **Font of settingsfile** / **Font size of settingsfile** — the (monospaced) family and
+  the size the settings editor renders with; the size is the same setting as the
+  **Font+ / Font-** buttons next to the editor.
 - **Show decimals** — how many decimals every numeric read-out shows (default 3).
 - **Initial map transparency** — the transparency (0–100 %) that Show Basin and NetCDF
   open with.
@@ -709,7 +766,7 @@ always starts off).
   button next to the editor.
   **Beginner also simplifies the menus** — the entries you do not need for a first run
   are hidden: *Tools ▸ Add output Watercycle · Change Options · Excel Crops/Reservoirs ·
-  Check Data · Restore settingsfile*, *RUN CWATM ▸ Journal of Runs · Hidden Run CWatM ·
+  Check Data · Restore settingsfile*, *RUN CWATM ▸ Journal of Runs · Windowed Run CWatM ·
   Batch Run…*, and *Analyse ▸ Watercycle · Flow Diagram*. Switch to **Advanced** or
   **Expert** to get them back; nothing is removed, only hidden.
 - **Web-style date picker** — the Start/Spin/End fields use a 📅 button + calendar
@@ -718,6 +775,9 @@ always starts off).
   fields; drag a handle (or click the track) to set a date. The light band behind it is
   the meteo-forcing coverage.
 - **Bookmark Change** — auto-bookmark a line when it is edited.
+- **Use Tabs** — show the tab bar above the editor, so several settings files can be open
+  at once (**Expert** level only; see [§6](#6-editing-settings)). Unticking hides only the
+  bar — the open tabs keep their content and the active file stays in the editor.
 
 **Run History**
 
@@ -752,8 +812,7 @@ ISCC installer\CWatM_GUI.iss        # -> installer\Output\CWatM_GUI_Setup.exe
 
 The installer copies `dist\CWatM_GUI\` verbatim (keeping `_internal\` intact), offers a
 desktop shortcut and an optional `.ini` "Open with" association, and installs into the
-current user's locations. Reference notes: `cwtmexe.md`, `makeitfaster.md`,
-`installer/CWatM_GUI.iss`.
+current user's locations. Reference: `installer/CWatM_GUI.iss`.
 
 ---
 
@@ -805,7 +864,7 @@ disagree. Only this manual — the header above and the table below — needs it
 
 | Version | Date | Notes |
 |---------|------|-------|
-| 1.05 | 11/08/2026 | The four settings/validation windows reworked — see [CWatM_GUI_Version_1.05.md](CWatM_GUI_Version_1.05.md). **Change Options**: grouped by topic, ⓘ explanation per switch, filter, *Changed only*, change marks, *Revert all*, *Add option…*, and a trailing comment is no longer lost (nor the whole option hidden). **Add output variables**: grouped, searches unit/description, ✓ on what the file already writes, and an array variable's index picked **by name**. **Restore settingsfile**: summary card, preview, compare with the current file, load unsaved, and an input-file check (still there? still the same version?), plus *Show in Journal* and CSV export. **Check Data**: runs in the background with its output in the window, warns about unsaved edits, sortable/filterable table with problem rows tinted and counted, and a double-click jumps to that key in the settings file. |
+| 1.05 | 11/08/2026 | **Tabs**: several settings files open at once, one per tab — the active tab is what every window works on, each keeps its own undo/bookmarks/folds/marks, one file can only be open once, with *Copy Tab*, *Run CWatM* (in a Windowed Run window), *Link scrolling* and *Compare Tab* (F8). **Hidden Run CWatM** renamed **Windowed Run CWatM**. Plus the four settings/validation windows reworked — see [CWatM_GUI_Version_1.05.md](CWatM_GUI_Version_1.05.md). **Change Options**: grouped by topic, ⓘ explanation per switch, filter, *Changed only*, change marks, *Revert all*, *Add option…*, and a trailing comment is no longer lost (nor the whole option hidden). **Add output variables**: grouped, searches unit/description, ✓ on what the file already writes, and an array variable's index picked **by name**. **Restore settingsfile**: summary card, preview, compare with the current file, load unsaved, and an input-file check (still there? still the same version?), plus *Show in Journal* and CSV export. **Check Data**: runs in the background with its output in the window, warns about unsaved edits, sortable/filterable table with problem rows tinted and counted, and a double-click jumps to that key in the settings file. |
 | 1.04 | 10/08/2026 | Moved the Excel workbook editor into **Tools ▸ Excel Crops/Reservoirs** (the Excel menu is gone) and extended it: bold, an editable header row that never scrolls away, undo/redo, a symbol toolbar, better column widths and no text spilling between columns. **Batch Run** rewritten around safety and analysis: a pre-flight check, a log per scenario, a row menu, duration/ETA, CSV import & export, result comparison and resume. |
 | 1.03 | 07/08/2026 | Added selection of map/tss to Tools ▸ Add output variables. Put the options of the Configure menu into a Preferences window. |
 | 1.02 | 02/08/2026 | Added User skill Beginner, Advanced, Expert. |

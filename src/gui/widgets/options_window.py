@@ -456,7 +456,7 @@ class OptionsWindow(GeometryMemoryMixin, QDialog):
             try:
                 mark.setVisible(is_changed and mark.parent() is not None)
             except RuntimeError:
-                pass
+                log.debug("_refresh_marks: ignored", exc_info=True)
         self.revert_button.setEnabled(changed > 0)
         self.revert_button.setText(
             f"Revert all ({changed})" if changed else "Revert all")

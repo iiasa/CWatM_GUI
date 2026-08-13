@@ -112,11 +112,11 @@ def _parse_cell(text):
     try:
         return int(t)
     except ValueError:
-        pass
+        log.debug("_parse_cell: ignored", exc_info=True)
     try:
         return float(t)
     except ValueError:
-        pass
+        log.debug("_parse_cell: ignored", exc_info=True)
     return text
 
 
@@ -999,7 +999,7 @@ class _SheetTableView(QTableView):
             try:
                 previous.dataChanged.disconnect(self._on_data_changed)
             except (RuntimeError, TypeError):
-                pass
+                log.debug("setModel: ignored", exc_info=True)
         super().setModel(model)
         self._forget_fitted_rows()
         if model is not None:
@@ -1919,7 +1919,7 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon):
                 self.setWindowIcon(QIcon(icon))
         except Exception:
-            pass
+            log.debug("__init__: ignored", exc_info=True)
 
         self._build_ui()
         self._load()
@@ -2041,8 +2041,11 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
         """The symbol toolbar (right of the sheet name): copy, cut, paste, delete,
         undo, redo. Plain glyph buttons - no icon files to ship - each doing exactly
         what its keyboard shortcut does, so there is only one implementation."""
+        # Sizes in pt, not px: a pixel font-size leaves a QToolButton's QFont with
+        # pointSize() == -1, which makes Qt print "QFont::setPointSize: Point size
+        # <= 0 (-1)" to the console (same reason as the menu bar's ⋮ button).
         style = (
-            "QToolButton { font-size:15px; border:1px solid transparent;"
+            "QToolButton { font-size:11pt; border:1px solid transparent;"
             f" border-radius:5px; padding:2px 7px; color:{theme.c('text')}; }}"
             f"QToolButton:hover {{ background:{theme.c('surface_bg')};"
             f" border-color:{theme.c('border')}; }}"
@@ -2108,7 +2111,7 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
             buttons["undo"].setEnabled(model is not None and model.can_undo())
             buttons["redo"].setEnabled(model is not None and model.can_redo())
         except RuntimeError:
-            pass                       # the window is closing
+            log.debug("_update_toolbar: ignored", exc_info=True)  # the window is closing
 
     # ----------------------------------------------------------------- load
     def _load(self, on_done=None):
@@ -2378,7 +2381,7 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
             try:
                 self._loader.done.disconnect(self._on_loaded)
             except (RuntimeError, TypeError):
-                pass
+                log.debug("closeEvent: ignored", exc_info=True)
             self._loader = None
             self._load_callback = None
             self._set_busy(False)

@@ -22,7 +22,6 @@ import os
 import re
 import sys
 import csv
-import tempfile
 import datetime
 from calendar import monthrange
 
@@ -30,12 +29,17 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QMessageBox, QWidget, QSizePolicy,
 )
-from PySide6.QtCore import Qt, QUrl, QTimer, QPointF, Signal
+from PySide6.QtCore import Qt, QTimer, QPointF, Signal
 from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QBrush
 
 from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.temp_page import TempPageMixin
 from src.gui.utils import theme
 from src.gui.widgets.analysis_timeseries import resolved_pathout_dir
+
+from src.gui.utils.gui_log import get_logger
+
+log = get_logger("analysis_watercycle")
 
 # Optional dependencies: Plotly for the figure, QtWebEngine to render it, pandas/numpy.
 try:
@@ -181,7 +185,7 @@ class RangeSlider(QWidget):
             self.setHigh(val)
 
 
-class WatercycleWindow(GeometryMemoryMixin, QDialog):
+class WatercycleWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
     """Window showing the overall water balance of a WaterCycle csv as a sunburst."""
 
     def __init__(self, csv_path, parent=None):
@@ -216,7 +220,7 @@ class WatercycleWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("__init__: ignored", exc_info=True)
 
         self._temp_html = None
         # Debounce heavy figure rebuilds while dragging the range slider.
@@ -248,7 +252,7 @@ class WatercycleWindow(GeometryMemoryMixin, QDialog):
             if len(rows) > 2 and len(rows[2]) > 1:
                 lat = rows[2][1].strip()
         except Exception:
-            pass
+            log.debug("_read_station: ignored", exc_info=True)
         return lon, lat
 
     def _title_from_settings_content(self, content):
@@ -279,7 +283,7 @@ class WatercycleWindow(GeometryMemoryMixin, QDialog):
                             return t
                     break
         except Exception:
-            pass
+            log.debug("_read_settings_title: ignored", exc_info=True)
         try:
             mw = self.parent()
             if mw is not None and hasattr(mw, "original_content"):
@@ -287,7 +291,7 @@ class WatercycleWindow(GeometryMemoryMixin, QDialog):
                 if t:
                     return t
         except Exception:
-            pass
+            log.debug("_read_settings_title: ignored", exc_info=True)
         return ""
 
     def _load_data(self, csv_path):
@@ -547,12 +551,9 @@ class WatercycleWindow(GeometryMemoryMixin, QDialog):
                 ".plotly-graph-div{height:100vh!important;width:100%!important;}</style>")
         html = html.replace("<head>", "<head>" + fill, 1)
         html = theme.themed_plot_page(html)
-        tmp = tempfile.NamedTemporaryFile(
-            prefix="cwatm_wc_", suffix=".html", delete=False, mode="w", encoding="utf-8")
-        tmp.write(html)
-        tmp.close()
-        self._temp_html = tmp.name
-        self.web_view.load(QUrl.fromLocalFile(tmp.name))
+        # Rebuilt on every station change and every tick of the month slider, so the
+        # page this one replaces is deleted (_load_temp_page) rather than orphaned.
+        self._load_temp_page(html, "cwatm_wc_")
 
     def _build_figure(self):
         """Compute the overall water-balance sunburst (ported from Watercycles1.py).

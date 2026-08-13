@@ -30,7 +30,7 @@ the time range of your meteo/forcing NetCDFs, and that `StepStart ≤ SpinUp ≤
 (F4 now flags the ordering).
 
 **Can I run several things at once?**
-Yes. **RUN CWATM ▸ Hidden Run CWatM** opens independent run windows (each its own
+Yes. **RUN CWATM ▸ Windowed Run CWatM** opens independent run windows (each its own
 process), and **RUN CWATM ▸ Batch Run…** runs many scenarios, up to N in parallel. The
 main GUI stays usable throughout.
 
@@ -69,6 +69,26 @@ the gutter). Folded lines are still saved and searched; Find auto-unfolds a matc
 **SpinUp / StepEnd is a number, not a date — is that OK?**
 Yes. An integer is a **timestep count** (StepStart = timestep 1). The date fields show
 the computed date.
+
+**Can I have two settings files open at the same time?**
+Yes — the bar above the editor holds **one tab per file**. The **+** right of the last
+tab opens an empty one, and the file of the tab you are looking at is what everything
+(RUN CWATM, the left-panel fields, Check settingsfile, Show Basin, Check Data, the
+Analyse windows) works on. **F8** colours the differences between the active tab and the
+one next to it, in both tabs. Tabs are shown in the **Expert** skill level, and can be
+switched off with **Preferences ▸ Editor & Dates ▸ Use Tabs**.
+
+**I loaded a file and it just switched to another tab instead.**
+That file is already open in that tab. One settings file can only be open **once**:
+two tabs on one file would each hold their own version of the text, and the second Save
+would quietly throw the first one's edits away. *Save As* onto another tab's file is
+refused for the same reason.
+
+**Can I run a second settings file without touching the one I am working on?**
+Right-click its tab ▸ **Run CWatM** — that opens a **Windowed Run CWatM** window on that
+tab's file (as saved on disk), which runs in its own process beside everything else. The
+same window is in the menu under **RUN CWATM ▸ Windowed Run CWatM** (it was called
+*Hidden Run CWatM* in earlier versions).
 
 ---
 
@@ -364,7 +384,7 @@ open it — a NetCDF opens in the map viewer.
 ## Runs history (Journal of Runs)
 
 **Where is my run history?**
-**RUN CWATM ▸ Journal of Runs** — every run (main, Hidden, Batch) is logged with time, Title,
+**RUN CWATM ▸ Journal of Runs** — every run (main, Windowed, Batch) is logged with time, Title,
 PathOut, duration and last discharge. Double-click **Open results**, or **Load settings**
 to reopen the exact file that ran.
 

@@ -13,6 +13,10 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import QDate, Qt, QPoint, QPointF, QRectF, QSize
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QIcon
 
+from src.gui.utils.gui_log import get_logger
+
+log = get_logger("date_manager")
+
 
 class CWatMCalendar(QCalendarWidget):
     """Custom-painted calendar popup for the Start/Spin/End date fields.
@@ -42,7 +46,7 @@ class CWatMCalendar(QCalendarWidget):
         try:
             self._dm.refresh_forcing_range()
         except Exception:
-            pass
+            log.debug("showEvent: ignored", exc_info=True)
         super().showEvent(event)
 
     def paintCell(self, painter, rect, date):
@@ -280,7 +284,7 @@ class DateTimeline(QWidget):
                                      80, 12, Qt.AlignHCenter | Qt.AlignTop,
                                      qd.toString("dd/MM/yyyy"))
         except Exception:
-            pass
+            log.debug("paintEvent: ignored", exc_info=True)
         finally:
             painter.end()
 
@@ -327,7 +331,7 @@ class DateTimeline(QWidget):
         try:
             self._dm.refresh_forcing_range()
         except Exception:
-            pass
+            log.debug("mousePressEvent: ignored", exc_info=True)
         key = self._key_near(event.pos())
         x0, x1, y = self._track_rect()
         lo, hi = self._axis()

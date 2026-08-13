@@ -443,6 +443,7 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
 
         self.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
         self._preload_left()
+        self._preload_right()
 
     # -------------------------------------------------------------- menu bar
     def _build_menubar(self, layout):
@@ -670,6 +671,24 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
             log.debug("preload left failed", exc_info=True)
         self.left.set_source("", None, "(no settings loaded)")
 
+    def _preload_right(self):
+        """With several settings **tabs** open, start the right pane on the tab next
+        to the active one - the one immediately left, or immediately right when the
+        active tab is the first (main_window.compare_partner_source). The left pane
+        is always the active tab, so the window opens on the comparison one usually
+        wants. With a single tab nothing is preloaded and the pane's Load button is
+        the way in, exactly as before."""
+        try:
+            getter = getattr(self._main, "compare_partner_source", None)
+            found = getter() if getter is not None else None
+            if not found:
+                return
+            content, path, name = found
+            self.right.set_source(content, path, name)
+            self._recompare()
+        except Exception:
+            log.debug("preload right failed", exc_info=True)
+
     def _on_pane_saved(self, path):
         """A pane just saved to ``path``. If that file is the one open in the main
         settings window, refresh the main window so it shows the saved version
@@ -761,7 +780,7 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("_set_window_icon: ignored", exc_info=True)
 
     @staticmethod
     def _blue_button_style():

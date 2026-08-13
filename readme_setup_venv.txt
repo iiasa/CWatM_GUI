@@ -47,7 +47,7 @@ python -m PyInstaller cwatm_gui_dir.spec --noconfirm
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 .\venv\Scripts\Activate.ps1
 
-use claude and cwtmexe.md
+use claude and the GDAL/packaging notes at the top of requirements.txt
 
 cd P:\watmodel\cwatmpublic\gui
 build_env\Scripts\activate

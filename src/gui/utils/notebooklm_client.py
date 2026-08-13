@@ -81,7 +81,7 @@ def is_auth_error(exc_or_text):
         if isinstance(exc_or_text, Exception) and isinstance(exc_or_text, AuthError):
             return True
     except Exception:
-        pass
+        log.debug("is_auth_error: ignored", exc_info=True)
     text = str(exc_or_text).lower()
     return any(h in text for h in _AUTH_ERROR_HINTS)
 
@@ -126,7 +126,7 @@ def check_connection(profile=None):
         try:
             loop.close()
         except Exception:
-            pass
+            log.debug("check_connection: ignored", exc_info=True)
 
 
 class NotebookLMClientWrapper:
@@ -330,7 +330,7 @@ class NotebookLMClientWrapper:
             try:
                 self._loop.close()
             except Exception:
-                pass
+                log.debug("_close_loop: ignored", exc_info=True)
             self._loop = None
 
     # --------------------------------------------------------------- exceptions

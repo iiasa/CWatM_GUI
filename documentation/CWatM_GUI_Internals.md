@@ -370,8 +370,15 @@ non-modal side-by-side diff of two settings files. Two `_ComparePane`s, each a
 `SettingsEditor` + `LineNumberGutter` with the main window's top button row
 (**Save / Save As / Fold All / Unfold All / Top / Down**). The **left** pane is
 preloaded with the main window's **current** editor text (live, incl. unsaved edits)
-and file path; the **right** pane starts empty and adds a **Load** button (left of
-Save) for a `*.ini`.
+and file path — i.e. the **active settings tab**. The **right** pane adds a **Load**
+button (left of Save) for a `*.ini`, and with **more than one tab open it is
+preloaded too** (`_preload_right` → `main_window.compare_partner_source`, the
+`SettingsTabsMixin`): the tab immediately **left** of the active one, or — when the
+active tab is already the first — the one immediately **right** of it, taken live
+from that tab's own editor. A single tab, or a neighbour with no content yet, leaves
+the right pane empty exactly as before. The Journal-of-Runs and Batch entry points
+(`load_files` / `load_contents`) overwrite both panes afterwards, so they are
+unaffected.
 - **Alignment**: `align_and_diff` (difflib opcodes) inserts light-gray **filler**
   lines on the shorter side of each change so equal lines share a row on both sides;
   both editors end up the same length. Differing lines are marked **orange**
@@ -430,14 +437,19 @@ opened modally over the still-open explorer. **Refresh** re-roots (picks up new 
 output), **Change folder…** browses elsewhere. Themed at construction; kept alive on
 `parent._output_explorer_windows`; geometry key `output_explorer`.
 
-### Hidden Run CWatM (RUN CWATM menu)
-**RUN CWATM ▸ Hidden Run CWatM** (`run_controller.open_hidden_run` →
+### Windowed Run CWatM (RUN CWATM menu)
+**RUN CWATM ▸ Windowed Run CWatM** (`run_controller.open_hidden_run` →
 `src/gui/widgets/hidden_run_window.py`, `HiddenRunWindow`) opens a small **non-modal**
 window that runs CWatM on one settings file in its **own OS process**, independent of
-the main run and of every other Hidden Run window — so **several can run in parallel**
-while the main GUI stays fully interactive. Each window:
-- opens **pre-loaded** with the settings file currently loaded in the main window (an
-  `.ini` in that file's directory); a **Load** button picks a different `.ini` (dialog
+the main run and of every other Windowed Run window — so **several can run in parallel**
+while the main GUI stays fully interactive. The feature was called **Hidden Run CWatM**
+before, and the code still carries that name — the module `hidden_run_window.py`, the
+`open_hidden_run` / `_hidden_run_windows` members, the geometry key `hidden_run` and the
+journal's `kind="hidden"` (renaming the stored kind would orphan the existing
+`run_ledger.json` rows). Each window:
+- opens **pre-loaded** with `open_hidden_run(settings_path)` — by default the settings
+  file currently loaded in the main window (an `.ini` in that file's directory), and the
+  settings tab bar's right-click ▸ **Run CWatM** passes *that tab's* path instead; a **Load** button picks a different `.ini` (dialog
   starts in that directory), **Use current** takes whatever the main window has loaded
   *now* (this window otherwise keeps the file it was opened with), and an `.ini`/`.txt`
   can simply be **dropped onto the window** (`setAcceptDrops` + `dragEnterEvent` /
@@ -466,14 +478,14 @@ while the main GUI stays fully interactive. Each window:
   `elapsed m:ss · remaining ~m:ss` beside it — the same linear estimate the main
   window's clock uses, shown only from 3 % so it is not nonsense at the start. It
   freezes as `run time` / `failed after` / `stopped after` when the run ends, and
-  `QApplication.alert` flashes the taskbar: a hidden run is the one nobody watches.
+  `QApplication.alert` flashes the taskbar: a Windowed Run is the one nobody watches.
 - **Pre-flight** (`_preflight`, before the worker is created): the settings file must be
   readable, and its **PathOut** is resolved (`basin_viewer.pathout_exists`) and
   **created** — CWatM does not create it, so the run would otherwise die minutes in.
   It also caches the content, the resolved PathOut and the settings `Title` for the
   ledger entry. Failure writes the reason into the output box and does not start.
-- **Journal of Runs**: every hidden run is recorded (`kind="hidden"`, with the content
-  snapshot for Compare settings) on success, error **and** stop — hidden runs used to
+- **Journal of Runs**: every Windowed Run is recorded (`kind="hidden"`, with the content
+  snapshot for Compare settings) on success, error **and** stop — Windowed Runs used to
   leave no trace in the history at all.
 - **Geometry + cascade**: `GeometryMemoryMixin` with the key `hidden_run`; since all
   these windows share one key, each new one is offset by 28 px per window already open
@@ -481,7 +493,7 @@ while the main GUI stays fully interactive. Each window:
   other.
 - **Closing asks** when a run is in progress (window title, file name and elapsed time
   in the question) instead of killing it silently; the same guard is in
-  `main_window.closeEvent`, which lists how many Hidden Run windows are still running
+  `main_window.closeEvent`, which lists how many Windowed Run windows are still running
   before the GUI (their parent) takes them down with it.
 
 ### Batch Run (RUN CWATM menu)
@@ -629,7 +641,7 @@ non-modal; geometry key `run_ledger`.
   2 MB** read, since a long run's log is big. Main runs record theirs when
   **Preferences ▸ Output ▸ Write output box** is on; batch scenarios always write one.
   The journal otherwise records *that* a run failed and never *why*.
-- **Re-run**: opens a **Hidden Run** window on that settings file and starts it,
+- **Re-run**: opens a **Windowed Run** window on that settings file and starts it,
   falling back to the run-time **snapshot** when the original file is gone (with a note
   saying so). The journal knows exactly what ran, so repeating it should not be a
   manual load-then-run.
@@ -646,7 +658,7 @@ non-modal; geometry key `run_ledger`.
 - **Grouping** (*Group batches*, on by default): entries sharing a `batch_id` — written
   by the Batch runner, one id per batch — collapse into a single row
   (`<Title> — batch of N`, summed duration, `12/14` in the OK column). Entries without
-  a batch id (everything before this, and every main/hidden run) are untouched. Untick
+  a batch id (everything before this, and every main/Windowed Run) are untouched. Untick
   to see every scenario.
 - **Dead rows are visible**: a PathOut or settings file that no longer exists is drawn
   in `text_gray` with a "does not exist any more" tooltip, instead of being discovered
@@ -666,7 +678,7 @@ non-modal; geometry key `run_ledger`.
   of the table was the only way before). The rest mirrors the buttons — open results,
   show log, load settings, re-run, delete — each greyed out when it does not apply.
 - **What is running now**: `_live_entries` builds pseudo-rows for the **main run**
-  (`_run_ledger_ctx`), every **Hidden Run** window and every in-flight **Batch**
+  (`_run_ledger_ctx`), every **Windowed Run** window and every in-flight **Batch**
   scenario, shown at the top with `running…`, a live elapsed time and a tinted
   background, refreshed by a 2 s timer (which also picks up runs that finish while the
   window is open). They cannot be deleted or re-run, and the timer is stopped in

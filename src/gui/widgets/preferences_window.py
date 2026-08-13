@@ -21,9 +21,11 @@ import os
 
 from PySide6.QtWidgets import (QDialog, QWidget, QFrame, QVBoxLayout, QHBoxLayout,
                                QLabel, QListWidget, QListWidgetItem, QStackedWidget,
-                               QCheckBox, QComboBox, QSpinBox, QLineEdit, QPushButton,
-                               QDialogButtonBox, QFileDialog, QSizePolicy)
+                               QCheckBox, QComboBox, QFontComboBox, QSpinBox,
+                               QLineEdit, QPushButton, QDialogButtonBox, QFileDialog,
+                               QSizePolicy)
 from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QFont
 
 from src.gui.utils import theme, display_format, run_ledger
 from src.gui.utils.gui_log import get_logger
@@ -213,7 +215,8 @@ class PreferencesWindow(QDialog):
     def _page_display(self):
         page, lay = self._page(
             "Display",
-            "Colours, the banner, and the defaults the map and number displays open with.")
+            "Colours, the banner, the settings-file font, and the defaults the map "
+            "and number displays open with.")
         self.cmb_theme = QComboBox()
         for label, key in theme.THEME_CHOICES:
             self.cmb_theme.addItem(label, key)
@@ -221,6 +224,23 @@ class PreferencesWindow(QDialog):
                   "Colour mode of the whole GUI")
         self.cb_show_header = self._check(
             lay, "Show Header", "Shows the headline of the CWatM GUI")
+
+        # Settings-editor font. The family list is filtered to the monospaced
+        # fonts (a settings file is read in columns, and the line-number gutter
+        # assumes fixed-width digits); the family the editor currently renders
+        # with is inserted if the filter does not offer it.
+        self.cmb_font = QFontComboBox()
+        self.cmb_font.setFontFilters(QFontComboBox.MonospacedFonts)
+        self.cmb_font.setMinimumWidth(220)
+        self._row(lay, "Font of settingsfile:", self.cmb_font,
+                  "Font the settings file is displayed with (monospaced fonts)")
+
+        self.sp_font_size = QSpinBox()
+        self.sp_font_size.setRange(6, 32)
+        self.sp_font_size.setSuffix(" px")
+        self._row(lay, "Font size of settingsfile:", self.sp_font_size,
+                  "Size the settings file is displayed with - the same setting as "
+                  "the Font+ / Font- buttons above the settings file")
 
         self.sp_decimals = QSpinBox()
         self.sp_decimals.setRange(0, 12)
@@ -277,6 +297,12 @@ class PreferencesWindow(QDialog):
             lay, "Bookmark Change",
             "Automatically set a bookmark on a line when it is changed (skips a "
             "line if a bookmark is already 1 or 2 lines above/below)")
+        self.cb_use_tabs = self._check(
+            lay, "Use Tabs",
+            "Show the tab bar above the settings file, so several settings files "
+            "can be open at once (right-click a tab for Delete Tab / Copy Tab / "
+            "Run CWatM).\nShown in the Expert skill level only; open tabs keep "
+            "their content while the bar is hidden.")
         lay.addStretch(1)
         return page
 
@@ -328,6 +354,12 @@ class PreferencesWindow(QDialog):
             "use_modflow": s.value("modflow/enabled", False, type=bool),
             "theme": theme.current_theme(),
             "show_header": s.value("display/show_header", True, type=bool),
+            # The editor font: the family actually rendered (the persisted choice,
+            # else what the built-in chain resolved to) and the size the Font+ /
+            # Font- buttons keep - both read live, so the box always opens on what
+            # the editor shows right now.
+            "editor_font": mw.editor_font_family(),
+            "editor_font_size": mw._editor_font_size,
             "decimals": display_format.get_decimals(),
             "transparency": display_format.get_transparency(),
             "basemap": _saved_basemap(s),
@@ -337,6 +369,7 @@ class PreferencesWindow(QDialog):
             "web_picker": s.value("display/date_picker_web", True, type=bool),
             "date_timeline": s.value("display/date_timeline", True, type=bool),
             "bookmark_change": s.value("editor/bookmark_change", False, type=bool),
+            "use_tabs": s.value("editor/use_tabs", True, type=bool),
             "history_folder": run_ledger.history_dir(),
             "history_retention": run_ledger.retention_days(),
         }
@@ -349,6 +382,8 @@ class PreferencesWindow(QDialog):
         self.cb_use_modflow.setChecked(st["use_modflow"])
         self._select_data(self.cmb_theme, st["theme"])
         self.cb_show_header.setChecked(st["show_header"])
+        self._select_font(st["editor_font"])
+        self.sp_font_size.setValue(st["editor_font_size"])
         self.sp_decimals.setValue(st["decimals"])
         self.sp_transparency.setValue(st["transparency"])
         self._select_data(self.cmb_basemap, st["basemap"])
@@ -358,6 +393,7 @@ class PreferencesWindow(QDialog):
         self.cb_web_picker.setChecked(st["web_picker"])
         self.cb_timeline.setChecked(st["date_timeline"])
         self.cb_bookmark_change.setChecked(st["bookmark_change"])
+        self.cb_use_tabs.setChecked(st["use_tabs"])
         self.ed_history_folder.setText(st["history_folder"])
         self.sp_retention.setValue(st["history_retention"])
 
@@ -370,6 +406,8 @@ class PreferencesWindow(QDialog):
             "use_modflow": self.cb_use_modflow.isChecked(),
             "theme": self.cmb_theme.currentData(),
             "show_header": self.cb_show_header.isChecked(),
+            "editor_font": self.cmb_font.currentFont().family(),
+            "editor_font_size": self.sp_font_size.value(),
             "decimals": self.sp_decimals.value(),
             "transparency": self.sp_transparency.value(),
             "basemap": self.cmb_basemap.currentData(),
@@ -379,6 +417,7 @@ class PreferencesWindow(QDialog):
             "web_picker": self.cb_web_picker.isChecked(),
             "date_timeline": self.cb_timeline.isChecked(),
             "bookmark_change": self.cb_bookmark_change.isChecked(),
+            "use_tabs": self.cb_use_tabs.isChecked(),
             "history_folder": self.ed_history_folder.text().strip(),
             "history_retention": self.sp_retention.value(),
         }
@@ -387,6 +426,17 @@ class PreferencesWindow(QDialog):
     def _select_data(combo, value):
         idx = combo.findData(value)
         combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _select_font(self, family):
+        """Show `family` in the font box, adding it if the monospaced filter does
+        not list it (a chosen proportional font, or a family Qt classifies
+        differently) - otherwise the box would silently show a different font than
+        the editor uses and Apply would then change it."""
+        if not family:
+            return
+        if self.cmb_font.findText(family) < 0:
+            self.cmb_font.insertItem(0, family)
+        self.cmb_font.setCurrentFont(QFont(family))
 
     # -------------------------------------------------------------- applying
 
@@ -415,7 +465,7 @@ class PreferencesWindow(QDialog):
             mw.status_bar.showMessage(
                 f"Preferences: {len(changed)} setting(s) applied")
         except Exception:
-            pass
+            log.debug("_apply: ignored", exc_info=True)
 
     def _apply_one(self, mw, key, value):
         """Apply one setting through the main window's existing handler."""
@@ -433,6 +483,10 @@ class PreferencesWindow(QDialog):
             self._apply_style()          # follow the new theme while open
         elif key == "show_header":
             mw._on_show_header_toggled(value)
+        elif key == "editor_font":
+            mw.set_editor_font_family(value)
+        elif key == "editor_font_size":
+            mw._set_editor_font_size(value)      # same handler as Font+ / Font-
         elif key == "tooltip_reverse":
             mw._on_tooltip_reverse_toggled(value)
         elif key == "decimals":
@@ -454,6 +508,8 @@ class PreferencesWindow(QDialog):
             mw._on_date_timeline_toggled(value)
         elif key == "bookmark_change":
             mw._on_bookmark_change_toggled(value)
+        elif key == "use_tabs":
+            mw._on_use_tabs_toggled(value)
         elif key == "history_folder":
             if value and os.path.isdir(value):
                 run_ledger.set_history_dir(value)

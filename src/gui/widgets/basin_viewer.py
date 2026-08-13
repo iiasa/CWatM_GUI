@@ -42,6 +42,10 @@ from PySide6.QtGui import (
     QColor, QBrush, QPen, QFont, QPixmap, QImage, QIcon
 )
 
+from src.gui.utils.gui_log import get_logger
+
+log = get_logger("basin_viewer")
+
 # Optional interactive OpenStreetMap view (Leaflet rendered in QtWebEngine)
 try:
     from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -73,7 +77,7 @@ try:
             try:
                 error.acceptCertificate()
             except Exception:
-                pass
+                log.debug("certificateError: ignored", exc_info=True)
             return True
 
     from PySide6.QtWebEngineCore import (QWebEngineUrlScheme, QWebEngineUrlSchemeHandler,
@@ -97,7 +101,7 @@ try:
         _tile_scheme.setFlags(_flags)
         QWebEngineUrlScheme.registerScheme(_tile_scheme)
     except Exception:
-        pass
+        log.debug("certificateError: ignored", exc_info=True)
 
     # Selectable basemaps (all free, no API key). "Transport"/"Cycle" (Thunderforest)
     # need an API key and are intentionally omitted.
@@ -184,7 +188,7 @@ try:
                     try:
                         job.fail(QWebEngineUrlRequestJob.Error.RequestFailed)
                     except Exception:
-                        pass
+                        log.debug("requestStarted: ignored", exc_info=True)
                 return
             # A tile: osmtile://tile/{provider}/{z}/{x}/{y}.png
             m = _re.search(r'/tile/([^/]+)/(\d+)/(\d+)/(\d+)\.png', url.toString())
@@ -221,7 +225,7 @@ try:
                 try:
                     job.fail(QWebEngineUrlRequestJob.Error.RequestFailed)
                 except Exception:
-                    pass
+                    log.debug("requestStarted: ignored", exc_info=True)
 
     # A single, app-lifetime scheme handler. QWebEngineView uses the shared default
     # profile, so re-installing a per-window handler on the 2nd Show Basin was ignored
@@ -324,7 +328,7 @@ class BasinDataHelpers:
                 if pairs:
                     return pairs
             except Exception:
-                pass
+                log.debug("_field_gauges: ignored", exc_info=True)
         try:
             return _parse_gauges(open(self.settings_file, encoding="utf-8",
                                       errors="ignore").read())
@@ -342,7 +346,7 @@ class BasinDataHelpers:
                 if pairs:
                     return pairs[0]
             except Exception:
-                pass
+                log.debug("_mask_start_point: ignored", exc_info=True)
         try:
             content = open(self.settings_file, encoding="utf-8", errors="ignore").read()
             viewer = BasinViewer(content)
@@ -353,7 +357,7 @@ class BasinDataHelpers:
                 if len(parts) >= 2:
                     return float(parts[0]), float(parts[1])
         except Exception:
-            pass
+            log.debug("_mask_start_point: ignored", exc_info=True)
         return self._largest_ups_point()
 
     def _largest_ups_point(self):
@@ -742,7 +746,7 @@ class BasinViewer:
                         try:
                             os.remove(temp_path)
                         except Exception:
-                            pass
+                            log.debug("_load_mask_data: ignored", exc_info=True)
                 if mask_result:
                     mask_data = mask_result[0].data
                     mask_data = np.where(mask_data != 1, 0, 1)

@@ -300,6 +300,23 @@ def _install_qt_message_handler():
     """
     from PySide6.QtCore import QtMsgType, qInstallMessageHandler
 
+    # Console lines that are the KNOWN, deliberate consequence of the QtWebEngine
+    # flags this app sets in _configure_qtwebengine - Chromium complaining about
+    # the very configuration we asked for:
+    #   "Sandboxing disabled by user"        <- --no-sandbox (QtWebEngineProcess.exe
+    #                                           cannot start from a network share)
+    #   "--use-gl=angle is set with          <- --disable-gpu + --use-angle=swiftshader,
+    #    --disable-gpu. Expect troubles!"       i.e. software WebGL with the GPU off
+    #   "GPUInfo not initialized ..."        <- no GPU process to report info, ditto
+    # They are noise, not news: kept in gui.log (at DEBUG, no stack) and kept OFF the
+    # console. Set CWATM_GUI_QT_VERBOSE=1 to see them again.
+    expected_messages = (
+        "Sandboxing disabled by user",
+        "--use-gl=angle is set with --disable-gpu",
+        "GPUInfo not initialized on GpuInfoUpdate",
+    )
+    verbose = bool(os.environ.get("CWATM_GUI_QT_VERBOSE"))
+
     levels = {
         QtMsgType.QtDebugMsg: logging.DEBUG,
         QtMsgType.QtInfoMsg: logging.INFO,
@@ -308,14 +325,55 @@ def _install_qt_message_handler():
         QtMsgType.QtFatalMsg: logging.CRITICAL,
     }
 
+    def _widget_context():
+        """Which widgets were involved, for a warning raised inside Qt itself.
+
+        A message from the C++ event loop has no Python frames at all (the stack
+        stops at app.exec()), so the only usable clue is *what the user was on*:
+        the focused widget, the widget under the mouse and the active window, each
+        as "<class> objectName". Best-effort - never let diagnostics raise."""
+        try:
+            from PySide6.QtGui import QCursor
+            from PySide6.QtWidgets import QApplication
+
+            def _name(widget):
+                if widget is None:
+                    return "-"
+                obj = widget.objectName()
+                return f"{type(widget).__name__}{'/' + obj if obj else ''}"
+
+            app_ = QApplication.instance()
+            if app_ is None:
+                return ""
+            return (f"focus={_name(app_.focusWidget())} "
+                    f"under-mouse={_name(app_.widgetAt(QCursor.pos()))} "
+                    f"active-window={_name(app_.activeWindow())}")
+        except Exception:
+            return ""
+
     def _handler(mode, context, message):
         try:
+            if not verbose and any(known in message for known in expected_messages):
+                log.debug("Qt (expected, see _configure_qtwebengine): %s", message)
+                return
             level = levels.get(mode, logging.INFO)
             if level >= logging.WARNING:
                 import traceback
                 # [:-1] drops this handler's own frame
                 stack = "".join(traceback.format_stack()[:-1]).rstrip()
-                log.log(level, "Qt: %s\n--- Python stack ---\n%s", message, stack)
+                # Qt's own file/line/category (usually only set in a debug build,
+                # but the category names the Qt component when it is there).
+                where = " ".join(
+                    f"{k}={v}" for k, v in (
+                        ("category", getattr(context, "category", None)),
+                        ("file", getattr(context, "file", None)),
+                        ("line", getattr(context, "line", None)),
+                        ("function", getattr(context, "function", None)))
+                    if v not in (None, "", 0, "default"))
+                log.log(level, "Qt: %s\n--- where --- %s\n--- widgets --- %s\n"
+                               "--- Python stack ---\n%s",
+                        message, where or "(no Qt context)", _widget_context() or "?",
+                        stack)
             else:
                 log.log(level, "Qt: %s", message)
             stream = sys.__stderr__      # None under pythonw.exe
@@ -398,31 +456,38 @@ def _schedule_startup_tasks(window):
                       lambda: _prewarm_webengine(window))
 
 
-def _initial_settings_file(window):
-    """The settings file to open at startup, or None.
+def _initial_settings_files(window):
+    """(paths, active index) of the settings files to open at startup.
 
-    A path on the command line wins (this is what enables Windows file association
-    / "Open with": CWatM_GUI.exe settings.ini). Otherwise, if Configure > "Load
-    previous settings at start" is ticked, the most recently used file is reopened.
+    A path on the command line wins and opens a SINGLE tab (this is what enables
+    Windows file association / "Open with": CWatM_GUI.exe settings.ini).
+    Otherwise, if Configure > "Load previous settings at start" is ticked, **every
+    tab** of the last session is reopened (the previously active one on top),
+    falling back to the most recently used file for a session that predates tabs.
     """
     if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
-        return os.path.abspath(sys.argv[1])
+        return [os.path.abspath(sys.argv[1])], 0
     try:
         if window._settings.value("startup/load_previous", False, type=bool):
+            paths, active = window.saved_tab_files()
+            if paths:
+                return paths, active
             recents = getattr(window, "_recent_files", None) or []
             prev = recents[0] if recents else None
             if prev and os.path.isfile(prev):
-                return prev
+                return [prev], 0
     except Exception:
         log.debug("load-previous-at-start failed", exc_info=True)
-    return None
+    return [], 0
 
 
 def _load_initial_settings(window):
-    """Queue the startup settings file (if any) for loading once the UI is up."""
-    path = _initial_settings_file(window)
-    if path:
-        QTimer.singleShot(0, lambda p=path: window.load_recent_file(p))
+    """Queue the startup settings file(s) for loading once the UI is up - one tab
+    each (window.open_files_in_tabs)."""
+    paths, active = _initial_settings_files(window)
+    if paths:
+        QTimer.singleShot(
+            0, lambda p=paths, a=active: window.open_files_in_tabs(p, a))
 
 
 def _exec(app):

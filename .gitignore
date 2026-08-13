@@ -1,7 +1,38 @@
+# --- Python bytecode -------------------------------------------------------
+# These were tracked until now, which made every run of the GUI (or of
+# compileall) show up as a diff. Untracked with `git rm -r --cached`; the files
+# stay on disk, they are just no longer version-controlled.
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual environments --------------------------------------------------
 /venv
 /venv2
+/build_env
+
+# --- Build output ----------------------------------------------------------
 /dist
 /build
-/cwatm/__pycache__
-/cwatm/hydrological_modules/__pycache__
-/cwatm/management_modules/__pycache__
+/installer/Output
+
+# --- Wheels ----------------------------------------------------------------
+# Local wheel downloads (gdal / netcdf4 / rasterio) are ~57 MB and must never
+# enter the history. Note the GDAL wheel in particular is deliberately NOT a
+# dependency - rasterio ships its own GDAL (see the note in requirements.txt).
+*.whl
+
+# --- Editor / OS / tooling -------------------------------------------------
+.idea/
+.vscode/
+.claude/
+Thumbs.db
+*.stackdump
+
+# --- Run output and scratch data -------------------------------------------
+# Model results and working notes produced while testing; not project sources.
+check_cwatm1.csv
+cwatm_out.txt
+gui.log
+*.orig
+*.rej

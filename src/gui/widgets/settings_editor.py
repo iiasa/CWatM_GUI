@@ -146,6 +146,9 @@ class SettingsEditor(QPlainTextEdit):
         self._diff_rows = set()
         # Row(s) of the currently jumped-to difference (darker orange).
         self._current_diff_rows = set()
+        # Rows differing from the neighbouring TAB (Settings ▸ Compare Tab, F8):
+        # light green at 50% opacity, on top of everything else.
+        self._compare_rows = set()
         # Block number of the most recent edit (Settings ▸ Goto last change, F3).
         self._last_change_block = -1
         self.document().contentsChange.connect(self._on_contents_change)
@@ -233,6 +236,16 @@ class SettingsEditor(QPlainTextEdit):
         settings difference you just jumped to). Pass an empty set to clear."""
         self._current_diff_rows = set(int(r) for r in rows)
         self._recompute_change_highlights()
+
+    def set_compare_rows(self, rows):
+        """Mark these row numbers light green (Settings ▸ Compare Tab, F8: the lines
+        that differ from the neighbouring tab). Pass an empty set to clear."""
+        self._compare_rows = set(int(r) for r in rows)
+        self._recompute_change_highlights()
+
+    def has_compare_rows(self):
+        """Whether Compare Tab marks are currently shown (drives the F8 toggle)."""
+        return bool(self._compare_rows)
 
     def clear_checking(self):
         """Settings ▸ Clear checking: remove the red missing-file marks and the bookmarks
@@ -335,7 +348,7 @@ class SettingsEditor(QPlainTextEdit):
         try:
             self._last_change_block = self.document().findBlock(position).blockNumber()
         except Exception:
-            pass
+            log.debug("_on_contents_change: ignored", exc_info=True)
 
     def goto_last_change(self):
         """Move the cursor to the most recently edited line (unfold if hidden).
@@ -486,6 +499,14 @@ class SettingsEditor(QPlainTextEdit):
             _add(self._diff_rows, theme.qcolor("diff_line"))
             _add(self._filler_rows, theme.qcolor("filler_line"))
             _add(self._current_diff_rows, theme.qcolor("current_diff_line"))
+            # Compare Tab (F8): light green at 50% opacity, drawn last so it is
+            # visible over every other mark - it is a deliberate, temporary overlay
+            # the user switches on and off, and the alpha lets the colour underneath
+            # (a duplicate-key red, say) still show through.
+            if self._compare_rows:
+                green = theme.qcolor("compare_line")
+                green.setAlpha(128)
+                _add(self._compare_rows, green)
             self.setExtraSelections(selections)
             if self._auto_bookmark_changed and changed_rows:
                 self._auto_bookmark_changed_rows(changed_rows)
@@ -503,6 +524,7 @@ class SettingsEditor(QPlainTextEdit):
         self._filler_rows = set()  # and any Compare-settings alignment filler
         self._diff_rows = set()    # and any Compare-settings diff marks
         self._current_diff_rows = set()
+        self._compare_rows = set()   # and any Compare-Tab (F8) green marks
         self._saved_text = text
         self.setPlainText(text)   # recreates blocks -> bookmarks/marks cleared
         self._last_change_block = -1   # a fresh load is not a "change" to jump to

@@ -72,13 +72,13 @@ class _LogTee:
             if self._original is not None:
                 self._original.write(text)
         except Exception:
-            pass
+            log.debug("write: ignored", exc_info=True)
         try:
             if text and (self._owner_thread is None
                          or threading.get_ident() == self._owner_thread):
                 self._emit(text, self._is_error)
         except Exception:
-            pass
+            log.debug("write: ignored", exc_info=True)
         return len(text or "")
 
     def flush(self):
@@ -86,7 +86,7 @@ class _LogTee:
             if self._original is not None:
                 self._original.flush()
         except Exception:
-            pass
+            log.debug("flush: ignored", exc_info=True)
 
     def __getattr__(self, name):
         return getattr(self._original, name)
@@ -857,7 +857,7 @@ class CheckDataWindow(QDialog):
                 worker.output.disconnect()
                 worker.done.disconnect()
             except (RuntimeError, TypeError):
-                pass
+                log.debug("closeEvent: ignored", exc_info=True)
             _ORPHANED_WORKERS.append(worker)
             worker.finished.connect(
                 lambda w=worker: _ORPHANED_WORKERS.remove(w)

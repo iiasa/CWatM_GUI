@@ -30,7 +30,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy
 # plus rasterio's bundled GDAL/PROJ data (gdal_data/proj_data) so the frozen GUI does
 # not fail with "ModuleNotFoundError: rasterio.sample" or
 # "Cannot find gdalvrt.xsd (GDAL_DATA is not defined)". rasterio ships its own GDAL,
-# so the osgeo/GDAL wheel is not needed (see cwtmexe.md).
+# so the osgeo/GDAL wheel is not needed (see the GDAL note in requirements.txt).
 rasterio_hiddenimports = collect_submodules('rasterio')
 rasterio_datas = collect_data_files('rasterio')
 
@@ -41,7 +41,7 @@ rasterio_datas = collect_data_files('rasterio')
 # rasterio/__init__.py's delvewheel patch adds `<parent>/rasterio.libs` to the DLL search
 # path at import, and when frozen the rasterio package sits in `_internal/rasterio/`, so the
 # DLLs must land in `_internal/rasterio.libs/`. This is what replaced the old osgeo/GDAL wheel
-# that rasterio used to borrow its GDAL from (see runtime_speedup.md T4).
+# that rasterio used to borrow its GDAL from.
 import sysconfig as _sysconfig
 import glob as _glob
 _rasterio_libs_dir = os.path.join(_sysconfig.get_paths()['purelib'], 'rasterio.libs')
@@ -302,7 +302,7 @@ a = Analysis(
         # black is only bmipy's code-render CLI formatter (not used at runtime); keep it
         # and its deps out of the bundle (bmipy imports it lazily, so this is safe).
         'black',
-        # T-followup (runtime_speedup.md): notebooklm pulls in `playwright` (a ~101 MB
+        # notebooklm pulls in `playwright` (a ~101 MB
         # node driver) via its login CLI, but playwright is only ever imported lazily
         # inside the interactive Google-login window - a source-only path (the window
         # button is hidden when frozen). Asking questions (httpx) and the browser-cookie
@@ -311,8 +311,8 @@ a = Analysis(
         # The CWatM AI 🎤 Voice dictation feature was removed, so its libraries are no
         # longer used or bundled - exclude them so a stray install can't re-add them.
         'speech_recognition', 'pyaudio', '_portaudio',
-        # T4 (runtime_speedup.md): rasterio ships its own private GDAL, so the
-        # separate `osgeo`/GDAL wheel is not needed (cwtmexe.md). If it is installed,
+        # rasterio ships its own private GDAL, so the separate `osgeo`/GDAL wheel is
+        # not needed (see the GDAL note in requirements.txt). If it is installed,
         # rasterio's guarded `import osgeo` makes PyInstaller bundle a SECOND ~95 MB
         # GDAL stack - excluded here so a stray reinstall can never re-bloat the build.
         'osgeo',
@@ -324,7 +324,7 @@ a = Analysis(
     win_private_assemblies=False,
     cipher=None,
     noarchive=False,
-    # T6 (runtime_speedup.md): compile the PYZ at optimization level 1 (drop
+    # Compile the PYZ at optimization level 1 (drop
     # `assert`/`__debug__` blocks) -> smaller bytecode, slightly faster module load.
     # Level 1 (not 2) keeps docstrings, which some libs read via __doc__.
     optimize=1,
@@ -379,13 +379,13 @@ model_a = Analysis(
     win_private_assemblies=False,
     cipher=None,
     noarchive=False,
-    # T6 (runtime_speedup.md): compile the PYZ at optimization level 1 (drop
+    # Compile the PYZ at optimization level 1 (drop
     # `assert`/`__debug__` blocks) -> smaller bytecode, slightly faster module load.
     # Level 1 (not 2) keeps docstrings, which some libs read via __doc__.
     optimize=1,
 )
 
-# T9 (runtime_speedup.md): the Tcl/Tk runtime DLLs (tcl86t.dll / tk86t.dll, ~3.4 MB)
+# The Tcl/Tk runtime DLLs (tcl86t.dll / tk86t.dll, ~3.4 MB)
 # in the GUI bundle turned out NOT to be dead weight - they are pulled in by the
 # PyInstaller **Splash** screen below, which renders through Tk. Removing them breaks
 # the splash, so they are kept. (The model exe has no splash and no Tk, so nothing to

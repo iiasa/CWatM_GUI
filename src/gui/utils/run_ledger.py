@@ -139,7 +139,7 @@ def _prune(entries):
             try:
                 os.remove(snap)
             except Exception:
-                pass
+                log.debug("_prune: ignored", exc_info=True)
     return keep
 
 
@@ -247,7 +247,7 @@ def remove_entries(victims):
                 try:
                     os.remove(snap)
                 except Exception:
-                    pass
+                    log.debug("remove_entries: ignored", exc_info=True)
         path = ledger_path()
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

@@ -18,7 +18,6 @@ import os
 import re
 import sys
 import json
-import tempfile
 import colorsys
 from calendar import monthrange
 from collections import Counter, defaultdict
@@ -27,12 +26,17 @@ from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QMessageBox,
 )
-from PySide6.QtCore import Qt, QUrl, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 
 from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.temp_page import TempPageMixin
 from src.gui.utils import theme
 from src.gui.widgets.analysis_timeseries import resolved_pathout_dir
+
+from src.gui.utils.gui_log import get_logger
+
+log = get_logger("analysis_flowdiagram")
 
 # Optional dependencies: Plotly for the figure, QtWebEngine to render it, pandas/numpy.
 try:
@@ -340,7 +344,7 @@ def _build_balance_links(b):
     return nodes, links
 
 
-class FlowDiagramWindow(GeometryMemoryMixin, QDialog):
+class FlowDiagramWindow(TempPageMixin, GeometryMemoryMixin, QDialog):
     """Window showing the overall water balance of a WaterCycle csv as a Sankey.
 
     Reuses the Watercycle window's csv parsing (station coords, settings Title,
@@ -392,7 +396,7 @@ class FlowDiagramWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("__init__: ignored", exc_info=True)
 
         self._temp_html = None
         # Debounce heavy figure rebuilds while dragging the range slider.
@@ -536,12 +540,9 @@ class FlowDiagramWindow(GeometryMemoryMixin, QDialog):
         grad_js = _GRADIENT_JS.replace("%GRAD%", json.dumps(grad_pairs))
         html = html.replace("</body>", grad_js + "</body>", 1)
         html = theme.themed_plot_page(html)
-        tmp = tempfile.NamedTemporaryFile(
-            prefix="cwatm_fd_", suffix=".html", delete=False, mode="w", encoding="utf-8")
-        tmp.write(html)
-        tmp.close()
-        self._temp_html = tmp.name
-        self.web_view.load(QUrl.fromLocalFile(tmp.name))
+        # Rebuilt on every station change and every tick of the month slider, so the
+        # page this one replaces is deleted (_load_temp_page) rather than orphaned.
+        self._load_temp_page(html, "cwatm_fd_")
 
     def _build_figure(self):
         """Compute the water-balance Sankey over the selected month window.

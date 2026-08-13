@@ -4,8 +4,8 @@
 #   pip install -r requirements.txt -r requirements_build.txt
 #
 # Note: GDAL is deliberately NOT listed - rasterio wheels ship their own GDAL
-# (see cwtmexe.md); installing the GDAL wheel separately is unnecessary and has
-# caused broken environments.
+# (see the GDAL note at the top of requirements.txt); installing the GDAL wheel
+# separately is unnecessary and has caused broken environments.
 
 -r requirements.txt
 

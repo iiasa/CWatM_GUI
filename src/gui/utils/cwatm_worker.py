@@ -142,6 +142,6 @@ class CWatMWorker(QThread):
             gc.collect()
 
         except ImportError:
-            pass  # netCDF4 not available - nothing to clean up
+            log.debug("_cleanup_worker_files: ignored", exc_info=True)  # netCDF4 not available - nothing to clean up
         except Exception:
             log.debug("worker file cleanup failed", exc_info=True)

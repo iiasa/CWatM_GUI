@@ -71,7 +71,7 @@ def open_output_explorer(parent=None):
             lambda *_: parent._output_explorer_windows.remove(win)
             if win in parent._output_explorer_windows else None)
     except Exception:
-        pass
+        log.debug("open_output_explorer: ignored", exc_info=True)
     return win
 
 
@@ -102,7 +102,7 @@ class OutputExplorerWindow(GeometryMemoryMixin, QDialog):
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except Exception:
-            pass
+            log.debug("_set_window_icon: ignored", exc_info=True)
 
     # --------------------------------------------------------------------- UI
     def _build_ui(self):

@@ -6,10 +6,67 @@
 
 ## Features
 
+### Working with several settings files (tabs)
+- **Switching tabs on or off**: the tab bar appears when **Preferences ▸ Editor &
+  Dates ▸ Use Tabs** is ticked (it is by default) **and** the skill level is
+  **Expert** — Beginner and Advanced keep the familiar single-file window. Hiding
+  the bar never throws anything away: whatever was open stays open, and the file you
+  were working in stays in the editor.
+- **One tab per settings file**, in the bar between the button row and the editor.
+  A loaded file goes into the **active** tab — at start that is the first one — and
+  so does a settings file you **drop** onto the window.
+- **Add a tab**: click the small **+** right of the last tab — the new tab becomes the
+  active one; load or drop the next settings file there.
+- **The same settings file can only be open once.** Loading a file that another tab
+  already has simply brings you to that tab (nothing is loaded twice), and *Save As*
+  onto a file another tab has open is refused — otherwise the two tabs would edit
+  their own copy of one file and the second save would quietly throw the first one's
+  work away. Reloading the file of the tab you are in is of course unaffected.
+- **The active tab is what everything works on**: RUN CWATM, the dates, PathOut,
+  MaskMap and Gauges boxes, Check settingsfile, Show Basin, Check Data, Compare,
+  the Excel editor and the Analyse windows all use the file of the tab you are
+  looking at. Switching tabs swaps the whole left panel with it.
+- Each tab keeps **its own** editing state: undo history, bookmarks, folded sections,
+  changed-line highlights and the red Check-settingsfile marks. A tab with unsaved
+  edits shows a **`*`** in front of its name, and **Save** only ever writes the active
+  tab; on exit you are asked once per unsaved file.
+- **Settings ▸ Compare Tab (F8)** — shown in the **Expert** skill level only, like
+  the tabs themselves — colours, right in the editor, every line that
+  differs from the neighbouring tab — light green, in **both** tabs, so switching
+  between them shows the differences from either side. Press **F8** again (or pick the
+  menu item again) and the colouring disappears. Nothing is changed in either file.
+- **Settings ▸ Compare settings** uses the tabs: the **active** tab goes into the left
+  pane and the tab **next to it** into the right one — the tab immediately left of the
+  active one, or the one immediately right when the active tab is the first. So with
+  two settings files open, comparing them is a single menu click; you can still load
+  any other file into the right pane with its **Load** button.
+- **Closing a tab**: move the mouse over it and an **✕** appears at its right edge —
+  clicking it closes that tab (asking first if it has unsaved changes), exactly like
+  *Delete Tab* below.
+- **Right-click a tab** for:
+  - **Delete Tab** — closes it (asking first if it has unsaved changes). Deleting the
+    last remaining tab just empties it.
+  - **Copy Tab** — writes what the tab currently shows (including unsaved edits) to a
+    new settings file **in the same folder** and opens it in a new tab next to it:
+    `settings.ini` → `settings_2.ini`, `settings_2.ini` → `settings_3.ini`, and so on;
+    a name that already exists is skipped.
+  - **Run CWatM** — runs **this tab's** settings file (as saved on disk) in its own
+    **Windowed Run CWatM** window, independently of the main run and of the other tabs.
+  - **Link scrolling** (a tick) — scrolls this tab and the **previous** one together
+    and keeps the **same sections folded** in both: scroll either of them and the
+    other moves to the same place, fold a section in one and it folds in the other,
+    so switching between the two lands you on the same lines — handy for reading two
+    settings files against each other. Greyed out on the first tab (there is no previous one), and ticking
+    several tabs in a row links them all into one group. The setting lasts for the
+    session.
+- Tabs can be dragged into another order, and with **Load previous settings at start**
+  ticked (Preferences ▸ Startup & Model) **all** of them are re-opened next time.
+
 ### File Management
 - **Load Configuration Files**: Load INI files with a preselected `.ini` filter.
-- **Load previous settings at start** (Preferences ▸ Startup & Model): when ticked, the last settings file
-  you had open is re-opened automatically the next time the GUI starts.
+- **Load previous settings at start** (Preferences ▸ Startup & Model): when ticked, all
+  the tabs you had open are re-opened automatically the next time the GUI starts (the
+  one you were working in on top).
 - **Recent files**: up to 6 recently opened settings files are listed directly in the
   **File** menu (between Save As and Exit).
 - **Save Files**: Save to the same file or Save As a new file — the editor holds the
@@ -109,11 +166,13 @@
   model crash cannot take the GUI down.
 - **Stop/Start Control**: interrupt a run mid-execution.
 - **Progress Tracking**: the progress clock advances based on actual model dates.
-- **Hidden Run CWatM** (RUN CWATM ▸ Hidden Run CWatM): open one or more **separate**
+- **Windowed Run CWatM** (RUN CWATM ▸ Windowed Run CWatM): open one or more **separate**
   windows that each run CWatM in their own process, independent of the main window — so
   several runs can go in parallel while you keep working. Each has a bold-green settings
   label, a **Load** button, a **Run/Stop** button and its own output box; it opens
-  pre-loaded with the main window's current settings file. It shows a **progress bar
+  pre-loaded with the main window's current settings file — or with **one tab's** file,
+  when you start it from a tab's right-click ▸ **Run CWatM**. (This is the window that
+  was called *Hidden Run CWatM* before.) It shows a **progress bar
   with elapsed and remaining time**, flashes the taskbar when it is done, and appears in
   the **Journal of Runs** like any other run. The output folder is created before the run
   starts (a missing PathOut is the usual reason a run dies minutes in), new windows
@@ -140,7 +199,7 @@
 
 ### Journal of Runs (RUN CWATM ▸ Journal of Runs — 2nd item)
 A table of your past runs — time, Title, PathOut, duration, success and last discharge —
-kept automatically (main runs, Hidden Runs and Batch scenarios). Select a run and **Open
+kept automatically (main runs, Windowed Runs and Batch scenarios). Select a run and **Open
 results** (its PathOut in the Output Explorer) or **Load settings** (reopen its settings
 file). **Mark two runs** (Ctrl/Shift+click) to enable **Compare settings**, which diffs
 the exact settings each run used (a snapshot is saved per run). Where the journal is
@@ -153,14 +212,14 @@ More on the same table:
 - **Show log** opens that run's output log — the journal tells you a run failed, the log
   tells you why. (Main runs write one when *Write output box* is on; batch scenarios
   always do.)
-- **Re-run** starts the same settings again in a Hidden Run window — even if the original
+- **Re-run** starts the same settings again in a Windowed Run window — even if the original
   file is gone, using the snapshot taken when it ran.
 - **Compare results** (two or more marked runs) overlays the same result file from each
   of them in one Timeseries plot, labelled per run.
 - **Delete** removes just the marked runs; *Clear journal* still removes everything.
 - **Group batches** shows a whole Batch Run as a single row (`… — batch of 14`, with
   `12/14` succeeded); untick it to list every scenario.
-- **Runs in progress** — the main run, Hidden Runs and batch scenarios — appear at the
+- **Runs in progress** — the main run, Windowed Runs and batch scenarios — appear at the
   top marked *running…* with a live elapsed time, and the table refreshes itself.
 - **Dead rows are visible**: an output folder or settings file that has been deleted
   since is shown greyed out, instead of only failing when you click it.
@@ -462,13 +521,15 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
   the right of the menu bar): one window holding every GUI setting, on five pages you
   pick from the list on the left:
   - **Output** — the file the output box is written to, and whether it is written.
-  - **Startup & Model** — reload the last settings file at start; use MODFLOW.
-  - **Display** — colour mode, header banner, decimals shown, initial map
-    transparency, default background map, sparkline animal.
+  - **Startup & Model** — reopen the last session's tabs at start; use MODFLOW.
+  - **Display** — colour mode, header banner, the font and font size of the settings
+    file, decimals shown, initial map transparency, default background map,
+    sparkline animal.
   - **Editor & Dates** — skill level (how much of the settings file **and of the
-    menus** is shown: *Beginner* hides the advanced entries, e.g. Batch Run, Hidden
+    menus** is shown: *Beginner* hides the advanced entries, e.g. Batch Run, Windowed
     Run, Check Data, the Excel editor and the water-balance analyses), the
-    date picker style, the date timeline, auto-bookmark on change.
+    date picker style, the date timeline, auto-bookmark on change, and **Use Tabs**
+    (the settings-file tabs, Expert level only).
   - **Run History** — where the Journal of Runs is kept and for how long.
 
   Nothing changes while you are clicking around: **Apply** puts the current page's
@@ -488,6 +549,12 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
   loaded, keeping startup fast. Persisted across sessions.
 - **Select animal** (Preferences ▸ Display): pick the little animal that
   occasionally appears on the live discharge sparkline (Fish / Otter / Beaver / Sailboat).
+- **Font of the settings file** (Preferences ▸ Display): **Font of settingsfile** picks
+  the family the settings editor is displayed with (the list shows the monospaced fonts
+  installed on your machine; Consolas by default on Windows), and **Font size of
+  settingsfile** picks its size in pixels (6–32). The size is the same setting as the
+  **Font+** / **Font-** buttons above the settings file — change it either way, the
+  other follows, and both are remembered for the next session.
 
 ### Control Panel (Left Side)
 - "Loaded: …" filename label (left-aligned, slightly larger font).
@@ -498,6 +565,12 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
 - **Progress Clock**: centred/left **below** the output box.
 
 ### Text Display Area (Right Side)
+- Button row above the editor: Save · Save As · Fold All · Unfold All · Top · Down ·
+  **Font+** / **Font-** (grow/shrink the settings-file font one step; the same setting
+  as Preferences ▸ Display ▸ *Font size of settingsfile*) · the coloured skill-level
+  button.
+- **Tabs** — one settings file per tab, in the bar below the button row (see
+  *Working with several settings files* below).
 - Syntax-highlighted configuration content (plain text — what you see is what is saved).
 - Line-number gutter with ▾/▸ fold markers on section headers (click to toggle;
   double-clicking a header line works too).
