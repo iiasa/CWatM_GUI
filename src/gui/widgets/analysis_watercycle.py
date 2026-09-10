@@ -573,7 +573,7 @@ class WatercycleWindow(PlotlyWindowBase):
         start_idx = self._start_idx
         end_idx = self._end_idx
         baseline_idx = start_idx - 1 if start_idx > 0 else start_idx
-        flux_start = baseline_idx + 1
+        flux_start = baseline_idx + 1 if start_idx > 0 else baseline_idx
         if flux_start > end_idx:
             raise ValueError("Select a window of at least two months.")
 
@@ -629,7 +629,7 @@ class WatercycleWindow(PlotlyWindowBase):
                     if col not in df.columns:
                         missing = True
                         break
-                    tmp = df[col].to_numpy()[flux_start:end_idx]
+                    tmp = df[col].to_numpy()[flux_start:end_idx + 1]
                     discharge = np.mean(tmp)
                     temp = np.sum(tmp * 86400)
                 else:
@@ -641,7 +641,7 @@ class WatercycleWindow(PlotlyWindowBase):
                         temp = temp + (df[col].to_numpy()[end_idx]
                                        - df[col].to_numpy()[baseline_idx])
                     else:
-                        temp1 = df[col].to_numpy()[flux_start:end_idx]
+                        temp1 = df[col].to_numpy()[flux_start:end_idx + 1]
                         temp = temp + np.sum(temp1)
             if missing:
                 continue
