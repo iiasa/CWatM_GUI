@@ -13,6 +13,12 @@ are inserted on whichever side is shorter so equal lines sit on the same row on 
 sides. Lines that differ are marked **red**, filler lines **light-gray**. The two
 editors **scroll together**, and **Next/Previous Diff** jump between difference blocks.
 
+**Editing keeps the alignment** (`_on_pane_edit`): adding lines on one side adds the
+same number of light-gray **virtual** lines on the other, and deleting a line leaves a
+virtual line behind in its place - unless the rows opposite it are virtual themselves,
+in which case the pair is dropped. Virtual lines live only on screen: `real_text()`
+strips them, so neither Save nor a re-diff ever sees them.
+
 A menu bar (**File / History / Settings**) mirrors the main window's actions but
 applies them to the **active** side (whichever editor last had focus).
 
@@ -31,7 +37,7 @@ from PySide6.QtCore import Qt, QEvent
 from PySide6.QtGui import QIcon, QTextCursor
 
 from src.gui.utils import theme
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.gui_log import get_logger
 from src.gui.widgets.settings_editor import SettingsEditor
 from src.gui.widgets.line_number_gutter import LineNumberGutter
@@ -57,6 +63,18 @@ def open_compare_files(parent, left_path, right_path):
     Run Ledger's Compare settings). Falls back to preloaded content on a read error."""
     win = CompareSettingsWindow(parent)
     win.load_files(left_path, right_path)
+    win.show()
+    win.raise_()
+    win.activateWindow()
+    return win
+
+
+def open_compare_sources(parent, left, right):
+    """Open the Compare settings window on two `(content, path, name)` triples - used
+    by the settings tab bar's **Compare**, where both sides are open tabs whose
+    (possibly unsaved) editor text, not the file on disk, is what must be compared."""
+    win = CompareSettingsWindow(parent)
+    win.load_sources(left, right)
     win.show()
     win.raise_()
     win.activateWindow()
@@ -113,6 +131,9 @@ class _ComparePane(QWidget):
         self._on_saved = on_saved              # notify after a successful write(path)
         self.file_path = None
         self.filler_rows = set()               # display rows that are gray padding
+        self.diff_rows = set()                 # display rows marked as a difference
+        self._suspend_sync = False             # guard: programmatic document replace
+        self._block_count = 1                  # line count at the last sync point
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -211,16 +232,32 @@ class _ComparePane(QWidget):
     def set_source(self, text, path=None, name=None):
         """Set this pane's *real* (unaligned) content and file path."""
         self.filler_rows = set()
-        self.editor.load_text(text or "")
+        self.diff_rows = set()
+        self._replace_text(text or "")
         self.file_path = path
         self.header.setText(name or (os.path.basename(path) if path else "(no file)"))
 
     def show_aligned(self, aligned_text, diff_rows, filler_rows):
         """Replace the editor with the aligned display and mark diff/filler rows."""
         self.filler_rows = set(filler_rows)
-        self.editor.load_text(aligned_text)
-        self.editor.set_diff_rows(diff_rows)       # orange = differences
-        self.editor.set_filler_rows(filler_rows)
+        self.diff_rows = set(diff_rows)
+        self._replace_text(aligned_text)
+        self.apply_marks()
+
+    def _replace_text(self, text):
+        """Load `text` into the editor **without** the live line-sync reacting to it
+        (a wholesale replace is not a user edit)."""
+        self._suspend_sync = True
+        try:
+            self.editor.load_text(text)
+        finally:
+            self._suspend_sync = False
+        self._block_count = self.editor.blockCount()
+
+    def apply_marks(self):
+        """Push this pane's tracked diff / filler rows to the editor."""
+        self.editor.set_diff_rows(self.diff_rows)      # orange = differences
+        self.editor.set_filler_rows(self.filler_rows)  # light gray = virtual line
 
     def real_text(self):
         """Current editor text with the tracked (empty) filler rows removed - the
@@ -376,13 +413,15 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
         self._changed_rows = set()   # every non-equal display row
         self._syncing = False        # scrollbar-sync reentrancy guard
         self._folding_sync = False   # fold-sync reentrancy guard
+        self._sync_busy = False      # line-sync reentrancy guard
+        self._aligned = False        # both sides aligned -> keep them aligned on edits
         self._find_term = ""
         self.setWindowTitle("⇔ Compare settings")
         self.setModal(False)
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("compare_settings"):
-            self.resize(1300, 820)
+            self.resize(*scaled_default_size(self, 1300, 820))
         self._set_window_icon()
 
         layout = QVBoxLayout(self)
@@ -421,6 +460,8 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
 
         # Synchronize the two vertical + horizontal scrollbars.
         self._link_scrollbars(self.left.editor, self.right.editor)
+        # Keep the two sides aligned while they are EDITED (see _on_pane_edit).
+        self._install_line_sync()
         # Synchronize section folding: folding/unfolding a section on either side
         # mirrors to the other.
         self.left.editor.foldingChanged.connect(
@@ -589,6 +630,150 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
         finally:
             self._syncing = False
 
+    # -------------------------------------------------------------- line sync
+    # Editing one side would otherwise slide it against the other: type a line on the
+    # left and every following left row sits one line lower than its right-hand
+    # counterpart. So an edit that changes the LINE COUNT is mirrored as **virtual**
+    # lines - empty, light-gray, tracked in `filler_rows` and stripped again by
+    # `real_text()`, so they exist only on screen and are never written to a file:
+    #   * lines added on one side  -> the same number of gray lines on the other side;
+    #   * a line deleted           -> a gray line stays behind in its place, unless the
+    #     rows opposite it are gray themselves (deleting a line that exists only on
+    #     this side, or undoing an insert) - then the pair is dropped on both sides.
+    def _install_line_sync(self):
+        for pane, other in ((self.left, self.right), (self.right, self.left)):
+            pane._block_count = pane.editor.blockCount()
+            pane.editor.document().contentsChange.connect(
+                lambda pos, rem, add, p=pane, o=other: self._on_pane_edit(p, o, pos))
+
+    def _on_pane_edit(self, pane, other, position):
+        """A pane's document changed. Restore the row-for-row alignment."""
+        if self._sync_busy or pane._suspend_sync or other._suspend_sync:
+            return
+        new_count = pane.editor.blockCount()
+        delta = new_count - pane._block_count
+        pane._block_count = new_count
+        if not self._aligned:
+            other._block_count = other.editor.blockCount()
+            return
+        try:
+            row = pane.editor.document().findBlock(position).blockNumber()
+        except RuntimeError:
+            return
+        if delta == 0:
+            self._unmark_typed_filler(pane, row)
+            return
+        self._sync_busy = True
+        try:
+            if delta > 0:
+                self._lines_added(pane, other, row + 1, delta)
+            else:
+                self._lines_removed(pane, other, row + 1, -delta)
+            self.left.apply_marks()
+            self.right.apply_marks()
+        except Exception:
+            log.debug("line sync failed", exc_info=True)
+        finally:
+            for p in (self.left, self.right):
+                p._block_count = p.editor.blockCount()
+            self._sync_busy = False
+        self.summary.setText(
+            "Edited - gray lines are virtual padding (never saved). "
+            "Save or reload to diff again.")
+
+    def _lines_added(self, pane, other, at_row, count):
+        """`count` lines appeared at `at_row` on `pane`: give the other side the same
+        number of gray virtual lines there, so both stay row-for-row."""
+        self._shift_marks(at_row, count)
+        new_rows = set(range(at_row, at_row + count))
+        pane.diff_rows |= new_rows          # freshly typed = a difference
+        other.filler_rows |= new_rows
+        self._insert_blank_rows(other, at_row, count)
+
+    def _lines_removed(self, pane, other, at_row, count):
+        """`count` lines vanished at `at_row` on `pane`. Keep them virtually (gray),
+        or - when the rows opposite them are gray themselves - drop the pair."""
+        rows = set(range(at_row, at_row + count))
+        if rows and all(r in other.filler_rows and self._row_is_empty(other, r)
+                        for r in rows):
+            self._delete_rows(other, at_row, count)
+            self._shift_marks(at_row, -count)
+            return
+        self._insert_blank_rows(pane, at_row, count)
+        pane.diff_rows -= rows
+        pane.filler_rows |= rows
+        other.diff_rows |= rows             # what is left opposite them now differs
+
+    @staticmethod
+    def _shift_rows(rows, at_row, delta):
+        """Move every row >= `at_row` by `delta`; a negative delta also drops the rows
+        it removes (`at_row` .. `at_row - delta - 1`)."""
+        out = set()
+        for r in rows:
+            if r < at_row:
+                out.add(r)
+            elif delta < 0 and r < at_row - delta:
+                continue
+            else:
+                out.add(r + delta)
+        return out
+
+    def _shift_marks(self, at_row, delta):
+        """Both documents change length at the same row, so every tracked row number
+        moves the same way on both sides."""
+        for pane in (self.left, self.right):
+            pane.filler_rows = self._shift_rows(pane.filler_rows, at_row, delta)
+            pane.diff_rows = self._shift_rows(pane.diff_rows, at_row, delta)
+        self._changed_rows = self._shift_rows(self._changed_rows, at_row, delta)
+        self._diff_blocks = sorted(
+            self._shift_rows(set(self._diff_blocks), at_row, delta))
+
+    @staticmethod
+    def _row_is_empty(pane, row):
+        block = pane.editor.document().findBlockByNumber(row)
+        return block.isValid() and not block.text().strip()
+
+    @staticmethod
+    def _insert_blank_rows(pane, at_row, count):
+        """Insert `count` empty lines before row `at_row` (appended when past the end)."""
+        doc = pane.editor.document()
+        cur = QTextCursor(doc)
+        block = doc.findBlockByNumber(at_row)
+        if block.isValid():
+            cur.setPosition(block.position())
+            cur.insertText("\n" * count)
+        else:
+            cur.movePosition(QTextCursor.End)
+            cur.insertText("\n" * count)
+
+    @staticmethod
+    def _delete_rows(pane, at_row, count):
+        """Remove rows `at_row` .. `at_row + count - 1` from the document."""
+        doc = pane.editor.document()
+        first = doc.findBlockByNumber(at_row)
+        if not first.isValid():
+            return
+        last_no = min(at_row + count - 1, doc.blockCount() - 1)
+        last = doc.findBlockByNumber(last_no)
+        start, end = first.position(), last.position() + last.length()
+        if last_no >= doc.blockCount() - 1:
+            # Deleting through the end: take the newline BEFORE the first row instead
+            # of the (non-existent) one after the last, or an empty block is left over.
+            end = doc.characterCount() - 1
+            start = max(start - 1, 0)
+        cur = QTextCursor(doc)
+        cur.setPosition(start)
+        cur.setPosition(max(end, start), QTextCursor.KeepAnchor)
+        cur.removeSelectedText()
+
+    def _unmark_typed_filler(self, pane, row):
+        """Typing into a gray virtual line turns it into real content."""
+        if row not in pane.filler_rows or self._row_is_empty(pane, row):
+            return
+        pane.filler_rows.discard(row)
+        pane.diff_rows.add(row)
+        pane.apply_marks()
+
     # -------------------------------------------------------------- fold sync
     def _sync_folds(self, source, target):
         """Mirror the folded sections from ``source`` to ``target`` (guarded)."""
@@ -721,6 +906,13 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
         self.right.set_source(right_content or "", "", right_name)
         self._recompare()
 
+    def load_sources(self, left, right):
+        """Fill both panes from `(content, path, name)` triples and diff them."""
+        for pane, src in ((self.left, left), (self.right, right)):
+            content, path, name = src or ("", None, None)
+            pane.set_source(content or "", path, name)
+        self._recompare()
+
     def load_files(self, left_path, right_path):
         """Load two specific settings files into the two panes and diff them (Run
         Ledger ▸ Compare settings). A file that cannot be read loads as empty."""
@@ -738,12 +930,15 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
     def _recompare(self):
         """Re-align both sides, push the aligned display, mark diffs/filler."""
         if not (self.left.has_content() and self.right.has_content()):
-            # Show raw (unaligned) content; clear any marks.
+            # Show raw (unaligned) content; clear any marks. Nothing is aligned, so
+            # the live line-sync stays out of the way until both sides have content.
+            self._aligned = False
             for pane in (self.left, self.right):
                 pane.filler_rows = set()
-                pane.editor.set_diff_rows(set())
-                pane.editor.set_filler_rows(set())
+                pane.diff_rows = set()
+                pane.apply_marks()
                 pane.editor.set_current_diff_rows(set())
+                pane._block_count = pane.editor.blockCount()
             self._diff_blocks = []
             self._changed_rows = set()
             self.summary.setText(
@@ -759,6 +954,7 @@ class CompareSettingsWindow(GeometryMemoryMixin, QDialog):
             self.right.show_aligned(res["right"], res["rdiff"], res["rfill"])
         finally:
             self._syncing = False
+        self._aligned = True
         self._diff_blocks = res["blocks"]
         # Every non-equal display row (for computing a jumped-to block's extent).
         self._changed_rows = res["ldiff"] | res["rdiff"] | res["lfill"] | res["rfill"]

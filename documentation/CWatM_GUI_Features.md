@@ -430,7 +430,8 @@ Plot a result `.csv` (line chart). Step through multiple columns, **Compare** an
 file, **Save as csv** in the CWatM result format, or **Save HTML**. A **range slider**
 below the plot shrinks the displayed period from either end. **Load observed** overlays
 an observed series and shows goodness-of-fit metrics — **KGE / NSE / PBIAS / RMSE** —
-computed over the period the slider selects.
+computed over the period the slider selects. **Flow duration** and **Flow regime**
+(Action menu) open a dedicated window for the column currently on screen — see below.
 
 ![Timeseries](figures/screenshot_timeseries.png)
 
@@ -438,10 +439,18 @@ computed over the period the slider selects.
 A result `.nc` as a raster overlay on an OSM map with a timestep slider + Play,
 colour-scale, **Log scale**, OSM-transparency slider, and click-to-read. Two ways to plot
 a clicked cell's series: **Fast Display Timeserie** (quick, the map's timesteps only, with
-gaps) or **Total Timeseries** (every timestep — can take a while, so a progress bar shows
-next to the buttons). **Compare A−B** loads a second `.nc` on the same grid and shows the
-**difference** (this − other) per timestep on a red/blue diverging scale — ideal for
-comparing two scenarios you just ran.
+gaps) or **Total Timeseries** (every timestep — can take a while, so a progress bar with
+elapsed time and a **Cancel** button shows while it reads). **Right-click anywhere on the
+map** for the same menu on the last point you clicked. **Compare A−B** loads a second
+`.nc` on the same grid and shows the **difference** (this − other) per timestep on a
+red/blue diverging scale — ideal for comparing two scenarios you just ran.
+
+**Flow duration / Flow regime** (Action menu, on the map, or from Timeseries above) plot
+the **last point you clicked** — never several at once. **Flow duration** ranks each
+year's values into an exceedance-probability curve; **Flow regime** shows the seasonal
+cycle (day-of-year or month-of-year). Both show every year as a thin line plus a black
+cross-year average, with buttons to hide the single years, show light-gray 0–100 %/40–60 %
+percentile bands, save the per-year table as csv, or save the plot as HTML.
 
 ![NetCDF](figures/screenshot_netcdf.png)
 

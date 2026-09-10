@@ -30,6 +30,20 @@ netCDF4==1.7.4
 cftime==1.6.5
 xarray==2026.4.0
 
+# dask[array]: lets Analyse > NetCDF open a big result file (discharge_daily.nc etc.)
+# with chunks={} for the point-series reads (Total Timeseries / Flow duration / Flow
+# regime) - a "one cell, every timestep" read on a multi-GB, timestep-chunked file
+# means decompressing thousands of chunks; dask's threaded scheduler parallelises
+# that across CPU cores instead of one sequential Python loop. Only dask.array is
+# used (no distributed/dataframe/bag), so just the "array" extra + its own deps.
+dask==2026.7.1
+cloudpickle==3.1.2
+fsspec==2026.7.0
+partd==1.4.2
+PyYAML==6.0.3
+toolz==1.1.0
+locket==1.0.0
+
 # ---- Raster I/O (rasterio bundles its own GDAL - see the GDAL note above) ----
 rasterio==1.5.0
 affine==2.4.0
@@ -47,6 +61,7 @@ plotly==6.8.0
 narwhals==2.23.0
 Jinja2==3.1.6
 MarkupSafe==3.0.3
+pyshp==3.1.6
 
 # ---- HTTP (OSM tile/WMS fetching via the osmtile:// handler) ----
 requests==2.34.2

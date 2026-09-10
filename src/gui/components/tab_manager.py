@@ -30,7 +30,7 @@ import re
 
 from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QTabBar,
                                QStackedWidget, QMenu, QMessageBox, QToolButton)
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from src.gui.managers.text_display import TextDisplayManager
 from src.gui.utils import theme
@@ -199,6 +199,10 @@ class SettingsTabsMixin:
         editor.textChanged.connect(self._on_editor_text_changed)
         # After an undo/redo, re-sync the left-window fields from the reverted text
         editor.undoRedoPerformed.connect(self._sync_fields_from_editor)
+        # Dropping a .ini/.txt file onto the editor loads it (same as dropping it
+        # anywhere else in the window), instead of QPlainTextEdit's default of
+        # inserting the dropped path as plain text.
+        editor.fileDropped.connect(self.load_recent_file)
         editor.setStyleSheet(self._editor_style())
         try:
             editor.set_auto_bookmark_changed(
@@ -269,7 +273,7 @@ class SettingsTabsMixin:
         self.settings_stack = QStackedWidget()
         layout.addWidget(self.settings_stack, 1)
 
-        self.add_settings_tab(activate=True, persist=False)
+        self.add_settings_tab(activate=True, persist=False, defer_warnings=True)
         # Re-style now that a tab exists: the '+' takes its height from a real tab
         self._style_tab_chrome()
         self.update_tabs_visible()
@@ -374,8 +378,13 @@ class SettingsTabsMixin:
         return [t.editor for t in getattr(self, "_tabs", [])]
 
     # ------------------------------------------------------- add / activate
-    def add_settings_tab(self, activate=True, persist=True):
-        """Append a new empty tab (the `+` tab right of the last one)."""
+    def add_settings_tab(self, activate=True, persist=True, defer_warnings=False):
+        """Append a new empty tab (the `+` tab right of the last one).
+
+        ``defer_warnings`` is for the one construction-time call (see
+        ``build_settings_tabs``) - it skips the synchronous gauge-in-mask check so
+        ``window.show()`` is never blocked behind importing xarray/rasterio, even
+        for an empty tab with nothing to check yet."""
         tab = self._create_editor_page()
         self._tabs.append(tab)
         self.settings_stack.addWidget(tab.page)
@@ -384,19 +393,19 @@ class SettingsTabsMixin:
         self.settings_tab_bar.setTabToolTip(index, "No file loaded")
         self.settings_tab_bar.blockSignals(blocked)
         if activate or self._active_tab_index < 0:
-            self.switch_to_tab(index)
+            self.switch_to_tab(index, defer_warnings=defer_warnings)
         if persist:
             self._persist_open_tabs()
         return index
 
-    def switch_to_tab(self, index):
+    def switch_to_tab(self, index, defer_warnings=False):
         """Make tab `index` the active one (stores the outgoing tab first)."""
         if not (0 <= index < len(self._tabs)) or self._switching_tabs:
             return
         self._switching_tabs = True
         try:
             self._store_active_tab()
-            self._activate_tab(index)
+            self._activate_tab(index, defer_warnings=defer_warnings)
         finally:
             self._switching_tabs = False
         blocked = self.settings_tab_bar.blockSignals(True)
@@ -447,7 +456,7 @@ class SettingsTabsMixin:
         tab.mask_context_key = getattr(self, "_mask_context_key", None)
         tab.mask_context_built = getattr(self, "_mask_context_built", False)
 
-    def _activate_tab(self, index):
+    def _activate_tab(self, index, defer_warnings=False):
         """Point the main window at tab `index` and refresh everything shared."""
         tab = self._tabs[index]
         self._active_tab_index = index
@@ -497,23 +506,44 @@ class SettingsTabsMixin:
 
         self._set_save_dirty(tab.is_dirty)
         self._update_changed_fields_hint()
-        try:
-            self._update_warnings(check_pathout=bool(tab.file_path))
-        except Exception:
-            log.warning("warnings refresh on tab switch failed", exc_info=True)
+        check_pathout = bool(tab.file_path)
+        if defer_warnings:
+            # Construction-time only (see add_settings_tab): run it a tick later so
+            # window.show() is never blocked behind the gauge-in-mask check's first
+            # (lazy) import of basin_viewer / xarray / rasterio.
+            QTimer.singleShot(0, lambda cp=check_pathout: self._deferred_warnings(cp))
+        else:
+            try:
+                self._update_warnings(check_pathout=check_pathout)
+            except Exception:
+                log.warning("warnings refresh on tab switch failed", exc_info=True)
         try:
             self._refresh_check_settings_label()
         except Exception:
             log.debug("check-label refresh on tab switch failed", exc_info=True)
-        if tab.file_path:
-            self.set_cwatm_button_ready_state()
-        # A run locks Save (it uses the file on disk) - keep it locked across a switch
+        # The RUN CWATM button reflects whether a run is in progress AT ALL, not
+        # whether it belongs to this tab - pressing it always stops whatever is
+        # running (run_controller.run_cwatm), regardless of the active tab, so it
+        # must never show "ready" (blue) while another tab's run is still going.
         if getattr(self, "cwatm_running", False):
+            self.set_cwatm_button_running_state()
+            # A run also locks Save (it uses the file on disk) - keep it locked
+            # across a switch.
             try:
                 self._set_tools_enabled(False)
             except Exception:
                 log.debug("save lock not re-applied on tab switch", exc_info=True)
+        elif tab.file_path:
+            self.set_cwatm_button_ready_state()
         self.line_number_gutter.update()
+
+    def _deferred_warnings(self, check_pathout):
+        """The QTimer.singleShot target for _activate_tab(defer_warnings=True) -
+        same call, same error handling as the synchronous path, just a tick later."""
+        try:
+            self._update_warnings(check_pathout=check_pathout)
+        except Exception:
+            log.warning("deferred warnings refresh failed", exc_info=True)
 
     def _fill_fields_from_content(self, content):
         """Refill the Date / PathOut / MaskMap / Gauges boxes from `content`
@@ -732,8 +762,7 @@ class SettingsTabsMixin:
             log.debug("compare tab editor gone", exc_info=True)
             return
         a_rows, b_rows = diff_line_rows(a_lines, b_lines)
-        tab.editor.set_compare_rows(a_rows)
-        partner.editor.set_compare_rows(b_rows)
+        self._apply_compare_rows(tab, a_rows, partner, b_rows)
         name = os.path.basename(partner.file_path) if partner.file_path else UNTITLED
         if a_rows or b_rows:
             self.status_bar.showMessage(
@@ -741,6 +770,68 @@ class SettingsTabsMixin:
                 f"({len(b_rows)} there) - F8 clears the colouring")
         else:
             self.status_bar.showMessage(f"Compare Tab: identical to {name}")
+
+    def _apply_compare_rows(self, tab, a_rows, partner, b_rows):
+        """Paint the green Compare Tab marks in both tabs and **unfold the sections
+        that hold a marked line** - a difference inside a collapsed section would
+        otherwise be invisible in exactly the view meant to show it. Then re-sync the
+        menu item's Compare/Uncompare label."""
+        for target, rows in ((tab, a_rows), (partner, b_rows)):
+            try:
+                target.editor.set_compare_rows(rows)
+                if rows:
+                    target.editor.unfold_rows(rows)
+            except RuntimeError:
+                log.debug("compare rows: editor gone", exc_info=True)
+        self._refresh_compare_tab_label()
+
+    def _refresh_compare_tab_label(self):
+        """Flip Settings ▸ Compare Tab between 'Compare Tab' and 'Uncompare Tab' to
+        match the current state (F8 is one toggle, like Check settingsfile). Re-synced
+        whenever the Settings menu opens, so it can never drift."""
+        act = getattr(self, "compare_tab_action", None)
+        if act is None:
+            return
+        try:
+            if self.compare_marks_shown():
+                act.setText("Uncompare Tab")
+                act.setToolTip("Remove the green Compare Tab colouring")
+            else:
+                act.setText("Compare Tab")
+                act.setToolTip("Compares a tab with the neighbor one")
+        except RuntimeError:
+            log.debug("_refresh_compare_tab_label: ignored", exc_info=True)  # the QAction's C++ object was deleted
+
+    def compare_next_partner_index(self, index):
+        """Index of the tab the **right-clicked** tab `index` is compared against:
+        the tab immediately **right** of it, or - when it is already the last one -
+        the one immediately **left**. -1 when there is no second tab. This is the
+        tab menu's *Compare to next*; Settings ▸ Compare Tab (F8) uses the mirrored
+        rule (`compare_partner_index`, left neighbour first) on the *active* tab."""
+        tabs = getattr(self, "_tabs", [])
+        if len(tabs) < 2 or not (0 <= index < len(tabs)):
+            return -1
+        return index + 1 if index + 1 < len(tabs) else index - 1
+
+    def compare_tab_to_next(self, index):
+        """Tab menu ▸ Compare: open **Settings ▸ Compare settings** (the side-by-side
+        window) on this tab and its neighbour - left pane = the right-clicked tab,
+        right pane = `compare_next_partner_index`. Both sides are handed their tab's
+        **live editor text**, so unsaved edits are compared, not the files on disk."""
+        other = self.compare_next_partner_index(index)
+        if other < 0:
+            self.status_bar.showMessage("Compare needs a second tab to compare with")
+            return
+        left = self.tab_source(index, require_content=False)
+        right = self.tab_source(other, require_content=False)
+        try:
+            from src.gui.widgets.compare_settings_window import open_compare_sources
+            # Keep a reference so the non-modal window isn't garbage-collected.
+            self._compare_settings_window = open_compare_sources(self, left, right)
+        except Exception as e:  # noqa: BLE001
+            log.warning("compare tabs side by side failed", exc_info=True)
+            QMessageBox.warning(self, "Compare settings",
+                                f"Could not open Compare settings:\n{e}")
 
     def compare_marks_shown(self):
         """Whether any tab currently shows Compare Tab colouring (F8 = a toggle)."""
@@ -752,15 +843,18 @@ class SettingsTabsMixin:
                 continue
         return False
 
-    def clear_compare_tab(self):
-        """Remove the Compare Tab colouring from every tab."""
+    def clear_compare_tab(self, quiet=False):
+        """Remove the Compare Tab colouring from every tab. `quiet` skips the status
+        message - used when a new comparison replaces the old marks right away."""
         for tab in getattr(self, "_tabs", []):
             try:
                 if tab.editor.has_compare_rows():
                     tab.editor.set_compare_rows(())
             except RuntimeError:
                 continue
-        self.status_bar.showMessage("Compare Tab colouring cleared")
+        self._refresh_compare_tab_label()
+        if not quiet:
+            self.status_bar.showMessage("Compare Tab colouring cleared")
 
     def compare_partner_source(self):
         """`(content, path, name)` of the tab **Compare settings** starts its right
@@ -771,10 +865,17 @@ class SettingsTabsMixin:
         active one, or - when the active tab is already the first - the one
         immediately **right** of it. A single tab, or a neighbour with no content
         yet, leaves the right pane empty and its Load button as the way in."""
-        index = self.compare_partner_index()
-        if index < 0:
+        return self.tab_source(self.compare_partner_index())
+
+    def tab_source(self, index, require_content=True):
+        """`(content, path, name)` of tab `index` for the Compare settings window, or
+        None when the index is out of range (or, with `require_content`, the tab is
+        still empty). The content is the tab's **live editor text**, so unsaved edits
+        are what gets compared."""
+        tabs = getattr(self, "_tabs", [])
+        if not (0 <= index < len(tabs)):
             return None
-        other = self._tabs[index]
+        other = tabs[index]
         content = other.original_content or ""
         try:
             # A background tab's text lives in its own editor; original_content is
@@ -784,14 +885,15 @@ class SettingsTabsMixin:
                 content = text
         except RuntimeError:
             log.debug("compare partner editor gone", exc_info=True)
-        if not content.strip():
+        if require_content and not content.strip():
             return None
         name = os.path.basename(other.file_path) if other.file_path else UNTITLED
         return content, other.file_path, name
 
     # ------------------------------------------------------- context menu
     def _on_tab_context_menu(self, pos):
-        """Right-click on a tab: Delete Tab / Copy Tab / Run CWatM / Link scrolling."""
+        """Right-click on a tab: Delete Tab / Copy Tab / Compare / Run CWatM /
+        Link scrolling."""
         index = self.settings_tab_bar.tabAt(pos)
         if index < 0:
             index = self.settings_tab_bar.currentIndex()
@@ -813,6 +915,16 @@ class SettingsTabsMixin:
             act_copy.setEnabled(False)
             act_copy.setToolTip("This tab has no settings file yet - nothing to copy")
         menu.addSeparator()
+        # Side-by-side diff against the neighbouring tab (the next one, or the
+        # previous one when this is the last tab) - the Settings ▸ Compare settings
+        # window, opened on the two tabs' live text.
+        act_compare = menu.addAction("Compare")
+        partner_index = self.compare_next_partner_index(index)
+        if partner_index < 0:
+            act_compare.setEnabled(False)
+            act_compare.setToolTip("Only one tab is open - nothing to compare with")
+        else:
+            act_compare.setToolTip("Compares this settingsfile to the next Tab")
         # Run this tab's settings file - in its own Windowed Run CWatM window, so it
         # is independent of the main run and of what the other tabs are doing.
         act_run = menu.addAction("Run CWatM")
@@ -844,6 +956,8 @@ class SettingsTabsMixin:
             self.close_settings_tab(index)
         elif chosen is act_copy:
             self.copy_settings_tab(index)
+        elif chosen is act_compare:
+            self.compare_tab_to_next(index)
         elif chosen is act_run:
             self.open_hidden_run(tab.file_path)
         elif chosen is act_link:
@@ -858,9 +972,14 @@ class SettingsTabsMixin:
             return False
         if not self._confirm_tab_saved(index, "Close this tab"):
             return False
+        closing_tab = self._tabs[index]
+        if not self._interrupt_tab_run(closing_tab):
+            return False
+        closed_folder = self._tab_folder(closing_tab)
         if len(self._tabs) == 1:
             self._reset_tab_to_empty(index)
             self._persist_open_tabs()
+            self._release_tab_folder_lock(closed_folder)
             return True
         # Park the active tab's live state in its own object first: closing a tab
         # ends with _activate_tab(), which restores the window from that object -
@@ -889,7 +1008,69 @@ class SettingsTabsMixin:
         self.settings_tab_bar.setCurrentIndex(new_index)
         self.settings_tab_bar.blockSignals(blocked)
         self._persist_open_tabs()
+        self._release_tab_folder_lock(closed_folder)
         return True
+
+    def _tab_folder(self, tab):
+        """The folder `tab`'s settings file resolves relative paths against
+        (its working-dir override, else the file's own folder), or None."""
+        if tab.working_dir_override:
+            return tab.working_dir_override
+        if tab.file_path:
+            return os.path.dirname(os.path.abspath(tab.file_path))
+        return None
+
+    def _interrupt_tab_run(self, tab):
+        """Delete Tab must not leave a run pinned to the file the user just
+        closed: it keeps output files open under the tab's folder (what blocks
+        deleting it from Explorer) and would otherwise be a run nothing can Stop
+        any more. Only THIS tab's settings file matters - other tabs' runs are
+        untouched. Asks for confirmation first, since it kills a run that may
+        still be wanted: True = ok to proceed with closing the tab (no run was
+        using it, or the user confirmed stopping it); False = the user declined,
+        so the tab is left open and the run keeps going."""
+        if not getattr(self, "cwatm_running", False):
+            return True
+        worker = getattr(self, "cwatm_worker", None)
+        running_path = getattr(worker, "file_path", None) if worker else None
+        if not same_file(running_path, tab.file_path):
+            return True
+        name = os.path.basename(tab.file_path) if tab.file_path else UNTITLED
+        reply = QMessageBox.question(
+            self, "Stop CWatM run?",
+            f"CWatM is currently running with {name}.\n\n"
+            "Closing this tab will stop that run. Stop it and close the tab?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return False
+        try:
+            self.stop_cwatm_execution()
+        except Exception:
+            log.warning("stopping run for closed tab failed", exc_info=True)
+        return True
+
+    def _release_tab_folder_lock(self, folder):
+        """After Delete Tab, make sure the GUI process's own current directory is
+        not still pinned to the closed tab's folder - _activate_tab chdir's into
+        a tab's folder for relative-path resolution (see working_dir()), and
+        Windows refuses to delete/rename a folder that is any process's current
+        directory until it changes away. Skipped when another still-open tab
+        needs the same folder."""
+        if not folder:
+            return
+        try:
+            folder = os.path.normcase(os.path.abspath(folder))
+            if os.path.normcase(os.path.abspath(os.getcwd())) != folder:
+                return
+            for t in self._tabs:
+                wd = self._tab_folder(t)
+                if wd and os.path.normcase(os.path.abspath(wd)) == folder:
+                    return  # still needed by another open tab
+            safe = os.path.expanduser("~")
+            if os.path.isdir(safe):
+                os.chdir(safe)
+        except Exception:
+            log.debug("releasing tab folder lock failed", exc_info=True)
 
     def _reset_tab_to_empty(self, index):
         """Turn a tab back into a fresh, empty one (used when the last tab is

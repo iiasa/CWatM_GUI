@@ -135,12 +135,15 @@ class MenuBuilderMixin:
             "side by side")
         compare_action.triggered.connect(lambda: self.open_compare_settings())
         # Last item: colour the lines that differ from the neighbouring TAB, in
-        # place (a toggle - F8 again removes the colouring).
+        # place (a toggle - F8 again removes the colouring, and the item relabels
+        # itself "Uncompare Tab" while the marks are shown).
         compare_tab_action = settings_menu.addAction("Compare Tab")
         compare_tab_action.setShortcut("F8")
         compare_tab_action.setToolTip("Compares a tab with the neighbor one")
         compare_tab_action.triggered.connect(lambda: self.toggle_compare_tab())
         self.compare_tab_action = compare_tab_action
+        self._refresh_compare_tab_label()
+        settings_menu.aboutToShow.connect(self._refresh_compare_tab_label)
 
         # Tools menu (right of File) — same actions as the side buttons
         tools_menu = menu_bar.addMenu("Tools")
@@ -216,6 +219,11 @@ class MenuBuilderMixin:
             "Run many scenarios from the loaded settings file (base .ini + per-row "
             "key overrides), up to N in parallel")
         batch_action.triggered.connect(lambda: self.open_batch_runner())
+        run_menu.addSeparator()
+        create_batch_action = run_menu.addAction("Create batch")
+        create_batch_action.setToolTip(
+            "Creates a Windows batch file to run CWatM without the GUI")
+        create_batch_action.triggered.connect(lambda: self.create_run_batch_file())
 
         # --- Group divider: end of the "running CWatM" part ---
         self._add_menubar_separator(menu_bar)
@@ -337,8 +345,10 @@ class MenuBuilderMixin:
         # Entries only an **Expert** sees. Compare Tab works on the settings-file
         # tabs, and those are Expert-only themselves (Preferences ▸ Use Tabs ×
         # Expert), so the menu item follows them - a Beginner/Advanced has no tab
-        # bar for it to act on.
-        self._expert_only_actions = [compare_tab_action]        # Settings
+        # bar for it to act on. Create batch (running CWatM entirely outside the
+        # GUI) is an Expert-level power tool the same way.
+        self._expert_only_actions = [compare_tab_action,        # Settings
+                                      create_batch_action]       # RUN CWATM
         self._apply_menu_level()
 
     def _init_configure_state(self):

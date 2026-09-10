@@ -1,6 +1,6 @@
 # CWatM GUI — Documentation and User Manual
 
-## Version 1.05
+## Version 1.06
 
 A graphical user interface for the **Community Water Model (CWatM)** developed by
 IIASA. The application lets you load, edit, validate and run CWatM settings files,
@@ -850,9 +850,9 @@ current user's locations. Reference: `installer/CWatM_GUI.iss`.
 ## 18. Versioning
 
 The **CWatM GUI** carries its own version number, independent of the CWatM model
-version it drives. The current release is **Version 1.05**.
+version it drives. The current release is **Version 1.06**.
 
-You can see it in-app under **Info ▸ About CWatM**, where **CWatM GUI version 1.05**
+You can see it in-app under **Info ▸ About CWatM**, where **CWatM GUI version 1.06**
 is shown above the **CWatM Version** block (the latter reports the model's Git
 branch, hash and build time).
 
@@ -864,6 +864,7 @@ disagree. Only this manual — the header above and the table below — needs it
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.06 | 22/08/2026 | Frozen-build startup dropped from ~6.2 s to ~0.5 s (lazy `xarray`/`rasterio`/CWatM-model imports, the first settings-file load's checks deferred until after the window is shown, a trimmed `dask`) — plus a startup window-flash fix that came with it. **Show Basin**, **Analyse ▸ NetCDF**, **Restore settingsfile**, **Analyse ▸ Timeseries**, **Journal of Runs**, **Excel Crops/Reservoirs** and **Batch Run** lost their button rows for File/Action/… menus (Mask/Gauge, Backward/Forward and Run all/Stop all stayed **also** as buttons, each window's most-used action), and the NetCDF map gained a right-click Action menu. New: **Flow duration** and **Flow regime** plots (Analyse ▸ NetCDF/Timeseries, one point at a time, per-year lines + average + percentile bands), **Load JSON/Load shape** map overlays (Show Basin and NetCDF), faster NetCDF reads on large files (parallel chunked reads, caching, Cancel), subwindows now sized to the screen they open on, and a fixed month-slider minimum gap at the very start of the Watercycle/Flow Diagram range — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.05 | 11/08/2026 | **Tabs**: several settings files open at once, one per tab — the active tab is what every window works on, each keeps its own undo/bookmarks/folds/marks, one file can only be open once, with *Copy Tab*, *Run CWatM* (in a Windowed Run window), *Link scrolling* and *Compare Tab* (F8). **Hidden Run CWatM** renamed **Windowed Run CWatM**. Plus the four settings/validation windows reworked — see [CHANGELOG.md](CHANGELOG.md). **Change Options**: grouped by topic, ⓘ explanation per switch, filter, *Changed only*, change marks, *Revert all*, *Add option…*, and a trailing comment is no longer lost (nor the whole option hidden). **Add output variables**: grouped, searches unit/description, ✓ on what the file already writes, and an array variable's index picked **by name**. **Restore settingsfile**: summary card, preview, compare with the current file, load unsaved, and an input-file check (still there? still the same version?), plus *Show in Journal* and CSV export. **Check Data**: runs in the background with its output in the window, warns about unsaved edits, sortable/filterable table with problem rows tinted and counted, and a double-click jumps to that key in the settings file. |
 | 1.04 | 10/08/2026 | Moved the Excel workbook editor into **Tools ▸ Excel Crops/Reservoirs** (the Excel menu is gone) and extended it: bold, an editable header row that never scrolls away, undo/redo, a symbol toolbar, better column widths and no text spilling between columns. **Batch Run** rewritten around safety and analysis: a pre-flight check, a log per scenario, a row menu, duration/ETA, CSV import & export, result comparison and resume. |
 | 1.03 | 07/08/2026 | Added selection of map/tss to Tools ▸ Add output variables. Put the options of the Configure menu into a Preferences window. |

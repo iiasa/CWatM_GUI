@@ -75,42 +75,6 @@ class ConfigParser:
 
         return self.date_values, self.settings_values
     
-    def format_content_for_display(self, content):
-        """Format content with HTML styling for display"""
-        formatted_lines = []
-        
-        for line in content.split('\n'):
-            line_stripped = line.strip()
-            
-            if line_stripped.startswith('[') and line_stripped.endswith(']'):
-                # Section headers in bold
-                formatted_lines.append(f'<span style="font-weight: bold;">{line}</span>')
-            elif '=' in line and not line_stripped.startswith('#') and not line_stripped.startswith(';'):
-                # Key-value pairs with styling
-                key, value = line.split('=', 1)
-                key_clean = key.strip()
-                value_clean = value.strip()
-                
-                if value_clean.lower() == 'true':
-                    formatted_line = f'<span style="color: black;">{key}= </span><span style="color: blue; font-weight: bold;">True</span>'
-                elif value_clean.lower() == 'false':
-                    formatted_line = f'<span style="color: black;">{key}= </span><span style="color: red; font-weight: bold;">False</span>'
-                else:
-                    formatted_line = f'{key}= {value.strip()}'
-                
-                formatted_lines.append(formatted_line)
-            elif line_stripped.startswith('#'):
-                # Comments in light gray with preserved whitespace
-                preserved_line = line.replace(' ', '&nbsp;').replace('\t', '&nbsp;&nbsp;&nbsp;&nbsp;')
-                formatted_lines.append(f'<span style="color: darkgray;">{preserved_line}</span>')
-            elif line_stripped and not line_stripped.startswith(';'):
-                formatted_lines.append(f"Note: {line}")
-            else:
-                # Preserve empty lines
-                formatted_lines.append(line)
-                
-        return formatted_lines
-    
     def update_dates(self, content, start_date, spin_date, end_date):
         """Update date values in content"""
         start_date_str = start_date.toString("dd/MM/yyyy")
@@ -176,19 +140,6 @@ class ConfigParser:
                 return date_obj
                 
         return None
-    
-    def find_parameter_line(self, content, parameter_name):
-        """Find line number of a specific parameter"""
-        lines = content.split('\n')
-        
-        for i, line in enumerate(lines):
-            if '=' in line and not line.strip().startswith('#') and not line.strip().startswith(';'):
-                key, value = line.split('=', 1)
-                key_clean = key.strip().lower()
-                
-                if key_clean == parameter_name.lower():
-                    return i
-        return -1
     
     def get_current_date_values(self, content):
         """Extract current date values from content"""

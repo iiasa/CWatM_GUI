@@ -11,7 +11,7 @@ import re
 
 from src.gui.utils import theme
 from src.gui.utils import option_help
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("options_window")
@@ -38,7 +38,7 @@ class OptionsWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("options"):
-            self.resize(640, 620)
+            self.resize(*scaled_default_size(self, 640, 620))
             self.move(150, 100)
 
         self.init_ui()

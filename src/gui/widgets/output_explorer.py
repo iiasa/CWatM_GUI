@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QDir
 from PySide6.QtGui import QIcon
 
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils import theme
 from src.gui.utils.gui_log import get_logger
 
@@ -87,7 +87,7 @@ class OutputExplorerWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("output_explorer"):
-            self.resize(560, 620)
+            self.resize(*scaled_default_size(self, 560, 620))
         self._set_window_icon()
 
         self._build_ui()

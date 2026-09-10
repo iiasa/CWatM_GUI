@@ -21,8 +21,11 @@ Author: CWatM GUI Team
 import os
 import sys
 import numpy as np
-import xarray as xr
-import rasterio
+# xarray / rasterio are imported lazily at their call sites (§4.1, three sites:
+# _load_netcdf_data, _load_mask_data's raster branch, build_mask_context's raster
+# branch) - loading this module (which happens on every settings-file load, via the
+# gauge-in-mask check) must not force the whole xarray/rasterio stack in just to
+# define classes and helpers that may never touch a mask/basin file this session.
 import configparser
 import re
 from typing import Optional, Tuple, Union
@@ -241,8 +244,6 @@ except Exception as _osm_err:
     _OSM_AVAILABLE = False
     _OSM_IMPORT_ERROR = f"{type(_osm_err).__name__}: {_osm_err}"
     print(f"OpenStreetMap view unavailable: {_OSM_IMPORT_ERROR}", file=sys.stderr)
-
-import cwatm.run_cwatm as run_cwatm
 
 
 class BasinDataHelpers:
@@ -546,6 +547,7 @@ class BasinViewer:
     def _load_netcdf_data(self, file_path: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
         """Load basin data from NetCDF file."""
         try:
+            import xarray as xr  # lazy (§4.1) - not paid just for importing this module
             ds = xr.open_dataset(file_path)
             
             # Find data variable
@@ -706,6 +708,7 @@ class BasinViewer:
                 # File path - load with rasterio
                 resolved_path = self._resolve_placeholders(mask_path)
                 if resolved_path and os.path.exists(resolved_path):
+                    import rasterio  # lazy (§4.1)
                     with rasterio.open(resolved_path) as src:
                         mask = src.read(1)
                         transform = src.transform
@@ -729,6 +732,12 @@ class BasinViewer:
                 # Running it on `settings_file` directly built the OLD basin and
                 # made the check wrongly flag gauges as outside.
                 import tempfile
+                # Imported here, not at module level: cwatm.run_cwatm pulls in
+                # nearly the whole CWatM model (cwatm_model/cwatm_initial/readmeteo/
+                # ...), and this coordinate-MaskMap branch is the only place in the
+                # GUI that needs it - a raster MaskMap (the common case) must not
+                # pay for it just because basin_viewer.py got imported.
+                import cwatm.run_cwatm as run_cwatm
                 run_file = settings_file
                 temp_path = None
                 try:
@@ -845,6 +854,7 @@ def build_mask_context(settings_file: str, config_content: str):
             resolved = viewer._resolve_placeholders(mask_path)
             if not resolved or not os.path.exists(resolved):
                 return None
+            import rasterio  # lazy (§4.1) - not paid just for importing this module
             with rasterio.open(resolved) as src:
                 band = src.read(1, masked=True)
                 filled = np.ma.filled(band, 0)

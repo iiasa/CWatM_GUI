@@ -22,6 +22,13 @@ black = last clicked cell (all drawn as **folium.Icon** pins); Create new Mask /
 Copy Mask, Create gauge / Copy Gauge, Zoom to Mask, Hide/Show Mask, a
 transparency slider and a basemap selector. Clicks are routed to Python via
 ``document.title`` (like the classic viewer and the NetCDF window).
+
+Menu-driven for File/Load JSON: **File** (Load JSON), **Mask** (Hide Mask / Create new
+Mask / Copy Mask / Zoom to Mask), **Gauge** (Create gauge / Copy gauge) - the Mask/Gauge
+actions mirror the buttons below (kept, since editing the mask/gauges is this window's
+core action) and stay in sync with them at every enable/disable site. Load JSON's button
+was deleted; the menu item is now the only way to reach it. There is no Exit button any
+more - the window closes via its title-bar X or Alt+F4.
 """
 
 import json
@@ -34,12 +41,12 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QSlider, QFileDialog, QMessageBox,
+    QSlider, QFileDialog, QMessageBox, QMenuBar,
 )
 from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtGui import QIcon
 
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils import display_format
 from src.gui.utils import theme
 from src.gui.utils.gui_log import get_logger
@@ -226,6 +233,31 @@ def show_basin2(config_content, settings_file, parent=None,
     win.exec()
 
 
+def _read_geojson_file(path):
+    """Parse a GeoJSON/JSON file into its dict, for the ``addGeoJson`` JS helper.
+    Shared by Show Basin's and NetCDF's File ▸ Load JSON."""
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _read_shapefile(path):
+    """Read an ESRI shapefile (``.shp``, needing its companion ``.shx``/``.dbf``
+    alongside it) into a GeoJSON ``FeatureCollection`` dict, via **pyshp** (pure
+    Python, no GDAL/fiona dependency) - each shape+record becomes one ``Feature``.
+    Coordinates are assumed already lon/lat (WGS84), like Load JSON - no
+    reprojection. Shared by Show Basin's and NetCDF's File ▸ Load shape."""
+    import shapefile
+    sf = shapefile.Reader(path)
+    try:
+        features = [{"type": "Feature",
+                     "geometry": sr.shape.__geo_interface__,
+                     "properties": sr.record.as_dict()}
+                    for sr in sf.iterShapeRecords()]
+    finally:
+        sf.close()
+    return {"type": "FeatureCollection", "features": features}
+
+
 class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
     """folium/Leaflet EPSG:4326 basin viewer (Tools ▸ Show Basin). Inherits the
     display-agnostic data helpers from BasinDataHelpers (ups/mask RGBA, gauge/mask
@@ -290,7 +322,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         # Key bumped ("basin2f") so a geometry saved by the old Plotly variant is
         # ignored and the folium default below takes effect.
         if not self._init_geometry_memory("basin2f"):
-            self.resize(1000, 700)
+            self.resize(*scaled_default_size(self, 1000, 700))
         try:
             icon = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
                 os.path.dirname(__file__)))), 'assets', 'cwatm.ico')
@@ -341,8 +373,6 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         """
         red = blue.replace("#87ceeb", "#f1948a").replace("#5dade2", "#e74c3c") \
                   .replace("#add8e6", "#f5b7b1")
-        gray = blue.replace("#87ceeb", "#b0b0b0").replace("#5dade2", "#808080") \
-                   .replace("#add8e6", "#c8c8c8")
 
         row = QHBoxLayout()
         row.setSpacing(10)
@@ -388,19 +418,10 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self.copy_gauge_button.clicked.connect(self._copy_gauge)
         row.addWidget(self.copy_gauge_button)
 
-        self.load_json_button = QPushButton("Load JSON")
-        self.load_json_button.setStyleSheet(blue)
-        self.load_json_button.setToolTip("Load a GeoJSON file and display it on the map")
-        self.load_json_button.clicked.connect(self._load_json)
-        row.addWidget(self.load_json_button)
-
         row.addStretch()
-
-        self.exit_button = QPushButton("Exit")
-        self.exit_button.setStyleSheet(gray)
-        self.exit_button.clicked.connect(self.close)
-        row.addWidget(self.exit_button)
         lay.addLayout(row)
+
+        self._build_menubar(lay)
 
         row2 = QHBoxLayout()
         row2.setSpacing(10)
@@ -436,6 +457,54 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
             self.opacity_slider.setEnabled(False)
             self.opacity_slider.setToolTip(note)
         lay.addLayout(row2)
+
+    def _build_menubar(self, lay):
+        """File (Load JSON), Mask (Hide Mask / Create new Mask / Copy Mask / Zoom to
+        Mask) and Gauge (Create gauge / Copy gauge). Tooltips moved from the buttons
+        to the QActions. Mask/Gauge stay ALSO as buttons below (this window's core,
+        most-clicked actions - the menu items call the exact same slots and are kept
+        in sync with the buttons' text/enabled state at every mutation site). Load
+        JSON's button was deleted; this menu item is now the only way to reach it.
+        Exit was a plain button before; the window still closes via its title-bar X
+        or Alt+F4."""
+        mbar = QMenuBar(self)
+        mbar.setStyleSheet(
+            f"QMenuBar {{ background-color: {theme.c('menubar_bg')}; "
+            f"color: {theme.c('text')}; }}"
+            f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
+
+        file_menu = mbar.addMenu("File")
+        self.load_json_action = file_menu.addAction("Load JSON", self._load_json)
+        self.load_json_action.setToolTip(
+            "Load a GeoJSON file and display it on the map")
+        self.load_shape_action = file_menu.addAction("Load shape", self._load_shape)
+        self.load_shape_action.setToolTip("Load shapefile .shp")
+
+        mask_menu = mbar.addMenu("Mask")
+        self.hide_mask_action = mask_menu.addAction(
+            self.mask_button.text(), self._toggle_mask_from_menu)
+        self.hide_mask_action.setEnabled(self.mask_button.isEnabled())
+        mask_menu.addAction("Create new Mask", self._create_new_mask)
+        self.copy_mask_action = mask_menu.addAction(
+            "Copy Mask", self._use_coordinates)
+        self.copy_mask_action.setToolTip(
+            "Copy the mask location to the settings MaskMap field")
+        self.copy_mask_action.setEnabled(self.use_coords_button.isEnabled())
+        mask_menu.addAction("Zoom to Mask", self._zoom_to_mask)
+
+        gauge_menu = mbar.addMenu("Gauge")
+        gauge_menu.addAction("Create gauge", self._create_gauge)
+        self.copy_gauge_action = gauge_menu.addAction("Copy gauge", self._copy_gauge)
+        self.copy_gauge_action.setToolTip(
+            "Write ALL displayed gauges to the main-window Gauges box")
+        self.copy_gauge_action.setEnabled(self.copy_gauge_button.isEnabled())
+
+        self._menus = [file_menu, mask_menu, gauge_menu]  # GC guard
+        lay.setMenuBar(mbar)
+
+    def _toggle_mask_from_menu(self):
+        self.mask_button.click()
+        self.hide_mask_action.setText(self.mask_button.text())
 
     # ------------------------------------------------------------ map build
     def _grid_bounds(self):
@@ -810,13 +879,31 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         if not path:
             return
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                obj = json.load(f)
+            obj = _read_geojson_file(path)
         except Exception as e:
             QMessageBox.warning(self, "Load JSON",
                                 f"Could not read/parse the file:\n{e}")
             return
         self.info_label.setText(f"Loaded GeoJSON: {os.path.basename(path)}")
+        self._js("if(window.addGeoJson) addGeoJson(%s);" % json.dumps(obj))
+
+    def _load_shape(self):
+        """File > Load shape: open an ESRI shapefile and draw it on the map exactly
+        like Load JSON - read via the shared ``_read_shapefile`` and hand the
+        resulting FeatureCollection to the same window.addGeoJson JS helper."""
+        start_dir = os.path.dirname(self.settings_file) if getattr(
+            self, "settings_file", "") else ""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load shapefile", start_dir, "Shapefiles (*.shp);;All files (*)")
+        if not path:
+            return
+        try:
+            obj = _read_shapefile(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Load shape",
+                                 f"Could not read the shapefile:\n{e}")
+            return
+        self.info_label.setText(f"Loaded shapefile: {os.path.basename(path)}")
         self._js("if(window.addGeoJson) addGeoJson(%s);" % json.dumps(obj))
 
     def _mask_latlon_bounds(self, pad_cells=1.0):
@@ -870,6 +957,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self._run_gauge_check(mw, rebuild_mask=True)
         self._refresh_markers()
         self.use_coords_button.setEnabled(False)
+        self.copy_mask_action.setEnabled(False)
         self.info_label.setText(f"Mask copied to settings: {coord}")
 
     def _create_gauge(self):
@@ -886,6 +974,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         self._js("if(window.clearBlack) clearBlack();")
         self._refresh_markers()
         self.copy_gauge_button.setEnabled(True)
+        self.copy_gauge_action.setEnabled(True)
         self.info_label.setText(
             f"Added gauge {len(self._gauges)} ({lon:.4f} {lat:.4f}) - "
             "use Copy Gauge to write all gauges to the settings.")
@@ -910,6 +999,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         removed = self._gauges.pop(idx)
         self._refresh_markers()
         self.copy_gauge_button.setEnabled(True)
+        self.copy_gauge_action.setEnabled(True)
         self.info_label.setText(
             f"Removed gauge {idx + 1} ({removed[0]:.4f} {removed[1]:.4f}) - "
             "use Copy Gauge to update the settings.")
@@ -975,7 +1065,10 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
                 self.mask_button.setEnabled(True)
             self.mask_button.setChecked(True)
             self.mask_button.setText("Hide Mask")
+            self.hide_mask_action.setEnabled(True)
+            self.hide_mask_action.setText("Hide Mask")
             self.use_coords_button.setEnabled(True)
+            self.copy_mask_action.setEnabled(True)
             self.info_label.setText(
                 f"New mask created at {coord} - use Copy Mask to save it.")
         except Exception as e:

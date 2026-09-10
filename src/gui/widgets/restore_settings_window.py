@@ -21,6 +21,12 @@ readable - each has its own viewer instead:
 All attributes are read in **one** ``Dataset`` open (these files often live on a
 network share, where each open costs real time).
 
+Menu-driven (``RestoreSettingsWindow._build_menubar``): **File** (Export as CSV),
+**Action** (Preview settingsfile / Compare with current / Show Inputfiles) and
+**Restore** (Restore settingsfile). There is no Close button - the window closes via
+its title-bar X or Alt+F4. "Show in Journal" (button and backing function alike) was
+removed outright rather than moved into a menu.
+
 Styled like the other secondary windows: ``GeometryMemoryMixin`` + ``QDialog``,
 every colour a ``theme.c(token)``, cwatm.ico, geometry key ``restore_settings``.
 """
@@ -34,13 +40,13 @@ from configparser import ConfigParser
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox,
-    QFileDialog, QMenu, QApplication, QFrame,
+    QFileDialog, QMenu, QMenuBar, QApplication, QFrame,
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QShortcut, QColor
 
 from src.gui.utils import theme
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("restore_settings_window")
@@ -418,14 +424,14 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("restore_settings"):
-            self.resize(820, 620)
+            self.resize(*scaled_default_size(self, 820, 620))
         self._set_window_icon()
 
         self._build_ui()
         self._apply_theme()
         self._fill_summary()
         self._fill_table()
-        self._update_buttons()
+        self._update_actions()
 
     # ------------------------------------------------------------------ helpers
     def _attr(self, name):
@@ -452,6 +458,7 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
+        self._build_menubar(layout)
 
         self.header_label = QLabel("NetCDF metadata")
         self.header_label.setAlignment(Qt.AlignCenter)
@@ -489,43 +496,43 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
                          + "_metadata.csv"))
         layout.addWidget(self.table, 1)
 
-        # Row 1: what to do with the stored settings file.
-        self.preview_button = QPushButton("Preview settingsfile")
-        self.preview_button.clicked.connect(self._on_preview)
-        self.compare_button = QPushButton("Compare with current")
-        self.compare_button.clicked.connect(self._on_compare)
-        self.restore_button = QPushButton("Restore settingsfile")
-        self.restore_button.clicked.connect(self._on_restore)
-        # Row 2: the other stored lists + navigation.
-        self.inputfiles_button = QPushButton("Show Inputfiles")
-        self.inputfiles_button.clicked.connect(self._on_show_inputfiles)
-        self.journal_button = QPushButton("Show in Journal")
-        self.journal_button.clicked.connect(self._on_show_in_journal)
-        self.export_button = QPushButton("Export as CSV")
-        self.export_button.setToolTip("Write this metadata table to a .csv file")
-        self.export_button.clicked.connect(
-            lambda: _export_table_csv(
+    def _build_menubar(self, layout):
+        """File (Export as CSV), Action (Preview settingsfile / Compare with current /
+        Show Inputfiles) and Restore (Restore settingsfile) - the whole former button
+        row became menus; tooltips moved from the buttons to the QActions, including
+        the dynamic "this file cannot do X" ones (kept live in _update_actions). Show
+        in Journal (button + its backing _on_show_in_journal/_journal_entry) was
+        deleted outright, not moved to a menu. There is no Close button - the window
+        closes via its title-bar X or Alt+F4."""
+        mbar = QMenuBar(self)
+        mbar.setStyleSheet(
+            f"QMenuBar {{ background-color: {theme.c('menubar_bg')}; "
+            f"color: {theme.c('text')}; }}"
+            f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
+
+        file_menu = mbar.addMenu("File")
+        self.export_action = file_menu.addAction(
+            "Export as CSV", lambda: _export_table_csv(
                 self.table, self,
                 os.path.join(os.path.dirname(os.path.abspath(self.nc_path)),
                              os.path.splitext(os.path.basename(self.nc_path))[0]
                              + "_metadata.csv")))
-        self.close_button = QPushButton("Close")
-        self.close_button.clicked.connect(self.close)
+        self.export_action.setToolTip("Write this metadata table to a .csv file")
 
-        row1 = QHBoxLayout()
-        row1.setSpacing(8)
-        for b in (self.preview_button, self.compare_button, self.restore_button):
-            row1.addWidget(b)
-        row1.addStretch()
-        layout.addLayout(row1)
+        action_menu = mbar.addMenu("Action")
+        self.preview_action = action_menu.addAction(
+            "Preview settingsfile", self._on_preview)
+        self.compare_action = action_menu.addAction(
+            "Compare with current", self._on_compare)
+        self.inputfiles_action = action_menu.addAction(
+            "Show Inputfiles", self._on_show_inputfiles)
 
-        row2 = QHBoxLayout()
-        row2.setSpacing(8)
-        for b in (self.inputfiles_button, self.journal_button, self.export_button):
-            row2.addWidget(b)
-        row2.addStretch()
-        row2.addWidget(self.close_button)
-        layout.addLayout(row2)
+        restore_menu = mbar.addMenu("Restore")
+        self.restore_action = restore_menu.addAction(
+            "Restore settingsfile", self._on_restore)
+
+        self._menus = [file_menu, action_menu, restore_menu]  # GC guard
+        layout.setMenuBar(mbar)
 
     def _apply_theme(self):
         self.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
@@ -539,11 +546,6 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
             f"QFrame {{ background-color: {theme.c('surface_bg')}; "
             f"border: 1px solid {theme.c('border')}; border-radius: 8px; }}")
         self.table.setStyleSheet(_table_style())
-        style = _button_style()
-        for b in (self.preview_button, self.compare_button, self.restore_button,
-                  self.inputfiles_button, self.journal_button, self.export_button,
-                  self.close_button):
-            b.setStyleSheet(style)
 
     # ------------------------------------------------------------ summary card
     def _summary_rows(self):
@@ -591,35 +593,29 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
             self.table.setItem(row, 1, val_item)
         self.table.resizeRowsToContents()
 
-    def _update_buttons(self):
+    def _update_actions(self):
         """Grey out what this file cannot do, with the reason in the tooltip - better
         than telling the user only after they clicked."""
         has_settings = bool(self._stored_settings().strip())
-        for button, tip in (
-                (self.preview_button,
+        for action, tip in (
+                (self.preview_action,
                  "Show the settings file stored in this NetCDF, read-only"),
-                (self.compare_button,
+                (self.compare_action,
                  "Diff the stored settings file against the one loaded now "
                  "(closes this window)"),
-                (self.restore_button,
+                (self.restore_action,
                  "Save the settings file stored in this NetCDF (version_settingsfile) "
                  "to a new file and load it")):
-            button.setEnabled(has_settings)
-            button.setToolTip(tip if has_settings else
+            action.setEnabled(has_settings)
+            action.setToolTip(tip if has_settings else
                               "This NetCDF has no stored settings file "
                               "(no 'version_settingsfile' attribute)")
         has_inputs = bool(self._attr("version_inputfiles").strip())
-        self.inputfiles_button.setEnabled(has_inputs)
-        self.inputfiles_button.setToolTip(
+        self.inputfiles_action.setEnabled(has_inputs)
+        self.inputfiles_action.setToolTip(
             "List the input files (name + date) recorded in version_inputfiles, and "
             "check whether they are still there and unchanged" if has_inputs else
             "This NetCDF has no input-file list (no 'version_inputfiles' attribute)")
-        entry = self._journal_entry()
-        self.journal_button.setEnabled(entry is not None)
-        self.journal_button.setToolTip(
-            "Show the run that wrote this file in the Journal of Runs "
-            "(closes this window)" if entry is not None else
-            "No run in the Journal of Runs wrote into this folder")
 
     # ------------------------------------------------------------- main window
     def _main_window(self):
@@ -869,43 +865,6 @@ class RestoreSettingsWindow(GeometryMemoryMixin, QDialog):
             return os.path.dirname(path)
         return os.path.dirname(os.path.abspath(self.nc_path))
 
-    # ------------------------------------------------------------- journal link
-    def _journal_entry(self):
-        """The Journal of Runs entry whose PathOut is (or contains) this file's
-        folder - the run that wrote it."""
-        folder = os.path.normcase(os.path.abspath(
-            os.path.dirname(os.path.abspath(self.nc_path))))
-        try:
-            from src.gui.utils import run_ledger
-            for entry in run_ledger.load_entries():
-                pathout = entry.get("pathout") or ""
-                if not pathout:
-                    continue
-                target = os.path.normcase(os.path.abspath(pathout))
-                if target == folder or folder.startswith(target + os.sep):
-                    return entry
-        except Exception:
-            log.debug("journal lookup failed", exc_info=True)
-        return None
-
-    def _on_show_in_journal(self):
-        entry = self._journal_entry()
-        if entry is None:
-            return
-        mw = self._main_window()
-        if mw is None:
-            return
-        self.accept()           # the journal is a window of its own (this one is modal)
-        try:
-            from src.gui.widgets.run_ledger_window import open_run_ledger
-            win = open_run_ledger(mw)
-            win.select_run(ts=entry.get("ts"), pathout=entry.get("pathout"))
-        except Exception as e:  # noqa: BLE001
-            log.warning("show in journal failed", exc_info=True)
-            QMessageBox.warning(mw, "Show in Journal",
-                                f"Could not open the Journal of Runs:\n{e}")
-
-
 class SettingsPreviewWindow(GeometryMemoryMixin, QDialog):
     """Read-only view of the settings file stored in a NetCDF.
 
@@ -924,7 +883,7 @@ class SettingsPreviewWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("restore_preview"):
-            self.resize(900, 700)
+            self.resize(*scaled_default_size(self, 900, 700))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
@@ -1028,7 +987,7 @@ class InputFilesWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("restore_inputfiles"):
-            self.resize(900, 620)
+            self.resize(*scaled_default_size(self, 900, 620))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)

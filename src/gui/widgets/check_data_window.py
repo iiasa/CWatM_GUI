@@ -36,6 +36,7 @@ import time
 
 from src.gui.utils import theme
 from src.gui.utils.gui_log import get_logger
+from src.gui.utils.window_geometry import scaled_default_size
 
 log = get_logger("check_data_window")
 
@@ -207,7 +208,7 @@ class CheckDataWindow(QDialog):
         # Not modal - see the module docstring: the check runs in a thread so the GUI
         # stays usable, which a modal dialog would undo.
         self.setModal(False)
-        self.resize(1050, 700)
+        self.resize(*scaled_default_size(self, 1050, 700))
         
         # Set window flags for min/max/close buttons but no taskbar icon
         self.setWindowFlags(Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)

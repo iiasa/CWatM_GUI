@@ -7,11 +7,12 @@ storage module is still ``src/gui/utils/run_ledger.py`` and the on-disk file is 
 
 A table of past model runs recorded by ``src/gui/utils/run_ledger.py`` (one row per
 completed run: time, Title, settings file, PathOut, duration, success, last
-discharge). Each row is actionable:
-- **Open results** - open the run's PathOut in the Output Explorer (or the file
-  browser) to inspect its output;
-- **Load settings** - reload the run's settings file into the main window (if it
-  still exists).
+discharge). Each row is actionable through a menu bar - File (Open results / Load
+settings / Refresh / Export CSV), Action (Show log / Re-run / Compare settings /
+Compare results - the four selection-dependent ones, enabled only when the marked
+rows make them meaningful) and Clean (Delete entry / Clear Journal); Close is the
+one button left (see ``_build_ui`` / ``_build_menubar``). The same actions are also
+on the table's right-click menu.
 
 Non-modal; themed at construction like the other secondary windows; geometry key
 ``run_ledger``.
@@ -24,7 +25,7 @@ import time
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QMessageBox,
-    QLineEdit, QCheckBox, QPlainTextEdit, QInputDialog, QMenu, QFileDialog,
+    QLineEdit, QCheckBox, QPlainTextEdit, QInputDialog, QMenu, QMenuBar, QFileDialog,
     QApplication,
 )
 from PySide6.QtCore import Qt, QTimer
@@ -47,7 +48,7 @@ class _SortItem(QTableWidgetItem):
         except TypeError:
             return str(mine) < str(theirs)
 
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils import theme
 from src.gui.utils import run_ledger
 from src.gui.utils import display_format
@@ -88,7 +89,7 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("run_ledger"):
-            self.resize(940, 520)
+            self.resize(*scaled_default_size(self, 940, 520))
         self._set_window_icon()
         self._entries = []          # what the table currently shows (row -> entry)
         self._all = []              # every stored entry, newest first
@@ -118,6 +119,7 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
+        self._build_menubar(layout)
 
         self.header_label = QLabel("Journal of Runs")
         self.header_label.setAlignment(Qt.AlignCenter)
@@ -170,63 +172,68 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
         hh.setSectionResizeMode(6, QHeaderView.Stretch)   # Settings
         layout.addWidget(self.table, 1)
 
-        self.open_button = QPushButton("Open results")
-        self.open_button.setToolTip("Open this run's PathOut in the Output Explorer")
-        self.open_button.clicked.connect(self._open_results)
-        self.load_button = QPushButton("Load settings")
-        self.load_button.setToolTip("Reload this run's settings file into the main window")
-        self.load_button.clicked.connect(self._load_settings)
-        self.log_button = QPushButton("Show log")
-        self.log_button.setToolTip(
-            "The run's output log - the journal records that a run failed, this says why")
-        self.log_button.setEnabled(False)
-        self.log_button.clicked.connect(self._show_log)
-        self.rerun_button = QPushButton("Re-run")
-        self.rerun_button.setToolTip(
-            "Run this run's settings again in a Windowed Run window")
-        self.rerun_button.setEnabled(False)
-        self.rerun_button.clicked.connect(self._rerun)
-        self.compare_button = QPushButton("Compare settings")
-        self.compare_button.setToolTip(
-            "Mark two runs (Ctrl/Shift+click) to diff their settings files")
-        self.compare_button.setEnabled(False)
-        self.compare_button.clicked.connect(self._compare_settings)
-        self.compare_results_button = QPushButton("Compare results")
-        self.compare_results_button.setToolTip(
-            "Mark two or more runs to overlay the same result file in one Timeseries plot")
-        self.compare_results_button.setEnabled(False)
-        self.compare_results_button.clicked.connect(self._compare_results)
-        self.refresh_button = QPushButton("Refresh")
-        self.refresh_button.clicked.connect(self._reload)
-        self.export_button = QPushButton("Export CSV")
-        self.export_button.setToolTip(
-            "Write the rows shown (the filter applies) to a CSV file")
-        self.export_button.clicked.connect(self._export_csv)
-        self.delete_button = QPushButton("Delete")
-        self.delete_button.setToolTip("Remove the marked runs from the journal")
-        self.delete_button.setEnabled(False)
-        self.delete_button.clicked.connect(self._delete_selected)
-        self.clear_button = QPushButton("Clear journal")
-        self.clear_button.setToolTip("Delete all recorded runs")
-        self.clear_button.clicked.connect(self._clear)
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.close)
 
         btn_row = QHBoxLayout()
         btn_row.setSpacing(8)
-        btn_row.addWidget(self.open_button)
-        btn_row.addWidget(self.log_button)
-        btn_row.addWidget(self.load_button)
-        btn_row.addWidget(self.rerun_button)
-        btn_row.addWidget(self.compare_button)
-        btn_row.addWidget(self.compare_results_button)
         btn_row.addStretch()
-        btn_row.addWidget(self.refresh_button)
-        btn_row.addWidget(self.export_button)
-        btn_row.addWidget(self.delete_button)
-        btn_row.addWidget(self.clear_button)
         btn_row.addWidget(self.close_button)
         layout.addLayout(btn_row)
+
+    def _build_menubar(self, layout):
+        """File (Open results / Load settings / Refresh / Export CSV), Action (Show
+        log / Re-run / Compare settings / Compare results) and Clean (Delete entry /
+        Clear Journal) - the row of per-run buttons became menus; Close stays a
+        button (see _build_ui)."""
+        mbar = QMenuBar(self)
+        mbar.setStyleSheet(
+            f"QMenuBar {{ background-color: {theme.c('menubar_bg')}; "
+            f"color: {theme.c('text')}; }}"
+            f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
+
+        file_menu = mbar.addMenu("File")
+        self.open_action = file_menu.addAction("Open results", self._open_results)
+        self.open_action.setToolTip("Open this run's PathOut in the Output Explorer")
+        self.load_action = file_menu.addAction("Load settings", self._load_settings)
+        self.load_action.setToolTip(
+            "Reload this run's settings file into the main window")
+        self.refresh_action = file_menu.addAction("Refresh", self._reload)
+        self.export_action = file_menu.addAction("Export CSV", self._export_csv)
+        self.export_action.setToolTip(
+            "Write the rows shown (the filter applies) to a CSV file")
+
+        action_menu = mbar.addMenu("Action")
+        self.log_action = action_menu.addAction("Show log", self._show_log)
+        self.log_action.setToolTip(
+            "The run's output log - the journal records that a run failed, this "
+            "says why")
+        self.log_action.setEnabled(False)
+        self.rerun_action = action_menu.addAction("Re-run", self._rerun)
+        self.rerun_action.setToolTip(
+            "Run this run's settings again in a Windowed Run window")
+        self.rerun_action.setEnabled(False)
+        self.compare_action = action_menu.addAction(
+            "Compare settings", self._compare_settings)
+        self.compare_action.setToolTip(
+            "Mark two runs (Ctrl/Shift+click) to diff their settings files")
+        self.compare_action.setEnabled(False)
+        self.compare_results_action = action_menu.addAction(
+            "Compare results", self._compare_results)
+        self.compare_results_action.setToolTip(
+            "Mark two or more runs to overlay the same result file in one "
+            "Timeseries plot")
+        self.compare_results_action.setEnabled(False)
+
+        clean_menu = mbar.addMenu("Clean")
+        self.delete_action = clean_menu.addAction("Delete entry", self._delete_selected)
+        self.delete_action.setToolTip("Remove the marked runs from the journal")
+        self.delete_action.setEnabled(False)
+        self.clear_action = clean_menu.addAction("Clear Journal", self._clear)
+        self.clear_action.setToolTip("Delete all recorded runs")
+
+        self._menus = [file_menu, action_menu, clean_menu]  # GC guard
+        layout.setMenuBar(mbar)
 
     def _apply_theme(self):
         self.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
@@ -249,13 +256,7 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
             f"color: {theme.c('text')}; border: 0px; "
             f"border-bottom: 1px solid {theme.c('border')}; padding: 4px 8px; "
             "font-weight: 600; }")
-        style = self._button_style()
-        for b in (self.open_button, self.log_button, self.load_button,
-                  self.rerun_button, self.compare_button,
-                  self.compare_results_button, self.refresh_button,
-                  self.export_button, self.delete_button, self.clear_button,
-                  self.close_button):
-            b.setStyleSheet(style)
+        self.close_button.setStyleSheet(self._button_style())
         self.filter_edit.setStyleSheet(
             f"QLineEdit {{ background-color: {theme.c('field_bg')}; "
             f"color: {theme.c('field_text')}; border: 1px solid "
@@ -534,12 +535,12 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
     def _update_compare_enabled(self):
         """Compare settings needs exactly two runs; Compare results two or more."""
         marked = self._selected_entries()
-        self.compare_button.setEnabled(len(marked) == 2)
-        self.compare_results_button.setEnabled(len(marked) >= 2)
+        self.compare_action.setEnabled(len(marked) == 2)
+        self.compare_results_action.setEnabled(len(marked) >= 2)
         one = len(marked) == 1
-        self.rerun_button.setEnabled(one and not marked[0].get("live"))
-        self.log_button.setEnabled(one and bool(self._log_path(marked[0])))
-        self.delete_button.setEnabled(
+        self.rerun_action.setEnabled(one and not marked[0].get("live"))
+        self.log_action.setEnabled(one and bool(self._log_path(marked[0])))
+        self.delete_action.setEnabled(
             bool(marked) and not any(e.get("live") for e in marked))
 
     def _compare_settings(self):
@@ -717,7 +718,7 @@ class RunLedgerWindow(GeometryMemoryMixin, QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Log — {entry.get('title', '') or os.path.basename(path)}")
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
-        dlg.resize(900, 560)
+        dlg.resize(*scaled_default_size(dlg, 900, 560))
         v = QVBoxLayout(dlg)
         head = QLabel(path)
         head.setStyleSheet(f"color: {theme.c('text_muted')}; font-size: 11px;")

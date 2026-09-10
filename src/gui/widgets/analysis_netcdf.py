@@ -3,9 +3,22 @@ NetCDF analysis widget (Analyse ▸ NetCDF) - the NetCDF viewer on a **folium**
 (Leaflet, EPSG:4326) map with an OpenStreetMap background.
 
 Draws the variable as a Leaflet **ImageOverlay** over an OSM **WMS** basemap
-(EPSG:4326, like Show Basin), with a timestep slider + Play, colour-scale selector,
-Log-scale toggle, an OSM-transparency slider, a basemap selector, click-to-mark,
-Display timeserie and Save HTML.
+(EPSG:4326, like Show Basin), with a timestep slider + Play, Speed and Log-scale
+toggle inline; File (Save HTML / Load JSON / Load shape) and Action (Fast Display
+Timeserie / Total Timeseries / Compare A-B / Flow duration / Flow regime) menus; and
+a top-level Display action that opens a small window (colour-scale selector,
+OSM-transparency slider, basemap selector). Load JSON/Load shape are the same
+feature as Show Basin's (shared readers + shared window.addGeoJson JS helper from
+``basin_viewer2.py``) - draws a GeoJSON or ESRI shapefile overlay on the map. A left click drops the red pending marker and remembers
+the cell (self._clicked); right-clicking anywhere on the map then opens every
+Action-menu item at the cursor (same label/tooltip, mirrored off the real
+QActions) - Qt-native (customContextMenuRequested), not the page's own
+'contextmenu' DOM event, which raced unreliably with QWebEngineView's native
+Back/Forward/Reload menu. Fast/Total Timeserie, Flow duration and Flow regime all
+work off that last-clicked point - Total Timeseries plots every point clicked so
+far, Flow duration/regime only ever the most recent one, each plotting every
+calendar year as its own curve plus the multi-year average in black at double
+width.
 
 The data-reading, meta lookup and per-cell time-series re-read are **reused from
 ``NetcdfDataBase``** (in ``analysis_netcdf_base.py``; this class subclasses it); only
@@ -16,6 +29,7 @@ the rendering/interaction is implemented here. The clicked points are drawn as
 import os
 import sys
 import json
+import time
 import base64
 import tempfile
 from collections import OrderedDict
@@ -24,7 +38,7 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QSlider, QFileDialog, QMessageBox, QProgressBar,
+    QSlider, QFileDialog, QMessageBox, QProgressBar, QMenuBar,
 )
 from PySide6.QtCore import Qt, QUrl, QTimer, QThread, Signal
 from PySide6.QtGui import QIcon, QImage
@@ -32,6 +46,7 @@ from PySide6.QtCore import QByteArray, QBuffer
 
 from src.gui.utils import theme
 from src.gui.utils.gui_log import get_logger
+from src.gui.utils.window_geometry import scaled_default_size
 
 log = get_logger("analysis_netcdf")
 
@@ -60,6 +75,7 @@ except Exception as _e:  # pragma: no cover - import guard
 # EPSG:4326 WMS basemaps (same set as Show Basin2).
 from src.gui.widgets.basin_viewer2 import (
     _B2_PROVIDERS, _B2_DEFAULT_LAYER, _strip_unused_assets, _inline_remote_assets,
+    _read_geojson_file, _read_shapefile,
 )
 from src.gui.widgets.basin_viewer import grid_is_latlon
 
@@ -67,26 +83,40 @@ from src.gui.widgets.basin_viewer import grid_is_latlon
 class _PointSeriesWorker(QThread):
     """Read the full-resolution time series of each requested cell off the GUI thread.
 
-    Reading every timestep for a cell (now that the whole series is loaded, not the
-    strided map frames) can be slow on large / networked files, so it runs here and
-    reports per-point progress. ``_series_for``/``_point_series`` open their own dataset
-    per call, so this is safe to run in a worker thread."""
+    Reading every timestep for a cell can be slow on a large / networked file, so it
+    runs here and reports per-point progress. ``_series_for``/``_point_series`` share
+    one dataset handle across calls (``NetcdfDataBase._shared_point_dataset``) and
+    cache each cell's result, so several of these workers (Total Timeseries, Flow
+    duration, Flow regime) reading concurrently, or re-reading a point another one
+    already read, is safe and cheap."""
 
     progress = Signal(int, int)     # points done, total
     finished_ok = Signal(list)      # [ [values...], ... ] one entry per point
     failed = Signal(str)
+    cancelled = Signal()
 
     def __init__(self, reader, points, full=True, parent=None):
         super().__init__(parent)
         self._reader = reader       # the NetcdfWindow (uses _series_for)
         self._points = list(points)
         self._full = full
+        self._stop = False
+
+    def request_stop(self):
+        """Cooperative cancel, checked between points. A read already in flight for
+        one point still has to finish - the underlying netCDF4/HDF5/dask call can't
+        be safely interrupted mid-I/O without risking the shared dataset handle other
+        reads reuse (QThread.terminate() is deliberately never used here)."""
+        self._stop = True
 
     def run(self):
         try:
             out = []
             n = len(self._points)
             for i, p in enumerate(self._points):
+                if self._stop:
+                    self.cancelled.emit()
+                    return
                 out.append(self._reader._series_for(p, full=self._full))
                 self.progress.emit(i + 1, n)
             self.finished_ok.emit(out)
@@ -177,7 +207,7 @@ class NetcdfWindow(NetcdfDataBase):
         self.setModal(True)
         self.setWindowFlags(Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("netcdf"):
-            self.resize(1000, 780)
+            self.resize(*scaled_default_size(self, 1000, 780))
             _position_offset(self, -0.15)
         try:
             icon_path = os.path.join(
@@ -282,6 +312,7 @@ class NetcdfWindow(NetcdfDataBase):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(6)
+        self._build_menubar(layout)
 
         head = os.path.basename(self.nc_path)
         if self.settings_title:
@@ -295,6 +326,14 @@ class NetcdfWindow(NetcdfDataBase):
 
         self.web_view = QWebEngineView()
         self.web_view.titleChanged.connect(self._on_web_title)
+        # Custom, Qt-driven right-click: QWebEngineView's own native context menu
+        # (Back/Forward/Reload) would otherwise show regardless of what the page's JS
+        # does. CustomContextMenu hands the click position straight to Qt (no
+        # dependency on the page's 'contextmenu' DOM event or preventDefault, which
+        # proved unreliable here); _on_web_context_menu asks the page (JS hit-test)
+        # whether a gauge sits under that pixel.
+        self.web_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.web_view.customContextMenuRequested.connect(self._on_web_context_menu)
         layout.addWidget(self.web_view, 1)
 
         self.info_label = QLabel("Click on the map to see coordinates and values")
@@ -347,52 +386,6 @@ class NetcdfWindow(NetcdfDataBase):
         self.speed_combo.currentTextChanged.connect(self._on_play_speed)
         self.speed_combo.setVisible(self._multi)
         row1.addWidget(self.speed_combo)
-        layout.addLayout(row1)
-
-        # Row 2 (appearance): Colour scale | Overlay transparency | Basemap | Hide OSM
-        row2 = QHBoxLayout()
-        row2.setSpacing(8)
-        cs = QLabel("Colour scale:")
-        cs.setStyleSheet(_lbl)
-        row2.addWidget(cs)
-        self.colorscale_combo = QComboBox()
-        for name in _COLORSCALES:
-            self.colorscale_combo.addItem(name)
-        self.colorscale_combo.setCurrentText(_DEFAULT_COLORSCALE)
-        self.colorscale_combo.currentTextChanged.connect(self._on_colorscale)
-        row2.addWidget(self.colorscale_combo)
-
-        tl = QLabel("OSM transparency:")
-        tl.setStyleSheet(_lbl)
-        row2.addWidget(tl)
-        self.opacity_slider = QSlider(Qt.Horizontal)
-        self.opacity_slider.setRange(0, 100)
-        self.opacity_slider.setToolTip(
-            "0% = OSM hidden + NetCDF fully opaque (only the NetCDF, on white); "
-            "100% = OSM fully visible + NetCDF 50% opaque on top")
-        self.opacity_slider.setValue(int(self._base_opacity * 100))
-        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
-        row2.addWidget(self.opacity_slider, 1)
-
-        bl = QLabel("Basemap:")
-        bl.setStyleSheet(_lbl)
-        row2.addWidget(bl)
-        self.basemap_combo = QComboBox()
-        for label, key in _B2_PROVIDERS:
-            self.basemap_combo.addItem(label, key)
-        _i = self.basemap_combo.findData(self._basemap_key)
-        if _i >= 0:
-            self.basemap_combo.setCurrentIndex(_i)
-        self.basemap_combo.currentIndexChanged.connect(self._on_basemap_changed)
-        row2.addWidget(self.basemap_combo)
-        if self._projected:
-            # Projected (non lat/lon) grid: there is no OSM basemap to select/fade.
-            note = ("No OpenStreetMap basemap: the grid uses projected x/y "
-                    "coordinates (not lat/lon)")
-            self.basemap_combo.setEnabled(False)
-            self.basemap_combo.setToolTip(note)
-            self.opacity_slider.setEnabled(False)
-            self.opacity_slider.setToolTip(note)
 
         self.log_button = QPushButton("Log scale")
         self.log_button.setStyleSheet(_btn)
@@ -403,29 +396,12 @@ class NetcdfWindow(NetcdfDataBase):
         self.log_button.setChecked(self._log_scale)
         self.log_button.setText("Linear scale" if self._log_scale else "Log scale")
         self.log_button.toggled.connect(self._toggle_log)
-        row2.addWidget(self.log_button)
-        layout.addLayout(row2)
+        row1.addWidget(self.log_button)
 
-        # Row 3 (actions): Fast Display Timeserie | Total Timeseries | ... | Save HTML
-        row3 = QHBoxLayout()
-        row3.setSpacing(8)
-        self.ts_fast_button = QPushButton("Fast Display Timeserie")
-        self.ts_fast_button.setStyleSheet(_btn)
-        self.ts_fast_button.setToolTip(
-            "Plot the clicked point quickly using the map's timesteps (has gaps)")
-        self.ts_fast_button.clicked.connect(self._display_timeseries_fast)
-        self.ts_fast_button.setVisible(self._multi)
-        row3.addWidget(self.ts_fast_button)
-        self.ts_button = QPushButton("Total Timeseries")
-        self.ts_button.setStyleSheet(_btn)
-        self.ts_button.setToolTip(
-            "Load and plot the FULL time series of the clicked point (every timestep) - "
-            "can take a while; progress is shown on the right")
-        self.ts_button.clicked.connect(self._display_timeseries_full)
-        self.ts_button.setVisible(self._multi)
-        row3.addWidget(self.ts_button)
-        # Progress bar (right of the buttons): the full-resolution point series can take
-        # a while to read, so show per-point progress while it loads.
+        # Progress bar: the full-resolution point series (Total Timeseries / Flow
+        # duration / Flow regime) can take a while to read on a big file, so show
+        # per-point progress while it loads, an elapsed-time readout (there is no
+        # honest per-byte ETA to give for a single point), and a way to cancel.
         self.ts_progress = QProgressBar()
         self.ts_progress.setTextVisible(True)
         self.ts_progress.setFixedWidth(180)
@@ -435,20 +411,156 @@ class NetcdfWindow(NetcdfDataBase):
             f"background: {theme.c('out_bg')}; color: {theme.c('text')}; "
             "text-align: center; height: 18px; }"
             "QProgressBar::chunk { background: #3498db; border-radius: 3px; }")
-        row3.addWidget(self.ts_progress)
-        row3.addStretch(1)
-        self.compare_button = QPushButton("Compare A−B")
-        self.compare_button.setStyleSheet(_btn)
-        self.compare_button.setToolTip(
-            "Load a second .nc on the same grid and show the difference (this − other) "
-            "on a diverging colour scale")
-        self.compare_button.clicked.connect(self._toggle_compare)
-        row3.addWidget(self.compare_button)
-        self.save_html_button = QPushButton("Save HTML")
-        self.save_html_button.setStyleSheet(_btn)
-        self.save_html_button.clicked.connect(self._save_html)
-        row3.addWidget(self.save_html_button)
-        layout.addLayout(row3)
+        row1.addWidget(self.ts_progress)
+
+        self.ts_elapsed_label = QLabel("")
+        self.ts_elapsed_label.setStyleSheet(_lbl)
+        self.ts_elapsed_label.setVisible(False)
+        row1.addWidget(self.ts_elapsed_label)
+
+        self.ts_cancel_button = QPushButton("Cancel")
+        self.ts_cancel_button.setStyleSheet(_btn)
+        self.ts_cancel_button.setToolTip(
+            "Stop the running read (takes effect once the point in progress finishes)")
+        self.ts_cancel_button.setVisible(False)
+        self.ts_cancel_button.clicked.connect(self._cancel_point_series_read)
+        row1.addWidget(self.ts_cancel_button)
+        layout.addLayout(row1)
+
+        self._ts_elapsed_timer = QTimer(self)
+        self._ts_elapsed_timer.setInterval(1000)
+        self._ts_elapsed_timer.timeout.connect(self._update_ts_elapsed_label)
+
+        # Colour scale / OSM transparency / Basemap - live map-appearance controls,
+        # moved out of the button row into their own Display window (Menu ▸ Display)
+        # so this row stays uncluttered; not added to `layout`.
+        self.colorscale_combo = QComboBox()
+        for name in _COLORSCALES:
+            self.colorscale_combo.addItem(name)
+        self.colorscale_combo.setCurrentText(_DEFAULT_COLORSCALE)
+        self.colorscale_combo.currentTextChanged.connect(self._on_colorscale)
+
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setToolTip(
+            "0% = OSM hidden + NetCDF fully opaque (only the NetCDF, on white); "
+            "100% = OSM fully visible + NetCDF 50% opaque on top")
+        self.opacity_slider.setValue(int(self._base_opacity * 100))
+        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+
+        self.basemap_combo = QComboBox()
+        for label, key in _B2_PROVIDERS:
+            self.basemap_combo.addItem(label, key)
+        _i = self.basemap_combo.findData(self._basemap_key)
+        if _i >= 0:
+            self.basemap_combo.setCurrentIndex(_i)
+        self.basemap_combo.currentIndexChanged.connect(self._on_basemap_changed)
+        if self._projected:
+            # Projected (non lat/lon) grid: there is no OSM basemap to select/fade.
+            note = ("No OpenStreetMap basemap: the grid uses projected x/y "
+                    "coordinates (not lat/lon)")
+            self.basemap_combo.setEnabled(False)
+            self.basemap_combo.setToolTip(note)
+            self.opacity_slider.setEnabled(False)
+            self.opacity_slider.setToolTip(note)
+        self._build_display_dialog(_lbl)
+
+    def _build_menubar(self, layout):
+        """File (Save HTML) and Action (Fast Display Timeserie / Total Timeseries /
+        Compare A-B) menus, plus a top-level Display action (not a dropdown - opens
+        the appearance-settings window directly, like the main window's CWatM AI)."""
+        mbar = QMenuBar(self)
+        mbar.setStyleSheet(
+            f"QMenuBar {{ background-color: {theme.c('menubar_bg')}; "
+            f"color: {theme.c('text')}; }}"
+            f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
+
+        file_menu = mbar.addMenu("File")
+        act_save_html = file_menu.addAction("Save HTML", self._save_html)
+        act_save_html.setToolTip(
+            "Save the map as a self-contained HTML file (opens in any browser)")
+        act_load_json = file_menu.addAction("Load JSON", self._load_json)
+        act_load_json.setToolTip("Load a GeoJSON file and display it on the map")
+        act_load_shape = file_menu.addAction("Load shape", self._load_shape)
+        act_load_shape.setToolTip("Load shapefile .shp")
+
+        action_menu = mbar.addMenu("Action")
+        self.ts_fast_action = action_menu.addAction(
+            "Fast Display Timeserie", self._display_timeseries_fast)
+        self.ts_fast_action.setToolTip(
+            "Plot the clicked point quickly using the map's timesteps but has gaps")
+        self.ts_fast_action.setVisible(self._multi)
+        self.ts_action = action_menu.addAction(
+            "Total Timeseries", self._display_timeseries_full)
+        self.ts_action.setToolTip(
+            "Load and plot the full timeseries (every timestep). Can take some time")
+        self.ts_action.setVisible(self._multi)
+        self.compare_action = action_menu.addAction("Compare A−B", self._toggle_compare)
+        self.compare_action.setToolTip(
+            "Load a second netcdf and shows the differences")
+        self.flowdur_action = action_menu.addAction("Flow duration", self._show_flow_duration)
+        self.flowdur_action.setToolTip("Displays a flow duration curve")
+        self.flowdur_action.setVisible(self._multi)
+        self.flowregime_action = action_menu.addAction("Flow regime", self._show_flow_regime)
+        self.flowregime_action.setToolTip("Displays a flow regime curve")
+        self.flowregime_action.setVisible(self._multi)
+
+        # "Display" - a clickable menu-bar button (a top-level QAction fires on click
+        # instead of opening a dropdown), same pattern as the main window's CWatM AI.
+        self._display_action = mbar.addAction("Display")
+        self._display_action.setToolTip(
+            "Colour scale, OSM transparency and Basemap for this map")
+        self._display_action.triggered.connect(self._open_display_dialog)
+
+        self._menus = [file_menu, action_menu]  # GC guard
+        layout.setMenuBar(mbar)
+
+    def _build_display_dialog(self, lbl_style):
+        """Menu ▸ Display: a small non-modal window (like Preferences) holding the
+        map-appearance controls - Colour scale, OSM transparency, Basemap - built
+        once here and reopened by _open_display_dialog. The controls apply live to
+        the map, same as when they were inline."""
+        win = QDialog(self)
+        win.setWindowTitle("Display")
+        win.setModal(False)
+        win.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
+        vlayout = QVBoxLayout(win)
+        vlayout.setContentsMargins(16, 16, 16, 16)
+        vlayout.setSpacing(10)
+
+        cs = QLabel("Colour scale:")
+        cs.setStyleSheet(lbl_style)
+        vlayout.addWidget(cs)
+        vlayout.addWidget(self.colorscale_combo)
+
+        tl = QLabel("OSM transparency:")
+        tl.setStyleSheet(lbl_style)
+        vlayout.addWidget(tl)
+        vlayout.addWidget(self.opacity_slider)
+
+        bl = QLabel("Basemap:")
+        bl.setStyleSheet(lbl_style)
+        vlayout.addWidget(bl)
+        vlayout.addWidget(self.basemap_combo)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(win.close)
+        vlayout.addStretch(1)
+        vlayout.addWidget(close_btn, alignment=Qt.AlignRight)
+
+        win.resize(*scaled_default_size(win, 320, 260))
+        self._display_window = win
+
+    def _open_display_dialog(self):
+        win = getattr(self, "_display_window", None)
+        if win is None:
+            return
+        try:
+            win.show()
+            win.raise_()
+            win.activateWindow()
+        except RuntimeError:
+            log.debug("_open_display_dialog: ignored", exc_info=True)
 
     # -------------------------------------------------------------- map build
     def _show_map(self):
@@ -572,7 +684,8 @@ class NetcdfWindow(NetcdfDataBase):
           window.setGauges=function(arr){window.gaugeGroup.clearLayers();
             arr.forEach(function(g,i){
               L.marker([g[0],g[1]],{icon:gpin(String(i+1))}).addTo(window.gaugeGroup)
-               .bindTooltip('Gauge '+(i+1));});};
+               .bindTooltip('Gauge '+(i+1));
+            });};
           window.setBasemap=function(layer){
             if(PROJ)return; // projected x/y grid: no lon/lat basemap
             if(window._tile){MAP.removeLayer(window._tile);}
@@ -604,6 +717,18 @@ class NetcdfWindow(NetcdfDataBase):
             var g=document.getElementById('nc-cbar-grad');if(g)g.style.background=grad;
             var a=document.getElementById('nc-cbar-max');if(a)a.textContent=mx;
             var b=document.getElementById('nc-cbar-min');if(b)b.textContent=mn;};
+          window.geoGroup=L.layerGroup().addTo(MAP);
+          window.addGeoJson=function(obj){try{
+            var gj=L.geoJSON(obj,{style:{color:'#ff7800',weight:2,
+                fillColor:'#ffb347',fillOpacity:0.25},
+              pointToLayer:function(f,ll){return L.circleMarker(ll,{radius:5,
+                color:'#ff7800',fillColor:'#ffb347',fillOpacity:0.7,weight:2});},
+              onEachFeature:function(f,layer){if(f.properties){
+                var t=Object.keys(f.properties).map(function(k){
+                  return k+': '+f.properties[k];}).join('<br>');
+                if(t)layer.bindPopup(t);}}}).addTo(window.geoGroup);
+            try{MAP.fitBounds(gj.getBounds());}catch(e){}
+            }catch(e){document.title='NC2ERR geojson '+e;}};
           MAP.on('click',function(e){document.title='NC2 '+e.latlng.lng+'|'+e.latlng.lat;});
           window.onerror=function(m){document.title='NC2ERR '+m;return false;};
           window.setBasemap(__BASEKEY__);
@@ -778,13 +903,13 @@ class NetcdfWindow(NetcdfDataBase):
         self._compare_mode = True
         self._apply_data_swap(
             "Δ  %s  −  %s" % (os.path.basename(self.nc_path), os.path.basename(bpath)))
-        self.compare_button.setText("Clear compare")
+        self.compare_action.setText("Clear compare")
 
     def _exit_compare(self):
         o = self._orig
         self._compare_mode = False
         self._orig = None
-        self.compare_button.setText("Compare A−B")
+        self.compare_action.setText("Compare A−B")
         if not o:
             return
         # Re-read A from disk rather than holding a second frame list alive for the
@@ -825,8 +950,9 @@ class NetcdfWindow(NetcdfDataBase):
         self.log_button.setText("Linear scale" if self._log_scale else "Log scale")
         self.log_button.blockSignals(False)
         # Point time-series makes no sense on a difference map — disable while comparing.
-        for b in (self.ts_button, self.ts_fast_button):
-            b.setEnabled(self._multi and not self._compare_mode)
+        for a in (self.ts_action, self.ts_fast_action, self.flowdur_action,
+                 self.flowregime_action):
+            a.setEnabled(self._multi and not self._compare_mode)
         self.header_label.setText(header_text)
         if self.time_labels:
             self.time_label.setText(
@@ -858,7 +984,12 @@ class NetcdfWindow(NetcdfDataBase):
             lon, lat = float(lon_s), float(lat_s)
         except Exception:
             return
-        # Nearest cell + its value on the current timestep.
+        self._mark_clicked_cell(lon, lat)
+
+    def _mark_clicked_cell(self, lon, lat, prefix=""):
+        """Snap (lon, lat) to the nearest cell, remember it as the clicked point
+        (self._clicked), drop the pending marker and update the info label - shared
+        by a plain map click and a gauge right-click."""
         loni = int(np.argmin(np.abs(self.lons - lon)))
         lati = int(np.argmin(np.abs(self.lats - lat)))
         lonc, latc = float(self.lons[loni]), float(self.lats[lati])
@@ -867,7 +998,7 @@ class NetcdfWindow(NetcdfDataBase):
             val = float(self.frames[self._ti][lati, loni])
             z = val if np.isfinite(val) else None
         except Exception:
-            log.debug("_on_web_title: ignored", exc_info=True)
+            log.debug("_mark_clicked_cell: ignored", exc_info=True)
         self._clicked = (lonc, latc, z)
         self._js("if(window.setPending) setPending(%f,%f);" % (latc, lonc))
         # Coordinate/value read-out (like Show Basin's info label).
@@ -877,8 +1008,38 @@ class NetcdfWindow(NetcdfDataBase):
         step = f" | {self.time_labels[self._ti]}" if self.time_labels else ""
         xl, yl = ("X", "Y") if self._projected else ("Lon", "Lat")
         self.info_label.setText(
-            f"{xl}: {display_format.fmt(lonc)} | {yl}: {display_format.fmt(latc)} | "
+            f"{prefix}{xl}: {display_format.fmt(lonc)} | {yl}: {display_format.fmt(latc)} | "
             f"Value: {vtxt}{step}")
+
+    def _on_web_context_menu(self, pos):
+        """Right-click anywhere on the map - Qt-native (customContextMenuRequested,
+        see _build_ui), not the page's own 'contextmenu' DOM event, which raced with
+        QWebEngineView's native Back/Forward/Reload menu unreliably. Opens every
+        Action-menu item at the cursor; no hit-testing needed (and no dependency on
+        gauges existing at all) since every item already works off whatever point
+        was last left-clicked (self._clicked) - same point the red pending marker
+        shows, exactly like Total Timeseries."""
+        global_pos = self.web_view.mapToGlobal(pos)
+        self._open_map_action_menu(global_pos)
+
+    def _open_map_action_menu(self, global_pos):
+        """The right-click context menu - literally every item of Menu ▸ Action,
+        same label/tooltip/enabled state AND the exact same behaviour (mirrored off
+        the real QActions, so the two can never drift out of sync)."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+
+        def _mirror(source_action, slot):
+            act = menu.addAction(source_action.text(), slot)
+            act.setToolTip(source_action.toolTip())
+            act.setEnabled(source_action.isEnabled())
+
+        _mirror(self.ts_fast_action, self._display_timeseries_fast)
+        _mirror(self.ts_action, self._display_timeseries_full)
+        _mirror(self.compare_action, self._toggle_compare)
+        _mirror(self.flowdur_action, self._show_flow_duration)
+        _mirror(self.flowregime_action, self._show_flow_regime)
+        menu.exec(global_pos)
 
     # ------------------------------------------------- points / timeseries
     # ``self._displayed_points`` holds the confirmed cell centres as (lon, lat)
@@ -934,6 +1095,188 @@ class NetcdfWindow(NetcdfDataBase):
         self._open_or_refresh_timeseries()
         self._update_map_markers()
 
+    # --------------------------------------------------------- flow duration
+    def _show_flow_duration(self):
+        """Action ▸ Flow duration, and the gauge right-click menu's Flow duration:
+        like Total Timeseries, works off the point that was last clicked on the map
+        (self._clicked) - unlike Total Timeseries, which plots every persisted point,
+        this only ever looks at the most recent click, never accumulating. Reads the
+        FULL-resolution series off the GUI thread (same worker as Total Timeseries)
+        and plots one flow duration curve per year, plus the all-years average."""
+        if not self._multi:
+            QMessageBox.information(self, "Flow duration",
+                                    "This file has no time dimension to plot.")
+            return
+        if not self._clicked:
+            QMessageBox.information(
+                self, "Flow duration",
+                "Click a point on the map first, then press Flow duration.")
+            return
+        if getattr(self, "_fdc_worker", None) is not None:
+            return  # a read is already in progress
+        lon, lat, _z = self._clicked
+        self._start_point_series_read_ui(indeterminate=True)
+        self.flowdur_action.setEnabled(False)
+        self._fdc_point = (lon, lat)
+        worker = _PointSeriesWorker(self, [(lon, lat)], full=True, parent=self)
+        self._fdc_worker = worker
+        worker.finished_ok.connect(self._on_fdc_ready)
+        worker.failed.connect(self._on_fdc_failed)
+        worker.finished.connect(self._on_fdc_worker_finished)
+        worker.start()
+
+    def _on_fdc_ready(self, series_list):
+        from src.gui.widgets.analysis_flow_duration import FlowDurationWindow
+        dates = self._point_source.get("full_time_labels") or []
+        values = series_list[0] if series_list else []
+        label = self._point_name(self._fdc_point)
+        try:
+            win = FlowDurationWindow(
+                [(label, dates, values)], self.varname, self.unit, self.long_name,
+                self.settings_title, self.nc_path, parent=self)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Flow duration",
+                                f"Could not build the flow duration curve:\n{e}")
+            return
+        self._fdc_window = win  # keep a reference so the non-modal window isn't GC'd
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _on_fdc_failed(self, msg):
+        try:
+            QMessageBox.warning(self, "Flow duration",
+                                f"Could not read the point's series:\n{msg}")
+        except RuntimeError:
+            log.debug("_on_fdc_failed: ignored", exc_info=True)
+
+    def _on_fdc_worker_finished(self):
+        self._fdc_worker = None
+        try:
+            self._stop_point_series_read_ui()
+            self.flowdur_action.setEnabled(self._multi and not self._compare_mode)
+        except RuntimeError:
+            log.debug("_on_fdc_worker_finished: ignored", exc_info=True)
+
+    # ----------------------------------------------------------- flow regime
+    def _show_flow_regime(self):
+        """Action ▸ Flow regime, and the gauge right-click menu's Flow regime: same
+        rule as Flow duration - the point last clicked on the map (self._clicked),
+        never several at once."""
+        if not self._multi:
+            QMessageBox.information(self, "Flow regime",
+                                    "This file has no time dimension to plot.")
+            return
+        if not self._clicked:
+            QMessageBox.information(
+                self, "Flow regime",
+                "Click a point on the map first, then press Flow regime.")
+            return
+        if getattr(self, "_regime_worker", None) is not None:
+            return  # a read is already in progress
+        lon, lat, _z = self._clicked
+        self._start_point_series_read_ui(indeterminate=True)
+        self.flowregime_action.setEnabled(False)
+        self._regime_point = (lon, lat)
+        worker = _PointSeriesWorker(self, [(lon, lat)], full=True, parent=self)
+        self._regime_worker = worker
+        worker.finished_ok.connect(self._on_regime_ready)
+        worker.failed.connect(self._on_regime_failed)
+        worker.finished.connect(self._on_regime_worker_finished)
+        worker.start()
+
+    def _on_regime_ready(self, series_list):
+        from src.gui.widgets.analysis_flow_regime import FlowRegimeWindow
+        values = series_list[0] if series_list else []
+        dates = self._point_source.get("full_time_labels") or []
+        label = self._point_name(self._regime_point)
+        try:
+            win = FlowRegimeWindow(
+                dates, values, label, self.varname, self.unit,
+                self.long_name, self.settings_title, self.nc_path, parent=self)
+        except ValueError as e:
+            QMessageBox.information(self, "Flow regime", str(e))
+            return
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Flow regime",
+                                f"Could not build the flow regime curve:\n{e}")
+            return
+        self._regime_window = win  # keep a reference so the non-modal window isn't GC'd
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _on_regime_failed(self, msg):
+        try:
+            QMessageBox.warning(self, "Flow regime",
+                                f"Could not read the point's series:\n{msg}")
+        except RuntimeError:
+            log.debug("_on_regime_failed: ignored", exc_info=True)
+
+    def _on_regime_worker_finished(self):
+        self._regime_worker = None
+        try:
+            self._stop_point_series_read_ui()
+            self.flowregime_action.setEnabled(self._multi and not self._compare_mode)
+        except RuntimeError:
+            log.debug("_on_regime_worker_finished: ignored", exc_info=True)
+
+    # ------------------------------------------- background read progress / cancel
+    # Shared by the three _PointSeriesWorker call sites (Total Timeseries, Flow
+    # duration, Flow regime): the progress bar + elapsed-time readout + Cancel
+    # button. Only one of these ever runs its "start" half at a time in practice
+    # (each guards on its own worker attribute being None), but Cancel stops
+    # whichever one it is without needing to know which.
+    def _start_point_series_read_ui(self, indeterminate, total=0):
+        if indeterminate:
+            self.ts_progress.setRange(0, 0)   # busy/indeterminate for a single point
+            self.ts_progress.setFormat("loading…")
+        else:
+            self.ts_progress.setRange(0, total)
+            self.ts_progress.setValue(0)
+            self.ts_progress.setFormat("loading %v/%m")
+        self.ts_progress.setVisible(True)
+        self._ts_read_start = time.time()
+        self.ts_elapsed_label.setText("0.0s")
+        self.ts_elapsed_label.setVisible(True)
+        self.ts_cancel_button.setEnabled(True)
+        self.ts_cancel_button.setVisible(True)
+        self._ts_elapsed_timer.start()
+
+    def _stop_point_series_read_ui(self):
+        self._ts_elapsed_timer.stop()
+        self._ts_read_start = None
+        self.ts_progress.setVisible(False)
+        self.ts_elapsed_label.setVisible(False)
+        self.ts_cancel_button.setVisible(False)
+
+    def _update_ts_elapsed_label(self):
+        start = getattr(self, "_ts_read_start", None)
+        if start is None:
+            return
+        try:
+            self.ts_elapsed_label.setText(f"{time.time() - start:.1f}s")
+        except RuntimeError:
+            log.debug("_update_ts_elapsed_label: ignored", exc_info=True)
+
+    def _cancel_point_series_read(self):
+        """Cancel button: stop whichever background point-series read is running
+        (Total/Fast Timeserie, Flow duration, Flow regime all share one worker type -
+        see _PointSeriesWorker.request_stop for why this is cooperative, not instant).
+        Also drops a queued Timeseries request so cancelling does not immediately
+        chain into reading the same points again."""
+        self._ts_next = None
+        for attr in ("_ts_worker", "_fdc_worker", "_regime_worker"):
+            worker = getattr(self, attr, None)
+            if worker is not None:
+                worker.request_stop()
+        self.ts_progress.setFormat("cancelling…")
+        self.ts_cancel_button.setEnabled(False)
+
     def _open_or_refresh_timeseries(self, open_if_closed=True):
         """(Re)build the Timeseries window from the full persisted point set. Recreated
         from scratch each time so a removal is reflected (TimeseriesWindow has no
@@ -986,16 +1329,9 @@ class NetcdfWindow(NetcdfDataBase):
                 self._run_next_ts_read()
             return
         # Total: full-resolution read off the GUI thread, with the progress bar.
-        if len(pts) <= 1:
-            self.ts_progress.setRange(0, 0)   # busy/indeterminate for a single point
-            self.ts_progress.setFormat("loading…")
-        else:
-            self.ts_progress.setRange(0, len(pts))
-            self.ts_progress.setValue(0)
-            self.ts_progress.setFormat("loading %v/%m")
-        self.ts_progress.setVisible(True)
-        self.ts_button.setEnabled(False)
-        self.ts_fast_button.setEnabled(False)
+        self._start_point_series_read_ui(indeterminate=len(pts) <= 1, total=len(pts))
+        self.ts_action.setEnabled(False)
+        self.ts_fast_action.setEnabled(False)
         worker = _PointSeriesWorker(self, pts, full=True, parent=self)
         self._ts_worker = worker
         worker.progress.connect(self._on_ts_progress)
@@ -1003,6 +1339,7 @@ class NetcdfWindow(NetcdfDataBase):
             lambda series, p=pts, o=open_if_closed:
             self._build_ts_window(series, p, o, full=True))
         worker.failed.connect(self._on_ts_failed)
+        worker.cancelled.connect(lambda: setattr(self, "_ts_next", None))
         worker.finished.connect(self._on_ts_worker_finished)
         worker.start()
 
@@ -1024,12 +1361,13 @@ class NetcdfWindow(NetcdfDataBase):
 
     def _on_ts_worker_finished(self):
         """Reader thread finished: hide the bar, re-enable the buttons, chain the next
-        request if a newer one arrived while reading."""
+        request if a newer one arrived while reading (never after a cancel - see the
+        worker's cancelled signal, connected above)."""
         self._ts_worker = None
         try:
-            self.ts_progress.setVisible(False)
-            self.ts_button.setEnabled(True)
-            self.ts_fast_button.setEnabled(True)
+            self._stop_point_series_read_ui()
+            self.ts_action.setEnabled(True)
+            self.ts_fast_action.setEnabled(True)
         except RuntimeError:
             log.debug("_on_ts_worker_finished: ignored", exc_info=True)
         if self._ts_next is not None:
@@ -1074,7 +1412,7 @@ class NetcdfWindow(NetcdfDataBase):
             self.settings_title, first[0], first[1], parent=self)
         win.setModal(False)
         if not getattr(win, "_geometry_was_restored", False):
-            win.resize(740, 520)
+            win.resize(*scaled_default_size(win, 740, 520))
             _position_offset(win, 0.18)
         for p, series in zip(pts[1:], series_list[1:]):
             win.add_point_series(dates, series, self._point_name(p))
@@ -1124,16 +1462,61 @@ class NetcdfWindow(NetcdfDataBase):
         except Exception as e:
             QMessageBox.warning(self, "Save HTML", f"Could not save the file:\n{e}")
 
+    def _load_json(self):
+        """File > Load JSON: open a GeoJSON file and draw it on the map, same as
+        Show Basin's File > Load JSON (shared reader, shared window.addGeoJson JS)."""
+        start_dir = os.path.dirname(self.nc_path)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load GeoJSON", start_dir,
+            "GeoJSON files (*.geojson *.json);;All files (*)")
+        if not path:
+            return
+        try:
+            obj = _read_geojson_file(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Load JSON",
+                                 f"Could not read/parse the file:\n{e}")
+            return
+        self.info_label.setText(f"Loaded GeoJSON: {os.path.basename(path)}")
+        self._js("if(window.addGeoJson) addGeoJson(%s);" % json.dumps(obj))
+
+    def _load_shape(self):
+        """File > Load shape: open an ESRI shapefile and draw it on the map exactly
+        like Load JSON, same as Show Basin's File > Load shape (shared
+        ``_read_shapefile`` reader, shared window.addGeoJson JS)."""
+        start_dir = os.path.dirname(self.nc_path)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load shapefile", start_dir, "Shapefiles (*.shp);;All files (*)")
+        if not path:
+            return
+        try:
+            obj = _read_shapefile(path)
+        except Exception as e:
+            QMessageBox.warning(self, "Load shape",
+                                 f"Could not read the shapefile:\n{e}")
+            return
+        self.info_label.setText(f"Loaded shapefile: {os.path.basename(path)}")
+        self._js("if(window.addGeoJson) addGeoJson(%s);" % json.dumps(obj))
+
     def closeEvent(self, event):
         try:
             self._play_timer.stop()
         except Exception:
             log.debug("closeEvent: ignored", exc_info=True)
-        # Let a running point-series read finish so its QThread is not destroyed while
-        # active (it only reads files + emits signals, so this is a short wait).
-        worker = getattr(self, "_ts_worker", None)
-        if worker is not None:
-            self._ts_next = None
+        try:
+            self._ts_elapsed_timer.stop()
+        except Exception:
+            log.debug("closeEvent: ignored", exc_info=True)
+        # Ask any running point-series read (Total Timeseries, Flow duration, Flow
+        # regime - all share _PointSeriesWorker) to stop, then let each finish so its
+        # QThread is not destroyed while active (it only reads files + emits signals,
+        # so this is a short wait once request_stop takes effect between points).
+        self._ts_next = None
+        for attr in ("_ts_worker", "_fdc_worker", "_regime_worker"):
+            worker = getattr(self, attr, None)
+            if worker is None:
+                continue
+            worker.request_stop()
             try:
                 worker.finished_ok.disconnect()
                 worker.progress.disconnect()
@@ -1143,6 +1526,15 @@ class NetcdfWindow(NetcdfDataBase):
                 worker.wait(4000)
             except Exception:
                 log.debug("closeEvent: ignored", exc_info=True)
+        # Close the shared point-series dataset (_shared_point_dataset), if one was
+        # ever opened, so the file handle is released promptly.
+        ds = getattr(self, "_point_ds", None)
+        if ds is not None:
+            try:
+                ds.close()
+            except Exception:
+                log.debug("closeEvent: ignored", exc_info=True)
+            self._point_ds = None
         try:
             if self._temp_html and os.path.exists(self._temp_html):
                 os.remove(self._temp_html)

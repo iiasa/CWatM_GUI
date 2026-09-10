@@ -108,6 +108,7 @@ class SettingsEditor(QPlainTextEdit):
     foldingChanged = Signal()  # fold state changed (gutter repaints)
     undoRedoPerformed = Signal()  # an undo or redo just ran (fields must re-sync)
     bookmarksChanged = Signal()  # bookmark set changed (gutter repaints)
+    fileDropped = Signal(str)  # a settings file (.ini/.txt) was dropped onto the editor
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -576,6 +577,46 @@ class SettingsEditor(QPlainTextEdit):
             return
         super().keyPressEvent(event)
 
+    # ------------------------------------------------------------- drag & drop
+    def _dropped_settings_path(self, event):
+        """The local .ini/.txt file path carried by a drag/drop event's mime
+        data, or None. Used to tell "drop a settings file to load it" apart from
+        an ordinary text drag (e.g. moving a selection inside the editor), which
+        must keep working via the base class."""
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return None
+        urls = mime.urls()
+        if not urls:
+            return None
+        path = urls[0].toLocalFile()
+        if path and path.lower().endswith(('.ini', '.txt')):
+            return path
+        return None
+
+    def dragEnterEvent(self, event):
+        if self._dropped_settings_path(event):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if self._dropped_settings_path(event):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        """A settings file dropped onto the editor loads it - the same as
+        dropping it anywhere else in the window - instead of QPlainTextEdit's
+        default of inserting the dropped path as plain text."""
+        path = self._dropped_settings_path(event)
+        if path:
+            event.acceptProposedAction()
+            self.fileDropped.emit(path)
+            return
+        super().dropEvent(event)
+
     # ---------------------------------------------------------------- folding
     def _section_spans(self):
         """[(name, header_block_no, last_block_no)] for every section, where the
@@ -682,6 +723,24 @@ class SettingsEditor(QPlainTextEdit):
         self._folded = names & set(self.section_names())
         if changed:
             self._folds_updated()
+
+    def unfold_rows(self, rows):
+        """Unfold every folded section that contains one of ``rows`` (0-based block
+        numbers), so marked lines inside a collapsed section become visible. Locked
+        sections stay hidden; the other folds are left alone. Returns the names it
+        unfolded."""
+        rows = set(int(r) for r in rows)
+        if not rows or not self._folded:
+            return set()
+        opened = set()
+        for sec, start, end in self._section_spans():
+            if sec not in self._folded or sec in self._locked_sections:
+                continue
+            if any(start < r <= end for r in rows):
+                opened.add(sec)
+        if opened:
+            self.apply_folds(self._folded - opened)
+        return opened
 
     def _set_folded(self, name, fold):
         doc = self.document()

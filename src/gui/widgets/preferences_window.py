@@ -29,6 +29,7 @@ from PySide6.QtGui import QFont
 
 from src.gui.utils import theme, display_format, run_ledger
 from src.gui.utils.gui_log import get_logger
+from src.gui.utils.window_geometry import scaled_default_size
 
 log = get_logger("preferences")
 
@@ -55,7 +56,7 @@ class PreferencesWindow(QDialog):
         self.mw = parent                      # the CWatMMainWindow
         self.setWindowTitle("Preferences")
         self.setModal(True)
-        self.resize(780, 540)
+        self.resize(*scaled_default_size(self, 780, 540))
 
         self._build_ui()
         self._applied = self._read_state()    # what the app currently has

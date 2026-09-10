@@ -68,7 +68,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QTextCursor, QFont, QCursor, QColor
 
 from src.gui.utils import theme
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.gui_log import get_logger
 from src.gui.utils import meta_netcdf
 from src.gui.utils import var_dims
@@ -237,7 +237,7 @@ class OutputVariablesWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("output_variables"):
-            self.resize(340, 620)
+            self.resize(*scaled_default_size(self, 340, 620))
         self._set_window_icon()
 
         layout = QVBoxLayout(self)

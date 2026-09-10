@@ -51,3 +51,21 @@ def qapp():
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.fixture
+def isolated_qsettings(tmp_path):
+    """Redirect QSettings("IIASA", "CWatM_GUI") to a throwaway ini file for the
+    duration of one test, restoring the previous default format afterward.
+
+    Without this, constructing a real window (CWatMMainWindow, BatchRunnerWindow,
+    ...) in a test reads/writes the developer's actual persisted settings (recent
+    files, "Load previous settings at start", a saved batch table, ...) - both
+    polluting real state and making the test's outcome depend on whatever is
+    already saved on the machine it happens to run on."""
+    from PySide6.QtCore import QSettings
+    previous = QSettings.defaultFormat()
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    yield
+    QSettings.setDefaultFormat(previous)

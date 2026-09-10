@@ -95,7 +95,10 @@ every worksheet the file contains is reachable from the window's own tab bar.
   from a local disk but **tens of seconds when the file sits cold on a network share**,
   and doing that in the constructor greyed the whole application out. While it runs,
   `_set_busy(True)` shows `Loading <file> …` in the info line, puts up a busy cursor and
-  disables the table, the tabs and the four buttons; the window itself stays alive.
+  disables the table, the tabs and the four **File menu** actions (Load / Reload /
+  Save / Save As — the whole button row that used to sit below the table became a
+  File menu, `_build_menubar`; only the symbol toolbar below stayed as buttons);
+  the window itself stays alive.
   Details that matter:
   - The `done` signal is connected to **`self._on_loaded`, a bound method of the
     window** — never to a bare lambda. A lambda has no receiver QObject, so Qt makes
@@ -389,6 +392,29 @@ unaffected.
   `real_text()` strips the (empty) filler rows,
   so **Save never writes the padding** and edits to real lines survive; `real_text` is
   also what feeds the next re-compare (Load / Save re-run `_recompare`).
+- **Editing keeps the alignment** (`_install_line_sync` → `_on_pane_edit`, on the
+  documents' `contentsChange`). Without it the first inserted or deleted line slides one
+  pane against the other for the whole rest of the file. An edit that changes the **line
+  count** is answered with **virtual lines** — empty, `filler_line` light gray, tracked in
+  `filler_rows`, stripped again by `real_text()`, so they exist **only on screen** and
+  reach neither a Save nor the next diff:
+  - **lines added** on one side (`_lines_added`) → the same number of gray lines at the
+    same rows on the other side;
+  - **a line deleted** (`_lines_removed`) → a gray line stays behind in its place —
+    **unless** the rows opposite it are gray themselves (deleting a line that exists only
+    on this side, or undoing an insert), in which case the pair is dropped on both sides.
+  - Typing into a gray line makes it real again (`_unmark_typed_filler`).
+
+  Both documents always change length at the same row, so one row transform
+  (`_shift_rows` → `_shift_marks`) moves `filler_rows`/`diff_rows` on both panes plus
+  `_changed_rows`/`_diff_blocks` together, and the orange marks and Next/Previous Diff
+  stay attached to their lines. Three guards keep it from eating itself: `_sync_busy`
+  (the mirrored insert/delete is not a user edit), `_ComparePane._suspend_sync` (set by
+  `_replace_text`, so a wholesale `load_text` is not read as typing) and `_aligned`
+  (off until both sides have content — an unaligned window is left alone). Because a
+  Qt document cannot tell an undo from a delete, undoing an insert leaves a gray pair
+  rather than nothing; the files are unaffected. A Save/Load re-runs `_recompare`,
+  which rebuilds the real alignment.
 - **Synced scrolling**: the two editors' vertical + horizontal scrollbars mirror each
   other (`_link_scrollbars`, reentrancy-guarded). Only the **right** pane shows a
   vertical scrollbar (wide 16px, same as the main window's right part) — a single
@@ -509,7 +535,24 @@ value + PathOut in the base content — first uncommented `key =` line, appended
 and writes a temporary `<base>.batch_<name>.ini` **next to the base file** (so
 placeholders / relative paths resolve identically), then runs it in its **own OS
 process** via `CWatMProcessWorker` (the same subprocess worker as the main run).
-- **Up to N in parallel** (a spin box, default 1): `_pump` keeps up to N workers running
+- **Menu-driven** (`_build_menubar`): most of the former button row became **File**
+  (Import CSV / Export CSV), **Action** (Add scenario / Duplicate / Remove / Clear /
+  Compare results / Sweep… / Add key column) and **Run** (Run all / Stop all). **Run
+  all** / **Stop all** are also kept as a blue/red button pair below the table
+  (`_run_stop_button_style`, the same look as Windowed Run CWatM's Run/Stop toggle) —
+  the batch's core, most-clicked action, mirroring the Run menu items exactly (both
+  paths call `_run_all`/`_stop_all` and are kept in sync at every enable/disable site).
+  A top-level **Preferences** action (same click-to-open pattern as the main window's
+  CWatM AI/Display, not a dropdown) holds **Parallel runs** / **Stop on first
+  failure** / **Skip finished** in a small buffered dialog (OK/Cancel/Apply, like
+  the main window's Configure ▸ Preferences). Those three settings still live on
+  the original `self.parallel_spin`/`self.stop_on_fail`/`self.skip_finished`
+  widgets - just never shown inline any more - so every other read of them
+  (`_eta_seconds`, `_preflight`, `_pump`, `_on_finished`/`_on_error`, `_run_rows`,
+  `_save_config`/`_restore_config`) is unchanged; the dialog is a second face on
+  that state, not a second implementation. There is no Close button - the window
+  closes via its title-bar X or Alt+F4.
+- **Up to N in parallel** (Preferences ▸ Parallel runs, default 1): `_pump` keeps up to N workers running
   and starts queued rows as slots free; each row shows a live **Progress** (`worker.progress`)
   and **Status** (queued/running/done/failed/stopped) cell. **Run all** / **Stop all**
   (Stop kills every running process). New rows default PathOut to
@@ -519,7 +562,7 @@ process** via `CWatMProcessWorker` (the same subprocess worker as the main run).
   `basin_viewer.pathout_exists`) is **created with `os.makedirs` before its run** if
   missing (CWatM does not create it), and a row that cannot create its folder is marked
   `error` and skipped.
-- **Parameter sweep** (**Sweep…** button, `_open_sweep`/`_apply_sweep`): auto-generates
+- **Parameter sweep** (Action ▸ **Sweep…**, `_open_sweep`/`_apply_sweep`): auto-generates
   scenario rows from `<key>: <values>` lines — `values` a **list** (`3.5, 4.0, 4.5`) or a
   **range** `min:max:step` (`3.5:4.5:0.5`; step optional → 5 steps), parsed by
   `_parse_values`. **Several keys → the full grid** (`itertools.product`); each row is
@@ -554,9 +597,9 @@ process** via `CWatMProcessWorker` (the same subprocess worker as the main run).
   **more than one** scenario, and overlays that file from all of them in a single
   Timeseries plot, each series labelled with its scenario name. One candidate is used
   straight away; several ask which (`QInputDialog`, most-covered first). `open_comparison`
-  is the programmatic form of the Timeseries window's *Compare* button: it builds the
+  is the programmatic form of the Timeseries window's Action ▸ *Compare*: it builds the
   window on the first file and appends the rest to `win.compare` before the first render.
-- **Resume an interrupted batch** (*Skip finished* checkbox): `_run_rows(rows,
+- **Resume an interrupted batch** (Preferences ▸ *Skip finished*): `_run_rows(rows,
   force=False)` drops rows whose PathOut already holds output (`_has_results`: any
   `.nc`/`.tss`/`.csv` — the scenario's own `cwatm_out.txt` is a `.txt`, so the log alone
   never counts) and marks them `skipped (has results)`. **`force=True` for the row
@@ -571,10 +614,11 @@ process** via `CWatMProcessWorker` (the same subprocess worker as the main run).
   (progress/duration/status) as an **override key**, so a table built in Excel drops
   straight in. Written as `utf-8-sig` for Excel; a file without a Scenario/PathOut
   header is refused with the header it did find.
-- **Parallelism**: the spin box starts at `_default_parallel()` = `min(4, cores//2)`
-  rather than 1, and `_preflight` **warns** when it is raised past `cores//2` (CWatM is
-  CPU- and IO-hungry; beyond that a batch gets slower, not faster). **Stop on first
-  failure** (checkbox) clears the queue on the first failed/errored scenario
+- **Parallelism**: Preferences ▸ Parallel runs starts at `_default_parallel()` =
+  `min(4, cores//2)` rather than 1, and `_preflight` **warns** when it is raised past
+  `cores//2` (CWatM is CPU- and IO-hungry; beyond that a batch gets slower, not
+  faster). **Stop on first failure** (Preferences) clears the queue on the first
+  failed/errored scenario
   (`_cancel_queued`, remaining rows read `cancelled`) but deliberately **lets running
   ones finish** — killing them would throw away hours of work.
 - **Pre-flight check** (`_preflight` → `_confirm_problems`), run by *Run all*, *Run this
@@ -624,7 +668,11 @@ Tools ▸ *Run Ledger*; only the visible name and place changed — the window c
 `src/gui/widgets/run_ledger_window.py`, `RunLedgerWindow`) shows a table of **past runs**
 recorded by `src/gui/utils/run_ledger.py` — one JSON row per run (`run_ledger.json`):
 time, `kind` (run/hidden/batch/stopped), settings path, settings **Title**, resolved
-**PathOut**, duration, success, last discharge. Rows are actionable: **Open results**
+**PathOut**, duration, success, last discharge. The former button row is a menu bar —
+**File** (Open results, Load settings, Refresh, Export CSV), **Action** (Show log,
+Re-run, Compare settings, Compare results), **Clean** (Delete entry, Clear Journal);
+tooltips moved from the buttons to the `QAction`s, and only **Close** stayed a button
+(`_build_menubar`). Rows are actionable: **Open results**
 (the run's PathOut in the **Output Explorer**), **Show log**, **Load settings** (reload
 the run's settings file into the main window), **Re-run**, **Compare settings**,
 **Compare results**, **Refresh**, **Delete**, **Clear journal**. Newest first;
@@ -673,10 +721,11 @@ non-modal; geometry key `run_ledger`.
 - **Export CSV** writes the rows **currently shown** — so the filter narrows the export
   — with the visible columns plus `Kind` and `Log`.
 - **Right-click a row** (`_on_row_menu`) for everything that applies to it, including
-  the two things with no button: **Open output folder** (the file manager, through
-  `utils/open_path.py`) and **Copy PathOut / Copy settings path** (retyping a path out
-  of the table was the only way before). The rest mirrors the buttons — open results,
-  show log, load settings, re-run, delete — each greyed out when it does not apply.
+  the two things with no menu-bar equivalent: **Open output folder** (the file manager,
+  through `utils/open_path.py`) and **Copy PathOut / Copy settings path** (retyping a
+  path out of the table was the only way before). The rest mirrors the File/Action menu
+  items — open results, show log, load settings, re-run, delete — each greyed out when
+  it does not apply.
 - **What is running now**: `_live_entries` builds pseudo-rows for the **main run**
   (`_run_ledger_ctx`), every **Windowed Run** window and every in-flight **Batch**
   scenario, shown at the top with `running…`, a live elapsed time and a tinted
@@ -684,9 +733,10 @@ non-modal; geometry key `run_ledger`.
   window is open). They cannot be deleted or re-run, and the timer is stopped in
   `closeEvent`.
 - **Compare settings**: the table is **ExtendedSelection**, so two runs can be marked
-  (Ctrl/Shift+click). The **Compare settings** button is **grey/disabled** until
-  **exactly two** rows are marked, then **blue** (`itemSelectionChanged` →
-  `_update_compare_enabled`); pressing it diffs the two runs' settings in the **Compare
+  (Ctrl/Shift+click). The **Compare settings** action (and *Compare results*, *Re-run*,
+  *Show log*, *Delete*) is **disabled** until the marked rows make it valid — Compare
+  settings needs **exactly two** rows (`itemSelectionChanged` →
+  `_update_compare_enabled`, `QAction.setEnabled`); triggering it diffs the two runs' settings in the **Compare
   settings** window via `compare_settings_window.open_compare_files(parent, a, b)` (a new
   `CompareSettingsWindow.load_files` reads both paths into the two panes and re-diffs).
   It prefers each run's **run-time snapshot** (`entry["snapshot"]`, what actually ran)
@@ -726,8 +776,15 @@ network share, where each open is the slow part; `read_netcdf_metadata` /
 hunted for in the alphabetical list; rows the file does not carry are simply absent, and
 each value is selectable.
 
-Every button is **enabled by what the file actually contains** (`_update_buttons`) —
-a NetCDF without `version_settingsfile` greys the three settings buttons with the reason
+**Menu-driven** (`_build_menubar`): **File** (Export as CSV), **Action** (Preview
+settingsfile, Compare with current, Show Inputfiles) and **Restore** (Restore
+settingsfile) — tooltips moved from the buttons to the `QAction`s. There is no Close
+button — the window closes via its title-bar X or Alt+F4. **Show in Journal** (button
+and its backing `_on_show_in_journal`/`_journal_entry`) was **removed outright**, not
+moved into a menu.
+
+Every action is **enabled by what the file actually contains** (`_update_actions`) —
+a NetCDF without `version_settingsfile` greys the three settings actions with the reason
 in the tooltip, instead of explaining it after the click.
 
 - **Preview settingsfile** (`_on_preview` → `SettingsPreviewWindow`): the stored
@@ -744,8 +801,7 @@ in the tooltip, instead of explaining it after the click.
 - **Compare with current** (`_on_compare`): diffs the stored settings against
   `main_window._live_content()` in a `CompareSettingsWindow` (`load_contents`, panes
   labelled *current file* vs *stored in \<nc\>*). This window is **modal**, which would
-  block the diff window, so it `accept()`s itself (and the preview) first — the same
-  reason **Show in Journal** closes it.
+  block the diff window, so it `accept()`s itself (and the preview) first.
 - **Restore settingsfile** (`_on_restore`): writes `version_settingsfile` (the full
   settings file CWatM stamped into the output) to a **new file** (Save-As dialog,
   suggested in PathOut / next to the nc), then **loads** it in the main window
@@ -783,15 +839,11 @@ in the tooltip, instead of explaining it after the click.
   Output Explorer's viewers), anything else through `open_path`; the resolved path is
   kept on the name cell (`Qt.UserRole`), so a row that is missing or not yet checked
   says so instead of doing nothing.
-- **Show in Journal** (`_on_show_in_journal`): finds the run whose PathOut is (or
-  contains) this file's folder in `run_ledger.load_entries()` (`_journal_entry`, also
-  what enables the button), closes this dialog and opens the Journal of Runs on that row
-  — `RunLedgerWindow.select_run(ts=, pathout=)` unhides, selects and scrolls to it,
-  matching a folded batch row through its `members`.
 - **Getting values out** (`install_table_tools`, both tables): **Ctrl+C** copies the
   marked rows tab-separated, a right-click offers *Copy value / Copy row(s) / Export as
-  CSV…*, and an **Export as CSV** button writes the visible rows (`;`-separated,
-  utf-8-sig, suggested next to the nc as `<name>_metadata.csv` /
+  CSV…*, and an **Export as CSV** — the main window's **File** menu, the Input Files
+  window's own button (untouched by the menu conversion above) — writes the visible
+  rows (`;`-separated, utf-8-sig, suggested next to the nc as `<name>_metadata.csv` /
   `<name>_inputfiles.csv`). Before this, a read-only table with no menu meant a value
   could not leave the window at all.
 
@@ -927,7 +979,11 @@ left panel the way a load does (labels, dates, PathOut, MaskMap, Gauges, warning
    `_activate_tab`, which restores the window from the tab object.
 
 **Where a load goes.** Into the active tab (the first one at startup), and so does a
-dropped file; the **`+`** tab opens an empty one first. The one-file-one-tab guard
+dropped file — dropping a `.ini`/`.txt` onto **either side**, the left panel or the
+editor itself, loads it the same way (`SettingsEditor.fileDropped`, its own
+`dragEnterEvent`/`dropEvent` override, wired to `load_recent_file`); a drop on the editor
+used to just insert the path as text. The **`+`** tab opens an empty one first. The
+one-file-one-tab guard
 (`guard_duplicate_file` / `same_file`, paths compared absolute + `normcase`) makes a load
 of an already-open file switch to the tab that has it — History, drag & drop, the Load
 dialog and the startup restore all funnel through `load_recent_file`, while
@@ -937,10 +993,25 @@ file (Reload) is unaffected — the guard excludes the active tab.
 
 **Right-click a tab:**
 - *Delete Tab* — unsaved prompt; deleting the **last** tab empties it instead of leaving
-  none.
+  none. Closing (✕ or *Delete Tab* alike, both funnel through `close_settings_tab`) first
+  calls `_interrupt_tab_run(tab)`: if a run (main, a Windowed Run, or a Batch scenario) is
+  using that tab's file (`same_file`), it **asks Yes/No** before stopping it — answering
+  No aborts the close entirely, so the tab and its run are left alone. Then
+  `_release_tab_folder_lock(closed_folder)` `os.chdir`s the process away from the closed
+  tab's folder if it was still cwd and no remaining tab needs it, so the folder is no
+  longer held open (Windows won't let Explorer delete a folder the process has as its
+  working directory).
 - *Copy Tab* — writes the tab's **current** content, unsaved edits included, to
   `next_copy_path()` (`settings.ini` → `settings_2.ini` → `settings_3.ini`, skipping
   names that exist) and opens the copy in a new tab right of the source.
+- *Compare* (`compare_tab_to_next`) — opens the **Compare settings** window
+  (`open_compare_sources`) side by side on this tab and its **neighbour**: left pane =
+  the right-clicked tab, right pane = `compare_next_partner_index` (the tab **right** of
+  it, or the one **left** when it is the last tab — the **mirror** of F8's
+  `compare_partner_index`, which prefers the left neighbour of the *active* tab). Both
+  sides are handed their tab's **live editor text** (`tab_source`, the same reader
+  `compare_partner_source` uses), so unsaved edits are what gets compared, not the files
+  on disk. **Greyed out with only one tab open.**
 - *Run CWatM* — opens a **Windowed Run CWatM** window on *this tab's* file
   (`open_hidden_run(tab.file_path)`), independent of the main run and the other tabs.
   Disabled while the tab has no file, and it runs the file **as saved on disk**.
@@ -1125,11 +1196,19 @@ the raster onto a Mercator basemap and did not render well).
   `<body>` no height, so the map would otherwise collapse to 0 px (blank). The
   helper script is inserted last so folium's global map/overlay vars already
   exist when it runs.
-- Buttons/behaviour: Hide/Show Mask, Create new Mask (same
+- **Menu-driven** (`_build_menubar`): **File** (Load JSON, Load shape), **Mask** (Hide
+  Mask, Create new Mask, Copy Mask, Zoom to Mask), **Gauge** (Create gauge, Copy
+  gauge) — tooltips moved from the buttons to the `QAction`s. Mask/Gauge are **also**
+  kept as buttons below the menu bar (this window's core, most-clicked actions — same
+  reasoning as Batch Run's Run all/Stop all); the menu items call the exact same slots
+  and are kept in sync with the buttons' text/enabled state at every mutation site
+  (`_toggle_mask_from_menu`, `_use_coordinates`, `_create_gauge`, `_remove_gauge`,
+  `_create_new_mask`). Behaviour: Hide/Show Mask, Create new Mask (same
   `mainwarm -vgm` temp-ini call; `updateMask` swaps the mask ImageOverlay in
   place — creating it if the basin had none), Copy Mask, Create gauge / Copy Gauge
   (see gauge editing above), Zoom to Mask (`fitBounds`), **OSM transparency slider**,
-  basemap selector (`setBasemap` swaps the `L.tileLayer.wms` in place), Exit. Clicks
+  basemap selector (`setBasemap` swaps the `L.tileLayer.wms` in place). There is no
+  Exit button any more — the window closes via its title-bar X or Alt+F4. Clicks
   route via `document.title` (`B2 <lon>|<lat>`) → `_on_web_title`.
 - **OSM transparency slider** (`_on_opacity_changed`) — same coupled model as NetCDF:
   as it goes 0 → 100% the **OSM basemap opacity** rises 0.0 → 1.0 (`setBaseOpacity` →
@@ -1138,11 +1217,21 @@ the raster onto a Mercator basemap and did not render well).
   over white) and **100% = OSM fully visible + data 50% opaque on top**. The **initial**
   value comes from **Preferences ▸ Display ▸ Initial map transparency** (`display_format.get_transparency()`,
   default 100). `setBasemap` re-applies `_baseOp` on a basemap switch.
-- **Load JSON** button: opens a `*.geojson`/`*.json` file (starting in the settings
-  file's folder), parses it with `json.load`, and draws it via the `addGeoJson` JS
-  helper (`L.geoJSON` — orange lines/polygons, circle markers for points, feature
-  `properties` shown in a popup, `fitBounds` to the layer). Kept in its own
-  `geoGroup` layer under the pin markers; parse errors are reported, never crash.
+- **File ▸ Load JSON** (`_load_json`): opens a `*.geojson`/`*.json` file (starting in
+  the settings file's folder), parses it with `json.load`, and draws it via the
+  `addGeoJson` JS helper (`L.geoJSON` — orange lines/polygons, circle markers for
+  points, feature `properties` shown in a popup, `fitBounds` to the layer). Kept in
+  its own `geoGroup` layer under the pin markers; parse errors are reported, never
+  crash.
+- **File ▸ Load shape** (`_load_shape`): opens a `*.shp` file (its companion
+  `.shx`/`.dbf` must sit alongside it) and draws it exactly like Load JSON — read
+  with **pyshp** (`shapefile.Reader`, pure Python, no GDAL/fiona dependency), each
+  `ShapeRecord` converted to a GeoJSON `Feature` (`shape.__geo_interface__` for the
+  geometry, `record.as_dict()` for the properties) into one `FeatureCollection`, then
+  handed to the **same** `addGeoJson` JS helper — so it lands in the same `geoGroup`
+  layer, styled and popped-up identically. Coordinates are assumed already lon/lat
+  (WGS84), like Load JSON — no reprojection. Read/parse errors are reported, never
+  crash.
 - **JS readiness**: helpers exist once Leaflet has loaded, so `_js()` **queues**
   calls until `loadFinished`, then flushes and re-applies markers from the live
   boxes (`_refresh_markers`).
@@ -1162,6 +1251,19 @@ the raster onto a Mercator basemap and did not render well).
 **PathOut** directory when a settings file is loaded) and shows the result as a
 **Plotly** line chart (`plotly.graph_objects`, `mode="lines"`) rendered in a
 QtWebEngine window (plotly.js inlined — no CDN).
+- **Menu bar** (`_build_menubar`): **File** (Save as csv, Save HTML), **Action**
+  (Compare, Load observed, Flow duration, Flow regime) — tooltips moved from the former
+  buttons to the `QAction`s. **Backward / Forward** stayed as buttons (the frequently
+  clicked pair, right below the plot); `observed_action` replaces the old
+  `observed_button` and still toggles its text between "Load observed" / "Clear
+  observed".
+- **Flow duration / Flow regime** (Action menu; `_show_flow_duration` /
+  `_show_flow_regime`): open `analysis_flow_duration.FlowDurationWindow` /
+  `analysis_flow_regime.FlowRegimeWindow` on the **currently displayed column**
+  (`self.series[self.index]`, dates converted from the day-first csv format to ISO via
+  `_flow_duration_regime_dates`). See their shared description under **Analyse ▸
+  NetCDF** below — both windows are the same code whether opened from here (a csv
+  column) or from the NetCDF map (a clicked cell).
 - CWatM result CSV layout: series names in **row 4 from column 2**; **column 1 = date**
   (daily/monthly/yearly) and columns 2+ = values from row 5 on.
 - Multiple result columns are shown **one at a time** with **Forward / Backward**
@@ -1212,6 +1314,22 @@ and reuses its data loading (`_load`), meta lookup (`_lookup_meta`) and point-se
 extraction (`_point_series`); the rendering/interaction is implemented here. (This is
 the former "NetCDF2"; the plain Plotly heatmap that used to be "NetCDF" was removed,
 so this folium viewer is now simply **NetCDF**.)
+- **Menu bar** (`_build_menubar`): **File** (Save HTML, Load JSON, Load shape),
+  **Action** (Fast Display Timeserie, Total Timeseries, Compare A−B, Flow duration,
+  Flow regime), and a top-level clickable **Display** action (not a dropdown — the
+  same pattern as the main window's "CWatM AI") opening a small non-modal window
+  (`_build_display_dialog`/`_open_display_dialog`) holding **Colour scale** / **OSM
+  transparency** / **Basemap**, moved out of the inline row below. Play, the timestep
+  timeline/slider, **Speed** and **Log scale** stayed inline (frequently used while
+  animating). The map itself also has a **right-click menu** — see below.
+- **File ▸ Load JSON / Load shape**: identical to **Show Basin**'s File menu items of
+  the same name — same file dialogs, same shared reader functions
+  (`basin_viewer2._read_geojson_file` / `_read_shapefile`, imported here rather than
+  duplicated) and the same `window.addGeoJson` JS drawn into this window's own
+  `_helper_js` (its own `geoGroup` layer group; the JS is byte-identical to Show
+  Basin's, just under the `NC2ERR` error-title prefix instead of `B2ERR`). `pyshp` is
+  imported lazily inside `_read_shapefile`, so it costs nothing at GUI startup — see
+  the Requirements/`pyshp` note in `CLAUDE.md`.
 - **Projection = EPSG:4326** (`crs='EPSG4326'`), matching the CWatM `.nc` output, so
   the raster needs **no rasterio reprojection** — each timestep is colourised in
   numpy to an RGBA image (`_colorize`: fixed `zmin/zmax`, NaN → transparent alpha,
@@ -1223,15 +1341,15 @@ so this folium viewer is now simply **NetCDF**.)
   EPSG:4326 map — same reason as Show Basin). The `L.tileLayer.wms` is kept **below**
   the overlay (`bringToBack`) so the overlay-transparency slider fades the data to
   reveal the basemap.
-- **Controls (no description caption; laid out in three rows** — the NetCDF
-  description label is intentionally omitted here): row 1 = timestep slider + **▶ Play**
-  (driven by a Qt `QTimer`, since a folium overlay has no built-in animation) + date +
-  **Speed**; row 2 = **Colour scale** selector (restyles by rebuilding the overlay URI +
-  the HTML colour-bar) + **OSM transparency** slider + **Basemap** selector
-  (`setBasemap` swaps the WMS in place) + **Log scale**; row 3 =
-  **Fast Display Timeserie** + **Total Timeseries** (+ a **progress bar** to their right
-  while the full point series loads) … **Save HTML**. Play/slider/colourscale changes rebuild the
-  overlay's `data:` URI in Python and push it with `_ov.setUrl(...)`.
+- **Controls (no description caption** — the NetCDF description label is intentionally
+  omitted here): row 1 = timestep slider + **▶ Play** (driven by a Qt `QTimer`, since a
+  folium overlay has no built-in animation) + date + **Speed** + **Log scale**, plus
+  `ts_progress` / `ts_elapsed_label` / `ts_cancel_button` (shown only while a background
+  point-series read is in flight — shared by Total Timeseries, Flow duration and Flow
+  regime, see below). **Colour scale**, **OSM transparency** and **Basemap** moved into
+  the **Display** window (`setBasemap` still swaps the WMS in place; colour-scale changes
+  still rebuild the overlay URI + HTML colour-bar). Play/slider/colourscale changes
+  rebuild the overlay's `data:` URI in Python and push it with `_ov.setUrl(...)`.
 - **OSM transparency slider** (`_on_opacity_changed`): one slider fades **both** layers
   as it goes 0 → 100% — the **OSM basemap opacity** 0.0 → 1.0 (`setBaseOpacity` →
   `_tile.setOpacity`) **and** the **NetCDF overlay opacity** 1.0 → 0.5 (`setNcOpacity`
@@ -1265,10 +1383,27 @@ so this folium viewer is now simply **NetCDF**.)
     `_point_source["full_time_labels"]`), so the plotted / **Save as csv**'d series has
     every day. This can be **slow** (tens of seconds on a long / networked file), so it
     is read **off the GUI thread** by `_PointSeriesWorker` (a `QThread` calling
-    `_series_for(p, full=True)` per point) with the **progress bar** (`ts_progress`:
-    busy/indeterminate for a single point, per-point `n/m` for several); both buttons are
-    disabled while loading, the newest request wins (`_ts_next` chain), and `closeEvent`
-    waits for an in-flight read.
+    `_series_for(p, full=True)` per point) with **progress + elapsed time + Cancel**
+    (`_start_point_series_read_ui`/`_stop_point_series_read_ui`/
+    `_update_ts_elapsed_label`/`_cancel_point_series_read` — shared UI plumbing also used
+    by Flow duration/regime below; `ts_progress`: busy/indeterminate for a single point,
+    per-point `n/m` for several). Cancel calls the worker's cooperative
+    `request_stop()` (checked between points — **never `QThread.terminate()`**, since the
+    worker holds the shared dataset handle below) and emits `cancelled`. Both Timeseries
+    buttons/actions are disabled while loading, the newest request wins (`_ts_next`
+    chain), and `closeEvent` `request_stop()`s and waits on every in-flight worker
+    (`_ts_worker`, `_fdc_worker`, `_regime_worker`).
+  - **Speed** (`analysis_netcdf_base.py`, `NetcdfDataBase`): `_open_dataset_safe` opens
+    with `xr.open_dataset(path, chunks={})`, wrapping variables as **dask** arrays that
+    respect the file's own on-disk chunking (CWatM `.nc` is chunked `[1, lat, lon]`) so
+    chunk decompression parallelises over dask's threaded scheduler instead of one
+    Python-level read per timestep. `_shared_point_dataset` opens the file **once** per
+    window (lock-guarded against the open race) and every point-series read reuses that
+    handle instead of reopening; `_point_series` additionally caches by
+    `(lati, loni, full)` so re-reading an already-clicked point (e.g. re-running Flow
+    duration on the same cell) is free. `_load()` resets the shared handle/cache whenever
+    it (re)runs, so **Compare A−B**'s second file never mixes cached values with the
+    first.
   - **Fast Display Timeserie** (`full=False`) — only the **strided map-animation frames**
     (`time_indices` / `time_labels`, `_MAX_FRAMES`), so it is quick (far fewer chunk
     reads) but the series has **gaps**. Read **synchronously** (no progress bar), like the
@@ -1292,6 +1427,50 @@ so this folium viewer is now simply **NetCDF**.)
   red numbered pins** (`.nc-gauge` / `gpin`, in their own `gaugeGroup`, `setGauges`) —
   purely for reference, distinct from the click-to-add discharge points; applied on
   load (`_refresh_gauges` in `_on_loaded`).
+- **Right-click menu on the map** (`_on_web_context_menu`/`_open_map_action_menu`):
+  `self.web_view.setContextMenuPolicy(Qt.CustomContextMenu)` + `customContextMenuRequested`
+  opens a plain Qt menu mirroring every **Action**-menu item (`_mirror(source_action,
+  slot)`), working off `self._clicked` — whatever the last left-click on the map set,
+  the ordinary red pending marker, not a gauge. It is a pure Qt signal with **no JS
+  hit-testing dependency**: earlier attempts gated the menu on right-clicking a gauge pin
+  specifically (JS `hitTestGauge`) and used `Qt.PreventContextMenu`, which suppressed
+  Qt's native menu without reliably delivering the JS click; both the gauge dependency
+  and the hit-testing JS were removed, so right-click now works **anywhere on the map**,
+  gauges configured or not.
+- **Flow duration / Flow regime** (Action menu; `_show_flow_duration`/
+  `_show_flow_regime`, no arguments): operate purely on `self._clicked` — the last
+  left-clicked cell, the same data source as Total/Fast Timeserie, never accumulated
+  across clicks (unlike the numbered Timeseries points). With nothing clicked yet they
+  show "Click a point on the map first, then press Flow duration/regime." A background
+  `_PointSeriesWorker` (`_fdc_worker`/`_regime_worker`) reads the point's full series
+  through the same shared-dataset/cache/progress/cancel plumbing as Total Timeseries;
+  `_on_fdc_ready`/`_on_regime_ready` then build a `FlowDurationWindow`/
+  `FlowRegimeWindow` (`src/gui/widgets/analysis_flow_duration.py` /
+  `analysis_flow_regime.py`) from the single point. Reached identically from **Analyse ▸
+  Timeseries ▸ Action ▸ Flow duration/regime** on a loaded csv column — same two window
+  classes, same button layout, only the data source (a clicked NetCDF cell vs. a csv
+  column) differs.
+  - **`FlowDurationWindow`**: `compute_flow_duration(dates, values)` ranks each
+    calendar year's values into an exceedance-probability curve (Weibull plotting
+    position, `probs = 100·m/(n+1)`), plus **cross-year percentile bands** — each year's
+    curve interpolated onto a common 0–100 %/1 % grid (`np.interp`), then
+    `np.nanpercentile` across years. Plot: one line per year (width 1.5, opacity 0.6),
+    the **cross-year average** in black at width **1.5** (not double — an earlier pass
+    doubled it, reverted per feedback), and two `fill="toself"` bands — 0–100 % very
+    light gray, 40–60 % light gray. Buttons (left→right): **Remove single years**
+    (toggles to *Show single years*, hides/shows the per-year lines), **Show Percentile
+    bands** (toggles to *Hide Percentile bands*), a stretch, **Save as csv**
+    (`_duration_table`/`_save_csv`: rows = the probability grid, columns = one per year,
+    or `"{label} {year}"` with more than one input series), **Save HTML**.
+  - **`FlowRegimeWindow`**: single-gauge only by construction (one clicked point/one csv
+    column). `compute_regime(dates, values)` detects **daily vs. monthly** resolution
+    from the median timestep gap (≤3 days = daily, 25–35 = monthly, else raises) and
+    groups by `(month, day)` or `month` across years — **29 Feb is dropped** so every
+    year contributes the same 365 daily rows; x-values are placed in a fixed non-leap
+    reference year purely so Plotly's date axis formats the month labels. Same button
+    layout as Flow duration (years/bands/save-csv/save-HTML); `_regime_table`/
+    `_save_csv` write rows = `"MM-DD"` (daily) or `"MM"` (monthly) in calendar order,
+    columns = year.
 - **JS readiness**: helper calls are **queued** until `loadFinished` then flushed
   (`_js` / `_on_loaded`), like Show Basin. **Save HTML** writes the self-contained
   page (its basemap WMS only resolves inside the app's `osmtile://` scheme, so an
@@ -1342,6 +1521,17 @@ the overall water balance as a Plotly **`go.Sunburst`** rendered in a QtWebEngin
   the sunburst is recomputed for the selected **[start, end]** window (defaults to the
   full span); dragging shows the range live and **debounces** the heavy rebuild (200 ms
   `_rebuild_timer`). The 3rd subtitle line is the covered range (`_date_range_text`).
+  The minimum gap between the handles is normally **1 month**, but **2 months** when
+  the low handle sits at the very start of the range (`low == minimum`) — the storage
+  *change* the sunburst measures needs one month *before* the window as its baseline
+  (`baseline_idx = start_idx − 1` in `_build_figure`); at `start_idx == 0` there is no
+  month before, so month 0 is sacrificed as the baseline and the flux data actually
+  starts one month later. A 1-month gap there would describe a **zero**-month flux
+  window instead of one, unlike everywhere else on the slider — the 2-month floor at
+  the start keeps "N months selected" meaning the same thing regardless of where the
+  window starts. Flow Diagram shares the same `RangeSlider` and gets the identical
+  slider behaviour for consistency, even though its own balance sum has no baseline
+  month to protect.
 - **Sunburst computation** (`_build_figure`, ported from `Watercycles1.py`):
   - Data read once in `_load_data` (headerless per-station slice, see above); `cellAreaSum` =
     `cellArea_sum_m3[0] / days_in_month[0]` (monthly cell-area is summed over the

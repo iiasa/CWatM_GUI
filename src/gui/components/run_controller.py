@@ -13,6 +13,7 @@ import gc
 import time
 
 from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QFileDialog, QMessageBox
 
 from src.gui.utils.cwatm_worker import CWatMWorker
 from src.gui.utils.cwatm_process_worker import CWatMProcessWorker
@@ -44,6 +45,76 @@ class RunControllerMixin:
         win.show()
         win.raise_()
         win.activateWindow()
+
+    def create_run_batch_file(self):
+        """RUN CWATM > Create batch: write a standalone .bat file that runs the
+        current settings file with CWatM (CWatM_model.exe frozen, the venv python
+        from source) and nothing else - no Qt, no GUI - so a run can be scheduled,
+        handed to someone without the GUI, or launched from Explorer with a
+        double-click. Same launch mechanism as a normal Run CWATM
+        (cwatm_process_worker.model_command), plus '-l' and a trailing 'pause' so
+        the console window stays open to show the result. Lets the user pick the
+        destination filename (default: the working directory + the suggested
+        name) and opens the containing folder afterwards."""
+        if not self.file_manager.has_file_loaded():
+            self.status_bar.showMessage("No settings file loaded")
+            return
+        file_path = self.file_manager.get_current_file_path()
+        if not file_path:
+            self.status_bar.showMessage("No settings file information available")
+            return
+
+        # The batch file runs the file on DISK (like Check Data) - warn the same
+        # way if there are unsaved edits, so it does not silently run stale content.
+        if getattr(self, "_is_dirty", False):
+            answer = QMessageBox.question(
+                self, "Create batch",
+                "The settings file has unsaved changes.\n\n"
+                "The batch file will run CWatM on the saved version on disk, not "
+                "what you see.\n\nSave it first and then create the batch file?",
+                QMessageBox.Save | QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Save)
+            if answer == QMessageBox.Cancel:
+                return
+            if answer == QMessageBox.Save:
+                try:
+                    self.save_file()
+                except Exception as e:  # noqa: BLE001
+                    QMessageBox.warning(self, "Create batch", f"Saving failed:\n{e}")
+                    return
+                if getattr(self, "_is_dirty", False):
+                    self.status_bar.showMessage(
+                        "The file was not saved - batch file not created")
+                    return
+
+        from src.gui.utils.batch_file_creator import (
+            build_batch_script, suggested_batch_name)
+        start_dir = self.working_dir() or os.path.dirname(os.path.abspath(file_path))
+        default_path = os.path.join(start_dir, suggested_batch_name(file_path))
+        batch_path, _filter = QFileDialog.getSaveFileName(
+            self, "Create batch file", default_path, "Batch files (*.bat)")
+        if not batch_path:
+            return
+        if not batch_path.lower().endswith(".bat"):
+            batch_path += ".bat"
+
+        try:
+            content = build_batch_script(file_path, self.working_dir() or start_dir)
+            with open(batch_path, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(
+                self, "Create batch",
+                f"Could not write the batch file:\n{batch_path}\n\n{e}")
+            return
+
+        self.status_bar.showMessage(f"Batch file created: {batch_path}")
+        self.append_to_cwatminfo(f"Batch file created: {batch_path}\n")
+
+        from src.gui.utils.open_path import open_path
+        folder = os.path.dirname(os.path.abspath(batch_path))
+        if not open_path(folder):
+            log.warning("could not open batch-file folder: %s", folder)
 
     def run_cwatm(self):
         """Handle CWatM button click - run or stop CWatM model"""

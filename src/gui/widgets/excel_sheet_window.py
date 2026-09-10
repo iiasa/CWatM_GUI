@@ -5,7 +5,7 @@ Excel workbook viewer/editor for the CWatM GUI (Excel ▸ Crops/Reservoirs).
 ``Excel_settings_file``) in an **editable table that reproduces the sheet's cell
 colours** (fill + font) with openpyxl. Like in Excel, a **tab bar below the
 table** (above the row×column info line) switches between the workbook's sheets
-(``Crops``, ``Reservoirs``, ``Reservoirs_downstream``, …). Bottom buttons:
+(``Crops``, ``Reservoirs``, ``Reservoirs_downstream``, …). A **File menu** holds
 **Load / Reload / Save / Save As / Close**.
 
 Rendering uses a **lazy** ``QTableView`` + ``ExcelSheetModel``
@@ -44,8 +44,8 @@ import re
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTableView,
-    QFileDialog, QMessageBox, QAbstractItemView, QTabBar, QMenu, QToolButton,
-    QStyleOptionViewItem,
+    QFileDialog, QMessageBox, QAbstractItemView, QTabBar, QMenu, QMenuBar,
+    QToolButton, QStyleOptionViewItem,
 )
 from PySide6.QtCore import (
     Qt, QAbstractTableModel, QModelIndex, QRect, QTimer, QItemSelection,
@@ -59,7 +59,7 @@ from PySide6.QtGui import (
 from src.gui.utils import theme
 from src.gui.utils.cell_fill import extend_series
 from src.gui.utils.cell_formula import FormulaError, evaluate, is_formula
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("excel_sheet_window")
@@ -1912,7 +1912,7 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(Qt.Dialog | Qt.WindowMinMaxButtonsHint
                             | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("excel_workbook"):
-            self.resize(900, 600)
+            self.resize(*scaled_default_size(self, 900, 600))
         try:
             icon = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
                 os.path.dirname(__file__)))), 'assets', 'cwatm.ico')
@@ -1929,6 +1929,7 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(8)
+        self._build_menubar(lay)
 
         # Header row: only the symbol toolbar, hard left. The sheet's name is on its
         # tab below the table (and in the window title), so it is not repeated here.
@@ -1989,52 +1990,33 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
             f"font-size:12px; color:{theme.c('text_muted')};")
         lay.addWidget(self.info_label)
 
-        _btn = """
-            QPushButton { font-family:'Segoe UI',sans-serif; font-size:12px;
-                font-weight:500; color:white; border:none; border-radius:6px;
-                padding:6px 16px; min-height:26px;
-                background: qlineargradient(x1:0,y1:0,x2:0,y2:1, stop:0 #5dade2, stop:1 #3498db); }
-            QPushButton:hover { background: qlineargradient(x1:0,y1:0,x2:0,y2:1,
-                stop:0 #85c1e9, stop:1 #5dade2); }
-            QPushButton:disabled { background:#d3d3d3; color:#a9a9a9; }
-        """
-        _gray = _btn.replace("#5dade2", "#808080").replace("#3498db", "#606060") \
-                    .replace("#85c1e9", "#a0a0a0")
+    def _build_menubar(self, lay):
+        """File (Load / Reload / Save / Save As / Close) - the whole button row
+        became a menu; the symbol toolbar (copy/cut/paste/undo/redo/bold, built by
+        _build_toolbar) is unrelated and stays as-is - it is clicked constantly
+        while editing, not an occasional action."""
+        mbar = QMenuBar(self)
+        mbar.setStyleSheet(
+            f"QMenuBar {{ background-color: {theme.c('menubar_bg')}; "
+            f"color: {theme.c('text')}; }}"
+            f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
 
-        row = QHBoxLayout()
-        row.setSpacing(10)
+        file_menu = mbar.addMenu("File")
         # "Load": open ANOTHER workbook in this same editor, showing the same sheet
         # (Crops / Reservoirs) - so a different xlsx than the settings
         # Excel_settings_file can be inspected without changing the settings.
-        self.load_button = QPushButton("Load")
-        self.load_button.setStyleSheet(_btn)
-        self.load_button.setToolTip("load another Excel file")
-        self.load_button.clicked.connect(self._load_other)
-        row.addWidget(self.load_button)
+        self.load_action = file_menu.addAction("Load", self._load_other)
+        self.load_action.setToolTip("load another Excel file")
+        self.reload_action = file_menu.addAction("Reload", self._reload)
+        self.reload_action.setToolTip("Discard edits and reload the workbook from disk")
+        self.save_action = file_menu.addAction("Save", self._save)
+        self.save_action.setToolTip("Write the edits back to the Excel file")
+        self.save_as_action = file_menu.addAction("Save As", self._save_as)
+        file_menu.addSeparator()
+        file_menu.addAction("Close", self.close)
 
-        self.reload_button = QPushButton("Reload")
-        self.reload_button.setStyleSheet(_btn)
-        self.reload_button.setToolTip("Discard edits and reload the workbook from disk")
-        self.reload_button.clicked.connect(self._reload)
-        row.addWidget(self.reload_button)
-
-        self.save_button = QPushButton("Save")
-        self.save_button.setStyleSheet(_btn)
-        self.save_button.setToolTip("Write the edits back to the Excel file")
-        self.save_button.clicked.connect(self._save)
-        row.addWidget(self.save_button)
-
-        self.save_as_button = QPushButton("Save As")
-        self.save_as_button.setStyleSheet(_btn)
-        self.save_as_button.clicked.connect(self._save_as)
-        row.addWidget(self.save_as_button)
-
-        row.addStretch()
-        self.close_button = QPushButton("Close")
-        self.close_button.setStyleSheet(_gray)
-        self.close_button.clicked.connect(self.close)
-        row.addWidget(self.close_button)
-        lay.addLayout(row)
+        self._menus = [file_menu]  # GC guard
+        lay.setMenuBar(mbar)
 
     # -------------------------------------------------------------- toolbar
     def _build_toolbar(self, row):
@@ -2142,9 +2124,10 @@ class ExcelSheetWindow(GeometryMemoryMixin, QDialog):
             QGuiApplication.setOverrideCursor(Qt.BusyCursor)
         else:
             QGuiApplication.restoreOverrideCursor()
-        for widget in (self.load_button, self.reload_button, self.save_button,
-                       self.save_as_button, self.tabs, self.table,
-                       self.table.frozen):
+        for action in (self.load_action, self.reload_action, self.save_action,
+                      self.save_as_action):
+            action.setEnabled(not busy)
+        for widget in (self.tabs, self.table, self.table.frozen):
             widget.setEnabled(not busy)
 
     def _on_loaded(self, wb, error):

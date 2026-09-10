@@ -30,6 +30,7 @@ from src.gui.utils import display_format
 from src.gui.utils import theme
 from src.gui.utils.gui_log import get_logger
 from src.gui.utils.meta_netcdf import get_meta
+from src.gui.utils.window_geometry import scaled_default_size
 # The settings editor + its gutter and TextDisplayManager are created per TAB,
 # in src/gui/components/tab_manager.py - that is where they are imported.
 from src.gui.components.menu_builder import MenuBuilderMixin
@@ -1578,7 +1579,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
 
         dlg = QDialog(self)
         dlg.setWindowTitle(window_title)
-        dlg.resize(920, 720)
+        dlg.resize(*scaled_default_size(dlg, 920, 720))
         layout = QVBoxLayout(dlg)
         browser = _MarkdownBrowser()
         browser.setOpenExternalLinks(True)

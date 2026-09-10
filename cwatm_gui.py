@@ -17,6 +17,39 @@ import logging
 import os
 import sys
 import threading
+import time
+
+# --- Startup profiling (CWATM_GUI_STARTUP_PROFILE=1) -------------------------
+# The existing timing constants below (_WARMUP_DELAY_MS etc.) were hand-tuned once
+# against a guess of what startup looks like; this gives real numbers instead, so
+# they (and any future "is this still fast enough" question) can be checked against
+# data rather than re-guessed after every dependency added. Off by default, and the
+# gui_log import/logger it needs is deferred INSIDE _profile() (not a module-level
+# `log = get_logger(...)` here) so a plain, unprofiled start - GUI or the
+# --run-cwatm/--notebooklm-login child process dispatched a few lines down, which
+# must stay minimal - never touches gui_log at all, exactly as before this feature.
+# Always goes to gui.log at DEBUG, never the console or the CWatM output box:
+# profiling must never become one more thing a user sees.
+_STARTUP_PROFILE = bool(os.environ.get("CWATM_GUI_STARTUP_PROFILE"))
+_T0 = time.monotonic()
+_profile_log = None
+
+
+def _profile(label):
+    """Log a startup checkpoint, elapsed seconds since module import began."""
+    global _profile_log
+    if not _STARTUP_PROFILE:
+        return
+    try:
+        if _profile_log is None:
+            from src.gui.utils.gui_log import get_logger
+            _profile_log = get_logger("app")
+        _profile_log.debug("startup profile: %-28s %7.3fs", label, time.monotonic() - _T0)
+    except Exception:
+        pass
+
+
+_profile("module top")
 
 # Silence the rasterio 1.5.0 x numpy 2.5 "Setting the shape on a NumPy array has
 # been deprecated" spam before anything imports numpy/rasterio/cwatm, and export
@@ -99,6 +132,7 @@ def _dispatch_child_process():
 
 
 _dispatch_child_process()
+_profile("child-process dispatch checked")
 
 
 def _configure_qtwebengine():
@@ -131,6 +165,7 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 
+_profile("Qt imported")
 _splash("text", "Loading user interface ...")
 
 from src.gui.components.main_window import CWatMMainWindow
@@ -139,6 +174,8 @@ from src.gui.utils.print_redirector import PrintRedirector
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("app")
+
+_profile("GUI modules imported")
 
 # Startup timings (ms). Tuned: the WebEngine pre-warm deliberately lands after the
 # module warm-up so the two heavy tasks do not contend at startup.
@@ -204,15 +241,22 @@ def _warm_up_heavy_modules():
     while these load; a feature used before its warm-up finishes simply blocks
     on the import as it always did."""
     def _work():
+        _profile("background warm-up started")
         try:
             # pandas first: it is by far the slowest single import (its own cold
             # import dominates the stack), so front-load it while the user reads the UI.
             import pandas          # noqa: F401
+            _profile("  pandas imported")
             import cwatm.run_cwatm  # noqa: F401
+            _profile("  cwatm.run_cwatm imported")
             import xarray           # noqa: F401
+            _profile("  xarray imported")
             import rasterio         # noqa: F401
+            _profile("  rasterio imported")
             # plotly is cheap (~0.2 s) and the Analyse menu is a common path.
             import plotly.graph_objects  # noqa: F401
+            _profile("background warm-up finished")
+            log.debug("background warm-up finished")
             # NOT pre-warmed on purpose (report §1.3): openpyxl (~6 s) and folium
             # (~4 s) are only needed by the Excel menu and the map viewers, which
             # most sessions never open - and Python holds the GIL while executing
@@ -220,7 +264,6 @@ def _warm_up_heavy_modules():
             # the first minute. Both are already lazy at their call sites, so the
             # first Excel/map click just pays the import then, exactly as it does
             # today whenever the click beats the warm-up.
-            log.debug("background warm-up finished")
         except Exception:
             log.debug("background warm-up failed", exc_info=True)
     threading.Thread(target=_work, name="warmup-imports", daemon=True).start()
@@ -234,15 +277,32 @@ def _prewarm_webengine(window):
     it here on a throw-away hidden view keeps the subsystem warm so the first real map
     window opens near-instantly. Must run on the GUI thread (Qt widgets are not
     thread-safe), hence a QTimer callback rather than the warm-up thread. No-op on
-    failure - the real windows still work, just without the head start."""
+    failure - the real windows still work, just without the head start.
+
+    The throw-away view is anchored to its own invisible top-level widget, NOT to
+    `window`. Embedding the first-ever QWebEngineView into an already-shown,
+    already-native top-level window is a known Qt-on-Windows trigger for that
+    ancestor's native HWND to be destroyed and recreated (Chromium's compositor
+    needs a different backing-store setup) - with the main window that meant a
+    visible flash (it disappears and reappears with a new HWND) partway through
+    startup. Once construction dropped from ~6 s to well under 1 s (see the
+    fast-startup fix), the flash became visible instead of settling unnoticed
+    before the user's attention arrived. A separate, never-shown anchor widget
+    takes that HWND churn instead - invisible either way, since it is never
+    shown."""
+    _profile("QtWebEngine pre-warm started")
     try:
+        from PySide6.QtWidgets import QWidget
         from PySide6.QtWebEngineWidgets import QWebEngineView
-        view = QWebEngineView(window)
+        anchor = QWidget()
+        anchor.setAttribute(Qt.WA_DontShowOnScreen, True)
+        view = QWebEngineView(anchor)
         view.resize(0, 0)
         view.setHtml("<!doctype html><html><body></body></html>")
-        view.hide()
-        # Keep a reference alive so the WebEngine process is not torn down again.
+        # Keep references alive so the WebEngine process is not torn down again.
         window._prewarm_webview = view
+        window._prewarm_anchor = anchor
+        _profile("QtWebEngine pre-warm done")
         log.debug("QtWebEngine pre-warm done")
     except Exception:
         log.debug("QtWebEngine pre-warm failed", exc_info=True)
@@ -533,21 +593,40 @@ def main():
     _configure_qtwebengine()
     try:
         app = _create_app()
+        _profile("QApplication created")
 
         # Set the global exception handler BEFORE the window is built, so a failure
         # during construction is reported rather than killing the app.
         sys.excepthook = handle_exception
 
         window = CWatMMainWindow()
+        _profile("main window constructed")
         _redirectors = _install_stdio_redirects(window)   # noqa: F841 (keep alive)
 
         window.show()
-        # The window is up - now the splash can go (§4.5: it showed real progress
-        # instead of freezing over the import cascade).
+        _profile("main window shown")
+        # show() only POSTS the paint request - it returns before the maximized,
+        # widget-heavy window is actually drawn. Closing the splash immediately
+        # here left a visible gap (splash gone, real content not painted yet,
+        # Windows shows its own loading cursor in between). window.repaint()
+        # forces that pending paint to happen now, synchronously, WITHOUT
+        # touching the rest of the Qt event queue - deliberately not
+        # app.processEvents(): that drains the whole queue, including the
+        # construction-time QTimer.singleShot(0, ...) deferred gauge-in-mask
+        # check (see the fast-startup note), which would pull in the heavy
+        # lazy imports (xarray/rasterio/cwatm.run_cwatm) right here and stall
+        # the splash close by seconds - the exact thing deferring it avoids.
+        window.repaint()
+        _profile("main window painted")
         _close_splash()
 
         _schedule_startup_tasks(window)
         _load_initial_settings(window)
+
+        # This is the point the user can actually start working - everything after
+        # is either already-idle event loop or the background warm-up threads/timers
+        # scheduled above, which log their own checkpoints.
+        _profile("entering event loop (UI usable)")
 
         # Run application with error protection
         exit_code = _exec(app)

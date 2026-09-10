@@ -62,6 +62,57 @@ else:
 xarray_hiddenimports = collect_submodules('xarray')
 xarray_datas = collect_data_files('xarray') + copy_metadata('xarray')
 
+# dask (+ its own dependencies): analysis_netcdf_base.py opens big NetCDF result
+# files (discharge_daily.nc etc.) with chunks={} for the point-series reads (Total
+# Timeseries / Flow duration / Flow regime), so a full-column read on a multi-GB,
+# timestep-chunked file parallelises across CPU cores instead of one sequential
+# pass. Only dask.array is used (no distributed/dataframe/bag). fsspec is collected
+# like xarray - it loads filesystem backends dynamically via entry points; dask's
+# own config module reads a bundled default-settings YAML at import time
+# (collect_data_files), so a missing data file would break dask.array too, not
+# just an optional feature.
+dask_datas, dask_binaries, dask_hiddenimports = [], [], []
+for _pkg in ('dask', 'fsspec'):
+    _d, _b, _h = collect_all(_pkg)
+    dask_datas += _d
+    dask_binaries += _b
+    dask_hiddenimports += _h
+dask_hiddenimports += (collect_submodules('cloudpickle') + collect_submodules('partd')
+                       + collect_submodules('toolz') + collect_submodules('locket')
+                       + collect_submodules('yaml'))
+dask_datas += copy_metadata('dask') + copy_metadata('fsspec')
+
+# Trim dask to just what this app uses (dask.array + dask.config/core scheduler,
+# per the chunks={} open above) - collect_all('dask') otherwise also bundles
+# dask.dataframe/bag/tests, none of which analysis_netcdf_base.py ever imports.
+# dask/__init__.py imports only config/datasets/_expr/_version/base/core/delayed -
+# never these three - and its two bundled config YAMLs (dask.yaml, dask-schema.yaml)
+# live at the package root, not inside them, so trimming both the hidden imports AND
+# the datas here is safe. Also added to excludes= below as a second line of defence
+# against PyInstaller's own static analysis pulling them back in some other way.
+# NOTE: dask.widgets is NOT trimmed, even though it looks Jupyter-only - it isn't:
+# dask/array/core.py does `from dask.widgets import get_template` at MODULE level
+# (building ARRAY_TEMPLATE for the array's HTML repr), so dask.array - which this
+# app very much needs, for xr.open_dataset(..., chunks={}) - fails to import at all
+# without it. Trimming it broke Analyse > NetCDF in the frozen build ("cannot import
+# name 'get_template' from 'dask.widgets'"); it is tiny (~10 files, ~10 KB) anyway,
+# so there was never a real size incentive to cut it.
+_DASK_TRIM = ('dask.dataframe', 'dask.bag', 'dask.tests')
+
+
+def _dask_module_kept(name):
+    return not any(name == m or name.startswith(m + '.') for m in _DASK_TRIM)
+
+
+def _dask_data_kept(entry):
+    dest = entry[1].replace('\\', '/')
+    trimmed = tuple(m.replace('.', '/') for m in _DASK_TRIM)
+    return not any(dest == p or dest.startswith(p + '/') for p in trimmed)
+
+
+dask_hiddenimports = [m for m in dask_hiddenimports if _dask_module_kept(m)]
+dask_datas = [d for d in dask_datas if _dask_data_kept(d)]
+
 # folium / branca / xyzservices ship Jinja2 templates and JSON data that PyInstaller
 # does not pick up automatically - collect everything for them (basin viewer OSM map).
 # plotly / narwhals ship a large bundled plotly.js and package data used by the
@@ -176,7 +227,7 @@ cwatm_hiddenimports = collect_submodules('cwatm')
 src_hiddenimports = collect_submodules('src')
 
 # Additional hidden imports for CWatM and GUI dependencies
-hiddenimports = rasterio_hiddenimports + xarray_hiddenimports + cwatm_hiddenimports + src_hiddenimports + [
+hiddenimports = rasterio_hiddenimports + xarray_hiddenimports + dask_hiddenimports + cwatm_hiddenimports + src_hiddenimports + [
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
@@ -240,6 +291,8 @@ datas = [
 datas += rasterio_datas
 # Include xarray's data files and package metadata (for backend discovery)
 datas += xarray_datas
+# Include dask/fsspec data files + metadata (dask's bundled config YAML, entry points)
+datas += dask_datas
 # Include folium/branca/xyzservices templates and data (OSM map)
 datas += folium_datas
 # Include CWatM AI package data + metadata (notebooklm, markdown_it, rich, ...)
@@ -249,6 +302,7 @@ datas += modflow_datas
 
 # Binary files to include (DLLs and shared libraries)
 binaries = list(folium_binaries)
+binaries += dask_binaries
 # CWatM AI binaries (e.g. rookiepy's compiled cookie reader).
 binaries += ai_binaries
 # rasterio's bundled GDAL stack (rasterio.libs/*.dll -> _internal/rasterio.libs/).
@@ -293,6 +347,14 @@ a = Analysis(
         # matplotlib is NO LONGER excluded: flopy (MODFLOW coupling) imports it, and it
         # is collected above (modflow_*). Only the Tk backend bits stay out via the
         # tkinter excludes.
+        # dask.dataframe/bag/tests: only dask.array + config/core are used (see the
+        # dask collection block above, which also strips these from the hidden
+        # imports / datas directly - this is the second line of defence). dask.widgets
+        # is deliberately NOT excluded - dask.array.core imports it unconditionally at
+        # module level (see the comment on _DASK_TRIM above).
+        'dask.dataframe',
+        'dask.bag',
+        'dask.tests',
         'IPython',
         'jupyter',
         'notebook',
@@ -484,7 +546,7 @@ coll = COLLECT(
 # COLLECT always drops executables at the folder root; move the model child-
 # process exe into _internal/ so users see only CWatM_GUI.exe. Its bootloader
 # finds everything it needs there thanks to contents_directory='.' above. The
-# GUI spawns it from _internal/ first (cwatm_process_worker._model_command),
+# GUI spawns it from _internal/ first (cwatm_process_worker.model_command),
 # falling back to the root location for older builds.
 _model_src = os.path.join(DISTPATH, 'CWatM_GUI', 'CWatM_model.exe')
 _model_dst = os.path.join(DISTPATH, 'CWatM_GUI', '_internal', 'CWatM_model.exe')

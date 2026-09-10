@@ -41,7 +41,7 @@ def _gui_root():
         os.path.dirname(os.path.abspath(__file__)))))
 
 
-def _model_command(file_path):
+def model_command(file_path):
     """Return (program, arguments, working_dir) that runs the model runner in a
     child process.
 
@@ -53,7 +53,11 @@ def _model_command(file_path):
     re-entering the GUI exe with --run-cwatm (shows the splash briefly and pays
     the Qt bootstrap, but works).
     from source: the venv python running cwatm_gui.py --run-cwatm (the dispatch at
-    the top of cwatm_gui.py runs the model before any Qt import)."""
+    the top of cwatm_gui.py runs the model before any Qt import).
+
+    Public (no leading underscore): also used by src/gui/utils/batch_file_creator.py
+    (RUN CWATM > Create batch) to build the identical command line for a
+    standalone .bat file - one source of truth for "how do we launch the model"."""
     if getattr(sys, "frozen", False):
         exe_dir = os.path.dirname(sys.executable)
         for model_exe in (os.path.join(exe_dir, "_internal", "CWatM_model.exe"),
@@ -94,7 +98,7 @@ class CWatMProcessWorker(QObject):
         self.file_path = file_path
         # working_dir: the directory the child process is started in, so relative
         # paths in the settings file resolve from there (File > Change Working Dir).
-        # None = _model_command's default (the exe/source root).
+        # None = model_command's default (the exe/source root).
         self._working_dir = working_dir
         # output_sink(text, is_error): if given, run output is delivered here instead
         # of being written to sys.stdout / sys.stderr. Used by the Hidden Run windows
@@ -127,7 +131,7 @@ class CWatMProcessWorker(QObject):
     # ------------------------------------------------------------- lifecycle
     def start(self):
         """Spawn the model child process."""
-        program, args, workdir = _model_command(self.file_path)
+        program, args, workdir = model_command(self.file_path)
         if self._working_dir and os.path.isdir(self._working_dir):
             workdir = self._working_dir
         env = QProcessEnvironment.systemEnvironment()

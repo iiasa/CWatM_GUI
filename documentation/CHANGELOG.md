@@ -4,6 +4,146 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
+## CWatM GUI 1.06 — what is new
+
+*Released 22 August 2026. Previous release: 1.05 (11 August 2026).*
+
+This release is mostly about speed and reach: the GUI itself now opens in a fraction of
+a second instead of several, four more windows lost their button rows for menus, and two
+windows can now put a shapefile or a GeoJSON overlay straight on the map. Two new plots
+round out result analysis, and a long-standing inconsistency in the water-balance
+windows' month slider is fixed.
+
+---
+
+### 1. Startup — six seconds down to half a second
+
+The frozen app's main window used to take around **6.2 seconds** to appear; it now
+appears in about **0.5 seconds** — over ten times faster, measured with the same
+built exe before and after. The delay was never about the GUI's own code: **loading any
+settings file** — including the empty one the window opens with — runs a gauge-in-mask
+check, and that check used to import `xarray`, `rasterio` and, for a coordinate-based
+MaskMap, the **entire CWatM model** as an unavoidable side effect, synchronously, before
+the window could even be shown.
+
+Three changes fixed it:
+
+- Those three imports moved from the top of the file that does the check into the exact
+  places that actually need them, so merely loading a settings file no longer drags in
+  anything it does not use.
+- The very first check — for the empty tab the window opens with, which has nothing to
+  check yet — now runs a moment *after* the window is already on screen, instead of
+  before.
+- The frozen build's bundled `dask` (used for reading large NetCDF files, see below) was
+  trimmed down to just the pieces this app uses, cutting dead weight from the startup
+  import.
+
+Speeding startup up this much also exposed — and this release also fixes — a startup
+**window flash**: on some machines the main window would appear, briefly disappear, and
+reappear a moment later. That turned out to be an unrelated one-off cost (priming the
+map/plot engine in the background) that used to settle unnoticed over six seconds and
+became visible once startup dropped under one.
+
+### 2. Four more windows lost their buttons for menus
+
+Continuing the move started in 1.05 (Change Options, Add output variables), button rows
+became **File / Action / …** menus in more windows, tooltips moving from the buttons to
+the matching menu items:
+
+| Window | Menus |
+|---|---|
+| **Show Basin** | **File** (Load JSON, Load shape), **Mask** (Hide Mask, Create new Mask, Copy Mask, Zoom to Mask), **Gauge** (Create gauge, Copy gauge) — Mask and Gauge stay **also** as buttons, since editing the mask/gauges is this window's most-used action |
+| **Analyse ▸ NetCDF** | **File** (Save HTML, Load JSON, Load shape), **Action** (Fast Display Timeserie, Total Timeseries, Compare A−B, Flow duration, Flow regime), plus a **Display** button opening colour scale / OSM transparency / basemap in their own small window |
+| **Analyse ▸ Timeseries** | **File** (Save as csv, Save HTML), **Action** (Compare, Load observed, Flow duration, Flow regime) — Backward/Forward stayed as buttons |
+| **Restore settingsfile** | **File** (Export as CSV), **Action** (Preview settingsfile, Compare with current, Show Inputfiles), **Restore** (Restore settingsfile) |
+| **Journal of Runs** | **File** (Open results, Load settings, Refresh, Export CSV), **Action** (Show log, Re-run, Compare settings, Compare results), **Clean** (Delete entry, Clear Journal) |
+| **Excel Crops/Reservoirs** | **File** (Load, Reload, Save, Save As); the symbol toolbar (copy/cut/paste/undo/redo/bold) stayed, since that is a constantly-used editing toolbar, not a button row |
+| **Batch Run** | **File** (Import/Export CSV), **Action** (Add/Duplicate/Remove/Clear scenario, Compare results, Sweep…, Add key column), **Run** (Run all, Stop all), and a top-level **Preferences** action for Parallel runs / Stop on first failure / Skip finished — Run all/Stop all stayed **also** as buttons, this window's core action |
+
+Restore settingsfile's **Show in Journal** was removed outright rather than turned into a
+menu item — the Journal of Runs' own row menu already offers the same jump. Show Basin
+and NetCDF's **Exit**/**Close** buttons were removed too; both windows still close from
+their title bar.
+
+The **NetCDF map** also gained a **right-click menu**: right-click anywhere on the map
+for the same Action-menu items — Fast/Total Timeserie, Compare A−B, Flow duration, Flow
+regime — applied to the last point you clicked, without opening the menu bar first.
+
+### 3. Two new plots: Flow duration and Flow regime
+
+Reached from **Analyse ▸ NetCDF** (a clicked point, or right-click) and **Analyse ▸
+Timeseries** (the column on screen) — Action ▸ **Flow duration** / **Flow regime**:
+
+- **Flow duration** ranks a series into an exceedance-probability curve — the classic
+  "how often is flow at least this high" plot.
+- **Flow regime** shows the seasonal cycle — the typical value for each calendar day (or
+  month, for monthly data), 29 February skipped so a leap year never shifts the axis.
+
+Both work on **one point at a time** — the last one clicked, never several at once — and
+show every year as its own thin line plus the multi-year average in black, with buttons
+to hide the single years, overlay 0–100 %/40–60 % percentile bands in light gray, and
+save the underlying table as a csv (rows = probability or calendar day, one column per
+year).
+
+### 4. Load a shapefile or GeoJSON overlay on the map
+
+**Show Basin** and **Analyse ▸ NetCDF** ▸ File ▸ **Load JSON** / **Load shape** draw a
+`.geojson` file or an ESRI `.shp` shapefile on the map as an orange overlay — lines,
+polygons and points, with any attached properties in a popup. Both windows share the
+same reader, so the two behave identically wherever you use them.
+
+### 5. NetCDF: faster on large files
+
+Reading a point's full time series from a several-gigabyte NetCDF (**Total Timeseries**,
+and the new Flow duration/regime) now goes through `dask`, which parallelises the
+chunk-by-chunk read instead of one Python read per timestep; a file's dataset handle and
+already-read points are cached and reused instead of reopened; and the read runs with a
+**progress bar, elapsed time and a Cancel button**, off the GUI thread, so a large file
+no longer freezes the window while it loads.
+
+### 6. Subwindows now fit the screen they open on
+
+Every secondary window's first-ever size is now scaled to the screen it opens on
+(clamped between about half and one-and-a-third of a size tuned for a 1920×1080 screen),
+instead of a single fixed pixel size that swamped a small laptop and looked tiny on a
+large monitor. A window that already remembers its own size/position (Timeseries,
+NetCDF, Show Basin) is unaffected — this only changes the very first time one opens.
+
+### 7. Watercycle / Flow Diagram: the month slider at the very start
+
+The month-range slider above the sunburst/Sankey plot normally keeps its two handles at
+least one month apart. When the **start** handle sits at the very beginning of the
+data, that floor is now **two months**, not one: the sunburst's storage-*change*
+calculation needs one month *before* the window as a baseline, and when the window
+starts at month 0 there is no month before it — month 0 itself has to serve as the
+baseline instead, so a 1-month gap there described a *zero*-month result rather than one
+month, unlike everywhere else on the slider.
+
+---
+
+### Also in this release
+
+- **Settings-file tabs**: deleting a tab whose file is being run now **asks first**
+  before stopping that run, and releases the folder it was working in so it can be
+  deleted or moved in Explorer afterward. Dropping a settings file onto the **editor**
+  side now loads it, the same as dropping it on the left panel — it used to just insert
+  the file path as text. The RUN CWATM button no longer shows "ready" on a tab that has
+  nothing to do with the run actually in progress on another tab.
+- A floating **Preferences** widget bug in Batch Run — the hidden Parallel
+  runs/Stop-on-first-failure/Skip-finished controls behind the Preferences dialog could
+  briefly show at the window's top-left corner — is fixed.
+- Automated test coverage was extended to cover this release's changes directly:
+  the startup-speed fix, the flow duration/regime math, the shapefile/GeoJSON readers,
+  screen-relative window sizing, and the menu conversions' enabled/disabled state.
+
+### Upgrading
+
+Nothing to do: settings files, run history and preferences are unchanged.
+
+
+---
+
+
 ## CWatM GUI 1.05 — what is new
 
 *Released 11 August 2026. Previous release: 1.04 (10 August 2026).*

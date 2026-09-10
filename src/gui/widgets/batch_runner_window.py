@@ -12,6 +12,17 @@ is recorded in the **Run Ledger**.
 
 Non-modal so the main GUI stays usable; several scenarios run independently. Themed at
 construction; geometry key ``batch_runner``.
+
+Menu-driven: File (Import CSV / Export CSV), Action (Add scenario / Duplicate / Remove
+/ Clear / Compare results / Sweep / Add key column), Run (Run all / Stop all), and a
+top-level **Preferences** action (Parallel runs / Stop on first failure / Skip
+finished) that opens a small buffered dialog (OK/Cancel/Apply, like the main window's
+Configure ▸ Preferences) - those three settings still live on real widgets
+(``self.parallel_spin`` / ``self.stop_on_fail`` / ``self.skip_finished``, read
+everywhere else in this file exactly as before), just never shown inline. Run all /
+Stop all are **also** kept as a blue/red button pair below the table (the batch's core
+action, alongside the Run menu items they mirror exactly). No Close button - the
+window closes via its title-bar X or Alt+F4.
 """
 
 import os
@@ -27,13 +38,13 @@ from collections import deque
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSpinBox,
     QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
-    QMessageBox, QPlainTextEdit, QCheckBox, QDialogButtonBox, QMenu,
+    QMessageBox, QPlainTextEdit, QCheckBox, QDialogButtonBox, QMenu, QMenuBar,
     QFileDialog, QApplication, QStyledItemDelegate, QInputDialog,
 )
 from PySide6.QtCore import Qt, QSettings, QTimer, QRect
 from PySide6.QtGui import QIcon, QColor, QPainter, QTextCursor
 
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils import theme
 from src.gui.utils import run_ledger
 from src.gui.utils import display_format
@@ -249,7 +260,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("batch_runner"):
-            self.resize(900, 520)
+            self.resize(*scaled_default_size(self, 900, 520))
         self._set_window_icon()
 
         self._build_ui()
@@ -284,6 +295,8 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
+        self._build_menubar(layout)
+        self._build_preference_state()
 
         self.header_label = QLabel("Batch Run")
         self.header_label.setAlignment(Qt.AlignCenter)
@@ -309,60 +322,101 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         hh.setSectionResizeMode(1, QHeaderView.Stretch)     # PathOut
         layout.addWidget(self.table, 1)
 
-        # Row-editing controls
-        edit_row = QHBoxLayout()
-        edit_row.setSpacing(8)
-        self.add_row_button = QPushButton("Add scenario")
-        self.add_row_button.clicked.connect(self._add_row)
-        self.dup_row_button = QPushButton("Duplicate")
-        self.dup_row_button.clicked.connect(self._duplicate_row)
-        self.del_row_button = QPushButton("Remove")
-        self.del_row_button.clicked.connect(self._remove_row)
-        self.clear_button = QPushButton("Clear")
-        self.clear_button.setToolTip(
-            "Clear all scenarios and override columns and start fresh")
-        self.clear_button.clicked.connect(self._clear_all)
-        self.add_key_button = QPushButton("Add key column")
-        self.add_key_button.setToolTip(
-            "Add the settings key on the editor's cursor line as an override column")
-        self.add_key_button.clicked.connect(self._add_key_column)
-        self.sweep_button = QPushButton("Sweep…")
-        self.sweep_button.setToolTip(
-            "Auto-generate scenario rows from a value list or range for one or more keys "
-            "(the full grid for several keys)")
-        self.sweep_button.clicked.connect(self._open_sweep)
-        self.import_button = QPushButton("Import CSV")
-        self.import_button.setToolTip(
+        # Run all / Stop all also as buttons (Run/Stop is the batch's core action, like
+        # Backward/Forward on the Timeseries window - kept alongside the Run menu items,
+        # which they mirror exactly.
+        self.run_button = QPushButton("Run all")
+        self.run_button.setStyleSheet(self._run_stop_button_style(running=False))
+        self.run_button.clicked.connect(self._run_all)
+        self.stop_button = QPushButton("Stop all")
+        self.stop_button.setStyleSheet(self._run_stop_button_style(running=True))
+        self.stop_button.setEnabled(False)
+        self.stop_button.clicked.connect(self._stop_all)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.run_button)
+        btn_row.addWidget(self.stop_button)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+    @staticmethod
+    def _run_stop_button_style(running):
+        # Blue = Run all, red = Stop all - same look as the main RUN button / Windowed
+        # Run's Run/Stop toggle.
+        base = "#c0392b" if running else "#2980b9"
+        hover = "#e74c3c" if running else "#3498db"
+        return (f"QPushButton {{ font-family: 'Segoe UI', sans-serif; font-size: 12px; "
+                f"font-weight: 600; color: white; border: none; border-radius: 6px; "
+                f"padding: 6px 18px; min-height: 26px; background: {base}; }}"
+                f"QPushButton:hover {{ background: {hover}; }}"
+                f"QPushButton:disabled {{ background: #d3d3d3; color: #a9a9a9; }}")
+
+    def _build_menubar(self, layout):
+        """File (Import CSV / Export CSV), Action (Add scenario / Duplicate / Remove
+        / Clear / Compare results / Sweep / Add key column) and Run (Run all / Stop
+        all) - the rest of the old button row became menus; Run all / Stop all stayed
+        (also) as buttons, added below the table in _build_ui. Preferences (Parallel
+        runs / Stop on first failure / Skip finished) is a top-level clickable action -
+        same pattern as the main window's CWatM AI / Display - opening a small buffered
+        dialog (OK/Cancel/Apply, like the main window's Configure > Preferences)
+        instead of a dropdown, since there is only the one destination. Close was a
+        plain button before; the window still closes via its title-bar X
+        (WindowCloseButtonHint, set in __init__) or Alt+F4."""
+        mbar = QMenuBar(self)
+        mbar.setStyleSheet(
+            f"QMenuBar {{ background-color: {theme.c('menubar_bg')}; "
+            f"color: {theme.c('text')}; }}"
+            f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
+
+        file_menu = mbar.addMenu("File")
+        self.import_action = file_menu.addAction("Import CSV", self._import_csv)
+        self.import_action.setToolTip(
             "Read scenarios from a CSV: columns Scenario, PathOut, then one column "
             "per override key (build them in Excel and paste them here)")
-        self.import_button.clicked.connect(self._import_csv)
-        self.export_button = QPushButton("Export CSV")
-        self.export_button.setToolTip(
+        self.export_action = file_menu.addAction("Export CSV", self._export_csv)
+        self.export_action.setToolTip(
             "Write the scenario table to a CSV - including each row's duration, "
             "status and last discharge, so it doubles as the batch's result summary")
-        self.export_button.clicked.connect(self._export_csv)
-        self.compare_button = QPushButton("Compare results")
-        self.compare_button.setToolTip(
+
+        action_menu = mbar.addMenu("Action")
+        self.add_row_action = action_menu.addAction("Add scenario", self._add_row)
+        self.dup_row_action = action_menu.addAction("Duplicate", self._duplicate_row)
+        self.del_row_action = action_menu.addAction("Remove", self._remove_row)
+        self.clear_action = action_menu.addAction("Clear", self._clear_all)
+        self.clear_action.setToolTip(
+            "Clear all scenarios and override columns and start fresh")
+        self.compare_action = action_menu.addAction(
+            "Compare results", self._compare_results)
+        self.compare_action.setToolTip(
             "Overlay the same result file of every finished scenario in one "
             "Timeseries plot")
-        self.compare_button.clicked.connect(self._compare_results)
-        edit_row.addWidget(self.add_row_button)
-        edit_row.addWidget(self.dup_row_button)
-        edit_row.addWidget(self.del_row_button)
-        edit_row.addWidget(self.clear_button)
-        edit_row.addStretch()
-        edit_row.addWidget(self.import_button)
-        edit_row.addWidget(self.export_button)
-        edit_row.addWidget(self.compare_button)
-        edit_row.addWidget(self.sweep_button)
-        edit_row.addWidget(self.add_key_button)
-        layout.addLayout(edit_row)
+        self.sweep_action = action_menu.addAction("Sweep…", self._open_sweep)
+        self.sweep_action.setToolTip(
+            "Auto-generate scenario rows from a value list or range for one or "
+            "more keys (the full grid for several keys)")
+        self.add_key_action = action_menu.addAction(
+            "Add key column", self._add_key_column)
+        self.add_key_action.setToolTip(
+            "Add the settings key on the editor's cursor line as an override column")
 
-        # Run controls
-        run_row = QHBoxLayout()
-        run_row.setSpacing(8)
-        run_row.addWidget(QLabel("Parallel runs:"))
-        self.parallel_spin = QSpinBox()
+        run_menu = mbar.addMenu("Run")
+        self.run_action = run_menu.addAction("Run all", self._run_all)
+        self.stop_action = run_menu.addAction("Stop all", self._stop_all)
+        self.stop_action.setEnabled(False)
+
+        self._prefs_action = mbar.addAction("Preferences")
+        self._prefs_action.setToolTip(
+            "Parallel runs, Stop on first failure, Skip finished")
+        self._prefs_action.triggered.connect(self._open_preferences)
+
+        self._menus = [file_menu, action_menu, run_menu]  # GC guard
+        layout.setMenuBar(mbar)
+
+    def _build_preference_state(self):
+        """Parallel runs / Stop on first failure / Skip finished still live on real
+        widgets (every other method reads self.parallel_spin.value() etc. exactly as
+        before) - they are just never added to a layout or shown any more; Menu ▸
+        Preferences (_open_preferences) is the only way to change them now."""
+        self.parallel_spin = QSpinBox(self)
         self.parallel_spin.setRange(1, 16)
         # Half the cores (at most 4) is a safe default: a CWatM run is CPU- and
         # IO-hungry, and 16 of them will thrash most machines. _preflight warns when
@@ -372,46 +426,78 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             "How many scenarios run at the same time.\n"
             f"This machine has {os.cpu_count() or '?'} logical cores - going much "
             "beyond half of them usually makes the whole batch slower.")
-        run_row.addWidget(self.parallel_spin)
-        self.stop_on_fail = QCheckBox("Stop on first failure")
+        self.stop_on_fail = QCheckBox("Stop on first failure", self)
         self.stop_on_fail.setToolTip(
             "When a scenario fails, do not start the queued ones.\n"
             "Scenarios already running are left to finish.")
-        run_row.addWidget(self.stop_on_fail)
-        self.skip_finished = QCheckBox("Skip finished")
+        self.skip_finished = QCheckBox("Skip finished", self)
         self.skip_finished.setToolTip(
             "Resume an interrupted batch: scenarios whose PathOut already holds "
             "results (.nc / .tss / .csv) are not run again.\n"
             "'Run this scenario' from the row menu always runs, whatever is there.")
-        run_row.addWidget(self.skip_finished)
-        run_row.addStretch()
-        self.run_button = QPushButton("▶ Run all")
-        self.run_button.setStyleSheet(self._run_style(False))
-        self.run_button.clicked.connect(self._run_all)
-        self.stop_button = QPushButton("■ Stop all")
-        self.stop_button.setStyleSheet(self._run_style(True))
-        self.stop_button.setEnabled(False)
-        self.stop_button.clicked.connect(self._stop_all)
-        self.close_button = QPushButton("Close")
-        self.close_button.setStyleSheet(self._button_style())
-        self.close_button.clicked.connect(self.close)
-        run_row.addWidget(self.run_button)
-        run_row.addWidget(self.stop_button)
-        run_row.addWidget(self.close_button)
-        layout.addLayout(run_row)
+        # A child widget with a parent but no layout still becomes visible (floating
+        # at position 0,0) once the parent window is shown - hide them explicitly so
+        # only the Preferences dialog's copies are ever seen.
+        self.parallel_spin.setVisible(False)
+        self.stop_on_fail.setVisible(False)
+        self.skip_finished.setVisible(False)
 
-        for b in self._edit_buttons():
-            b.setStyleSheet(self._button_style())
+    def _open_preferences(self):
+        """Menu ▸ Preferences: buffered edits (OK/Cancel/Apply) on a copy of the
+        current values, same interaction pattern as the main window's Configure >
+        Preferences - nothing changes until OK/Apply, Cancel discards. Applying just
+        writes into self.parallel_spin/self.stop_on_fail/self.skip_finished, the
+        same widgets every other method already reads - this dialog is a second face
+        on that state, never a second implementation of it."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Preferences")
+        dlg.setModal(True)
+        dlg.resize(*scaled_default_size(dlg, 420, 200))
+        v = QVBoxLayout(dlg)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Parallel runs:"))
+        parallel = QSpinBox()
+        parallel.setRange(1, 16)
+        parallel.setValue(self.parallel_spin.value())
+        parallel.setToolTip(self.parallel_spin.toolTip())
+        row.addWidget(parallel)
+        row.addStretch()
+        v.addLayout(row)
+
+        stop_fail = QCheckBox("Stop on first failure")
+        stop_fail.setChecked(self.stop_on_fail.isChecked())
+        stop_fail.setToolTip(self.stop_on_fail.toolTip())
+        v.addWidget(stop_fail)
+
+        skip_fin = QCheckBox("Skip finished")
+        skip_fin.setChecked(self.skip_finished.isChecked())
+        skip_fin.setToolTip(self.skip_finished.toolTip())
+        v.addWidget(skip_fin)
+
+        def _apply():
+            self.parallel_spin.setValue(parallel.value())
+            self.stop_on_fail.setChecked(stop_fail.isChecked())
+            self.skip_finished.setChecked(skip_fin.isChecked())
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Apply)
+        bb.accepted.connect(lambda: (_apply(), dlg.accept()))
+        bb.rejected.connect(dlg.reject)
+        bb.button(QDialogButtonBox.Apply).clicked.connect(_apply)
+        v.addWidget(bb)
+        dlg.setStyleSheet(f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
+        dlg.exec()
 
     @staticmethod
     def _default_parallel():
         return max(1, min(4, (os.cpu_count() or 2) // 2))
 
-    def _edit_buttons(self):
-        """The row/column editing buttons (disabled while a batch is running)."""
-        return (self.add_row_button, self.dup_row_button, self.del_row_button,
-                self.clear_button, self.sweep_button, self.add_key_button,
-                self.import_button)
+    def _edit_actions(self):
+        """The row/column editing menu items (disabled while a batch is running)."""
+        return (self.add_row_action, self.dup_row_action, self.del_row_action,
+                self.clear_action, self.sweep_action, self.add_key_action,
+                self.import_action)
 
     def _refresh_headers(self):
         headers = self._FIXED + self._key_cols + self._TRAILING
@@ -560,19 +646,6 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             QPushButton:hover { background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                 stop:0 #85c1e9, stop:1 #5dade2); }
             QPushButton:disabled { background: #bdc3c7; color: #ecf0f1; }
-        """
-
-    @staticmethod
-    def _run_style(stop):
-        c0, c1 = ("#e74c3c", "#c0392b") if stop else ("#2980b9", "#3498db")
-        return f"""
-            QPushButton {{
-                font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 600;
-                color: white; border: none; border-radius: 6px;
-                padding: 5px 16px; min-height: 22px;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {c0}, stop:1 {c1}); }}
-            QPushButton:disabled {{ background: #bdc3c7; color: #ecf0f1; }}
         """
 
     # --------------------------------------------------------------- rows / keys
@@ -969,10 +1042,12 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             self._batch_id = "%s-%d" % (
                 time.strftime("%Y%m%d_%H%M%S"), int(time.time() * 1000) % 1000)
             self._durations = []
+            self.run_action.setEnabled(False)
+            self.stop_action.setEnabled(True)
             self.run_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            for b in self._edit_buttons():
-                b.setEnabled(False)
+            for a in self._edit_actions():
+                a.setEnabled(False)
             self._tick.start()
         for row in rows:
             self._pct[row] = 0
@@ -991,10 +1066,12 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             self._tick.stop()
             self._finish_batch_line()
             self._running = False
+            self.run_action.setEnabled(True)
+            self.stop_action.setEnabled(False)
             self.run_button.setEnabled(True)
             self.stop_button.setEnabled(False)
-            for b in self._edit_buttons():
-                b.setEnabled(True)
+            for a in self._edit_actions():
+                a.setEnabled(True)
         else:
             self._update_batch_line()
 
@@ -1158,10 +1235,12 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         if self._running:
             self._finish_batch_line()
         self._running = False
+        self.run_action.setEnabled(True)
+        self.stop_action.setEnabled(False)
         self.run_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        for b in self._edit_buttons():
-            b.setEnabled(True)
+        for a in self._edit_actions():
+            a.setEnabled(True)
 
     # ------------------------------------------------------------------- CSV
     def _export_csv(self):
@@ -1390,7 +1469,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         dlg = QDialog(self)
         dlg.setWindowTitle(f"Log — {self._cell_text(row, 0) or 'scenario'}")
         dlg.setAttribute(Qt.WA_DeleteOnClose, True)
-        dlg.resize(820, 520)
+        dlg.resize(*scaled_default_size(dlg, 820, 520))
         v = QVBoxLayout(dlg)
         head = QLabel(scenario_log.path or "(no PathOut - kept in memory only)")
         head.setStyleSheet(f"color: {theme.c('text_muted')}; font-size: 11px;")

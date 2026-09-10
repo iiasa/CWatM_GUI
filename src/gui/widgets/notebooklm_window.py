@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt, QSettings, QProcess, QThread, Signal
 from PySide6.QtGui import QIcon
 
 from src.gui.utils import theme
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("notebooklm_window")
@@ -102,7 +102,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self.setWindowFlags(
             Qt.Dialog | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
         if not self._init_geometry_memory("cwatm_ai"):
-            self.resize(720, 640)
+            self.resize(*scaled_default_size(self, 720, 640))
         self._set_window_icon()
 
         # Verified auth state: None = unknown/checking, True = confirmed connected,

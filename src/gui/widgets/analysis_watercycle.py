@@ -32,6 +32,7 @@ from PySide6.QtCore import Qt, QTimer, QPointF, Signal
 from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QBrush
 
 from src.gui.utils import theme
+from src.gui.utils.window_geometry import scaled_default_size
 from src.gui.widgets.analysis_plot_base import PlotlyWindowBase
 
 from src.gui.utils.gui_log import get_logger
@@ -83,7 +84,20 @@ class RangeSlider(QWidget):
     """A minimal two-handle range slider over integer indices ``[minimum, maximum]``.
 
     Both handles are draggable; the low handle is kept at least ``_min_gap`` (1) below
-    the high handle. Emits ``rangeChanged(low, high)`` on every move."""
+    the high handle - **except** when the low handle sits at the very start of the
+    range (``low == minimum``), where the high handle is kept at least 2 below
+    instead. That is not cosmetic: Watercycle's sunburst measures storage *change*
+    over the window, which needs one month *before* the window to serve as the
+    baseline (``baseline_idx = start_idx - 1``); when the window starts at month 0
+    there is no month before it, so month 0 itself is sacrificed as the baseline and
+    the flux data actually starts one month later (``flux_start = 1``, see
+    ``WatercycleWindow._build_figure``). A 1-month gap at the very start would then
+    describe a **zero**-month flux window instead of one month like everywhere else
+    on the slider - requiring a 2-month gap there keeps "N months selected" meaning
+    the same thing regardless of where the window starts. Flow Diagram shares this
+    widget and does not need the extra month itself (no storage-change baseline), but
+    gets the same slider behaviour for consistency. Emits ``rangeChanged(low, high)``
+    on every move."""
 
     rangeChanged = Signal(int, int)
 
@@ -114,7 +128,10 @@ class RangeSlider(QWidget):
             self.rangeChanged.emit(self._low, self._high)
 
     def setHigh(self, v):
-        v = min(self._max, max(int(v), self._low + self._min_gap))
+        # See the class docstring: the low handle being pinned at the very start of
+        # the range needs an extra month's gap (the baseline-shift edge case).
+        gap = self._min_gap + 1 if self._low == self._min else self._min_gap
+        v = min(self._max, max(int(v), self._low + gap))
         if v != self._high:
             self._high = v
             self.update()
@@ -211,7 +228,7 @@ class WatercycleWindow(PlotlyWindowBase):
         # and Save-HTML button, with no scrollbar.
         self._geometry_was_restored = self._init_geometry_memory("watercycle4")
         if not self._geometry_was_restored:
-            self.resize(540, 560)
+            self.resize(*scaled_default_size(self, 540, 560))
         try:
             icon_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
@@ -462,7 +479,6 @@ class WatercycleWindow(PlotlyWindowBase):
         self.web_view = QWebEngineView()
         layout.addWidget(self.web_view, 1)
 
-        # Save HTML button (same style/behaviour as the Timeseries window)
         btn_style = """
             QPushButton {
                 font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 500;

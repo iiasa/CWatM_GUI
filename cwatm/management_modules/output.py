@@ -326,7 +326,7 @@ class outputTssMap(object):
         if checkOption('preferentialFlow'):
             temp = [['prefFlow_GW','areasum_m3','flux']]
             self.var.watercycle.extend(temp)
-        if checkOption('includeGlaciers'):
+        if self.var.includeGlaciers:
             temp = [['GlacierMelt','sum_m3','glacier'],['GlacierRain','sum_m3','glacier'],['areaGlacier','sum_m3','glacier']]
             self.var.watercycle.extend(temp)
         if checkOption('includeRunoffConcentration'):
@@ -336,12 +336,12 @@ class outputTssMap(object):
 
         # waterbodies
         if checkOption('includeWaterBodies'):
-            temp = [['lakeResStorage','sum_m3','lake'],['EvapWaterBodyM','areasum_m3','lake'],
+            temp = [['lakeResStorage','sum_m3','storage'],['EvapWaterBodyM','areasum_m3','lake'],
                     ['lakeResInflowM','areasum_m3','lake'],['lakeResOutflowM','areasum_m3','lake'],
                     ['act_bigLakeResAbst','areasum_m3','lake']]
             self.var.watercycle.extend(temp)
         if checkOption('includeWaterBodies') and returnBool('useSmallLakes'):
-            temp = [['smalllakeStorage','sum_m3','smalllake'],['smallevapWaterBody','areasum_m3','smallake']]
+            temp = [['smalllakeStorage','sum_m3','storage'],['smallevapWaterBody','areasum_m3','smallake']]
             self.var.watercycle.extend(temp)
 
         # Waterdemand
@@ -356,17 +356,19 @@ class outputTssMap(object):
                     ['returnFlow','areasum_m3','demand'],
                     ['returnflowIrr','areasum_m3','demand'],['returnflowNonIrr','areasum_m3','demand']]
             self.var.watercycle.extend(temp)
-        if checkOption('sectorSourceAbstractionFractions'):
-            temp = [['Lake_Irrigation','areasum_m3','sector'],['Lake_Industry','areasum_m3','sector'],['Lake_Livestock','areasum_m3','sector'],
-                    ['Lake_Domestic','areasum_m3','sector'],['Channel_Irrigation','areasum_m3','sector'],['Channel_Domestic','areasum_m3','sector'],
-                    ['Channel_Livestock','areasum_m3','sector'],['Channel_Industry','areasum_m3','sector'],['GW_Irrigation','areasum_m3','sector'],
-                    ['GW_Industry','areasum_m3','sector'],['GW_Livestock','areasum_m3','sector'],['GW_Domestic','areasum_m3','sector'],
-                    ['Res_Irrigation','areasum_m3','sector'],['Res_Industry','areasum_m3','sector'],['Res_Livestock','areasum_m3','sector'],
-                    ['Res_Domestic','areasum_m3','sector']]
-            self.var.watercycle.extend(temp)
+
+        if 'sectorSourceAbstractionFractions' in option:
+            if checkOption('sectorSourceAbstractionFractions'):
+                temp = [['Lake_Irrigation','areasum_m3','sector'],['Lake_Industry','areasum_m3','sector'],['Lake_Livestock','areasum_m3','sector'],
+                        ['Lake_Domestic','areasum_m3','sector'],['Channel_Irrigation','areasum_m3','sector'],['Channel_Domestic','areasum_m3','sector'],
+                        ['Channel_Livestock','areasum_m3','sector'],['Channel_Industry','areasum_m3','sector'],['GW_Irrigation','areasum_m3','sector'],
+                        ['GW_Industry','areasum_m3','sector'],['GW_Livestock','areasum_m3','sector'],['GW_Domestic','areasum_m3','sector'],
+                        ['Res_Irrigation','areasum_m3','sector'],['Res_Industry','areasum_m3','sector'],['Res_Livestock','areasum_m3','sector'],
+                        ['Res_Domestic','areasum_m3','sector']]
+                self.var.watercycle.extend(temp)
 
         # Modflow
-        if checkOption('modflow_coupling'):
+        if self.var.modflow:
             temp = [['leakageIntoGw','areasum_m3','Modflow'],['leakageIntoRunoff','areasum_m3','Modflow'],['riverbedExchangeM','areasum_m3','Modflow'],
                     ['lakebedExchangeM','areasum_m3','Modflow'],['leakage','areasum_m3','Modflow'],['Pumping_daily','areasum_m3','Modflow'],
                     ['modfPumpingM_actual','areasum_m3','Modflow'],['groundwater_storage_available','areasum_m3','Modflow']]
@@ -750,22 +752,24 @@ class outputTssMap(object):
             if expression[2]:
                 if flagCycle:
                     writeFileHeaderWaterCycle(outputFilename, expression)
-                    if daymonthyear > 0:
-                        dates = pd.date_range(start=dateVar['dateStart1'], end=dateVar['dateEnd1'], freq="D")
-                        # reformat expression: not the best solution
-                        # expression: 1: timesteps 2: stations 3: 79 vars eg expression[3][211][0][78]
-                        expression[3] = np.array(expression[3]).transpose(1, 0, 2)
-                        totals = []
-                        storage = []
+                    dates = pd.date_range(start=dateVar['dateStart1'], end=dateVar['dateEnd1'], freq="D")
+                    # reformat expression: not the best solution
+                    # expression: 1: timesteps 2: stations 3: 79 vars eg expression[3][211][0][78]
+                    expression[3] = np.array(expression[3]).transpose(1, 0, 2)
+                    totals = []
+                    storage = []
 
-                        for k in range(len(self.var.sampleAdresses)):
-                            df = pd.DataFrame(expression[3][k], index=dates)
-                            if daymonthyear == 1:
-                                totals.append(df.resample("ME").sum())
-                                storage.append(df.resample("ME").last())
-                            else:
-                                totals.append(df.resample("YE").sum())
-                                storage.append(df.resample("YE").last())
+                    for k in range(len(self.var.sampleAdresses)):
+                        df = pd.DataFrame(expression[3][k], index=dates)
+                        if daymonthyear == 1:
+                            totals.append(df.resample("ME").sum())
+                            storage.append(df.resample("ME").last())
+                        elif daymonthyear == 2:
+                            totals.append(df.resample("YE").sum())
+                            storage.append(df.resample("YE").last())
+                        else:
+                            totals.append(df.resample("D").sum())
+                            storage.append(df.resample("D").last())
 
                 else:
                     writeFileHeaderNew(outputFilename,expression)
@@ -777,7 +781,7 @@ class outputTssMap(object):
             if len(expression[3]):
                 numbervalues = len(expression[3][0])
 
-                if flagCycle and daymonthyear > 0:
+                if flagCycle:
                     numbervalues = len(expression[3][0][0])
                     # run for watercycle and monthly or yearly
                     for i, timestamp in enumerate(totals[0].index):

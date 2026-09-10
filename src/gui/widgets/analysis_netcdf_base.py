@@ -19,6 +19,7 @@ import sys
 import json
 import math
 import tempfile
+import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
@@ -106,18 +107,23 @@ _DEFAULT_PLAY_SPEED = "Normal"
 _TIME_FILL_LIMIT = 1e30
 
 
-def _open_dataset_safe(path):
+def _open_dataset_safe(path, chunks=None):
     """``xr.open_dataset`` that survives fill values in the time axis.
 
     First try the normal decoded open. If time decoding fails, re-open with
     ``decode_times=False``, drop the unwritten (fill-valued) time steps and
     decode the remaining, valid time axis with ``xr.decode_cf``. As a last
-    resort the dataset is returned with raw numeric times (still plottable)."""
+    resort the dataset is returned with raw numeric times (still plottable).
+
+    ``chunks`` is forwarded to ``xr.open_dataset`` as-is (``None`` = the default,
+    plain-eager open used everywhere except the shared point-series dataset - see
+    ``NetcdfDataBase._shared_point_dataset``, which passes ``{}`` to read the file
+    dask-chunked, respecting its own on-disk chunk shape)."""
     try:
-        return xr.open_dataset(path, decode_times=True, mask_and_scale=True)
+        return xr.open_dataset(path, decode_times=True, mask_and_scale=True, chunks=chunks)
     except Exception:
         log.debug("_open_dataset_safe: ignored", exc_info=True)  # fall through to the tolerant path below
-    ds = xr.open_dataset(path, decode_times=False, mask_and_scale=True)
+    ds = xr.open_dataset(path, decode_times=False, mask_and_scale=True, chunks=chunks)
     try:
         for name, var in list(ds.variables.items()):
             if var.ndim != 1 or "since" not in str(var.attrs.get("units", "")):
@@ -225,6 +231,20 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
                     zmin, zmax = float(finite.min()), float(finite.max())
             if not (zmin <= zmax):
                 raise ValueError("The selected variable has no valid (non-NaN) values.")
+
+            # A previously opened shared point-series dataset (_shared_point_dataset)
+            # and any cached cell reads (_point_series_cache) belong to whatever file
+            # was current before - drop them so a reload (A-B compare) can never mix
+            # cached values from two different files/contexts.
+            old_ds = getattr(self, "_point_ds", None)
+            if old_ds is not None:
+                try:
+                    old_ds.close()
+                except Exception:
+                    log.debug("_load: ignored", exc_info=True)
+            self._point_ds = None
+            self._point_ds_path = None
+            self._point_series_cache = {}
 
             # Everything the timeserie plots need to re-read a cell's series lazily from
             # the file after the frames are released. "Total Timeseries" reads EVERY
@@ -352,29 +372,70 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
         return ""
 
     # ----------------------------------------------------------------- UI
+    def _shared_point_dataset(self, path):
+        """Open (once) and reuse one dataset for every point-series read, instead of
+        reopening the file on every single call - the open/close overhead used to
+        repeat for each of Fast/Total Timeserie, Flow duration and Flow regime, and
+        again for every point/year/gauge inside those.
+
+        Opened with ``chunks={}`` (dask-backed, respecting the file's own on-disk
+        chunk shape): a "one cell, every timestep" read on a multi-GB, timestep-
+        chunked result file otherwise decompresses thousands of chunks in a single
+        Python loop. Wrapping them as a dask array lets `.values` parallelise that
+        decompression across CPU cores via dask's default threaded scheduler instead.
+        xarray/dask serialise the actual disk I/O per file internally, so this stays
+        safe even when several `_PointSeriesWorker` threads (Total Timeseries / Flow
+        duration / Flow regime can all be reading at once) share this one handle -
+        guarded by a lock here only to stop two threads from both opening it the
+        first time.
+        """
+        lock = getattr(self, "_point_ds_lock", None)
+        if lock is None:
+            lock = self._point_ds_lock = threading.Lock()
+        with lock:
+            ds = getattr(self, "_point_ds", None)
+            if ds is not None and getattr(self, "_point_ds_path", None) == path:
+                return ds
+            if ds is not None:
+                try:
+                    ds.close()
+                except Exception:
+                    log.debug("_shared_point_dataset: ignored", exc_info=True)
+            ds = _open_dataset_safe(path, chunks={})
+            self._point_ds = ds
+            self._point_ds_path = path
+            return ds
+
     def _point_series(self, lati, loni, full=True):
-        """Read one cell's series lazily from the file (re-read rather than taken from
-        the in-memory grids, which only cover the strided map frames). ``lati`` indexes the ascending
-        self.lats axis; it is mapped back to the file's latitude order. NaN cells come
-        back as None. ``full=True`` reads **every** timestep (Total Timeseries);
+        """One cell's series, read lazily from the file (re-read rather than taken
+        from the in-memory grids, which only cover the strided map frames) through
+        the shared dataset (``_shared_point_dataset``) and cached in memory
+        (``_point_series_cache``) for the rest of the window's life - re-running Fast,
+        Total, Flow duration and Flow regime on the same point never re-reads the
+        file. ``lati`` indexes the ascending self.lats axis; it is mapped back to the
+        file's latitude order. NaN cells come back as None. ``full=True`` reads
+        **every** timestep (Total Timeseries / Flow duration / Flow regime);
         ``full=False`` reads only the strided map-animation frames (Fast Display
         Timeserie - fast, with gaps, and aligned with ``time_labels``)."""
+        cache = getattr(self, "_point_series_cache", None)
+        if cache is None:
+            cache = self._point_series_cache = {}
+        key = (lati, loni, full)
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
         src = self._point_source
-        ds = _open_dataset_safe(src["path"])
-        try:
-            da = ds[src["varname"]]
-            for d, i in src["extra_sel"].items():
-                da = da.isel({d: i})
-            file_lat = (lati if src["lat_ascending"]
-                        else da.sizes[src["lat_name"]] - 1 - lati)
-            cell = da.isel({src["lat_name"]: file_lat, src["lon_name"]: loni})
-            if not full and src["time_name"] and src["time_name"] in cell.dims:
-                # Fast: only the strided timesteps (far fewer reads on a big file).
-                cell = cell.isel({src["time_name"]: src["time_indices"]})
-            vals = np.asarray(cell.values, dtype="float64").ravel()
-            return [float(v) if np.isfinite(v) else None for v in vals]
-        finally:
-            try:
-                ds.close()
-            except Exception:
-                log.debug("_point_series: ignored", exc_info=True)
+        ds = self._shared_point_dataset(src["path"])
+        da = ds[src["varname"]]
+        for d, i in src["extra_sel"].items():
+            da = da.isel({d: i})
+        file_lat = (lati if src["lat_ascending"]
+                    else da.sizes[src["lat_name"]] - 1 - lati)
+        cell = da.isel({src["lat_name"]: file_lat, src["lon_name"]: loni})
+        if not full and src["time_name"] and src["time_name"] in cell.dims:
+            # Fast: only the strided timesteps (far fewer reads on a big file).
+            cell = cell.isel({src["time_name"]: src["time_indices"]})
+        vals = np.asarray(cell.values, dtype="float64").ravel()
+        result = [float(v) if np.isfinite(v) else None for v in vals]
+        cache[key] = result
+        return result

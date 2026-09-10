@@ -29,6 +29,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 
 from src.gui.utils import theme
+from src.gui.utils.window_geometry import scaled_default_size
 from src.gui.widgets.analysis_plot_base import PlotlyWindowBase
 
 from src.gui.utils.gui_log import get_logger
@@ -389,7 +390,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
         # ignored and the new compact default below takes effect.
         self._geometry_was_restored = self._init_geometry_memory("flowdiagram2")
         if not self._geometry_was_restored:
-            self.resize(780, 500)
+            self.resize(*scaled_default_size(self, 780, 500))
         try:
             icon_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),

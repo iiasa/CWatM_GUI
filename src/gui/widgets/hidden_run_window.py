@@ -38,7 +38,7 @@ from PySide6.QtGui import (
 from src.gui.utils import theme
 from src.gui.utils import run_ledger
 from src.gui.utils.gui_log import get_logger
-from src.gui.utils.window_geometry import GeometryMemoryMixin
+from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.cwatm_process_worker import CWatMProcessWorker
 
 log = get_logger("hidden_run_window")
@@ -102,7 +102,7 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         # **cascaded** by the number of Hidden Run windows already open, so several
         # do not land exactly on top of each other (they share one geometry key).
         if not self._init_geometry_memory("hidden_run"):
-            self.resize(720, 460)
+            self.resize(*scaled_default_size(self, 720, 460))
         try:
             others = [w for w in getattr(main_window, "_hidden_run_windows", [])
                       if w is not self]

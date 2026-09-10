@@ -20,13 +20,14 @@ import sys
 import csv
 
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMenuBar,
     QFileDialog, QMessageBox, QApplication
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon
 
 from src.gui.utils import theme
+from src.gui.utils.window_geometry import scaled_default_size
 # resolved_pathout_dir is re-exported: several modules (and CLAUDE.md) refer to it as
 # analysis_timeseries.resolved_pathout_dir, which is where it used to be defined.
 from src.gui.widgets.analysis_plot_base import (
@@ -172,7 +173,7 @@ class TimeseriesWindow(PlotlyWindowBase):
         self._geometry_was_restored = self._init_geometry_memory(
             "timeseries_point" if preloaded is not None else "timeseries")
         if not self._geometry_was_restored:
-            self.resize(1000, 680)
+            self.resize(*scaled_default_size(self, 1000, 680))
         try:
             icon_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
@@ -325,6 +326,7 @@ class TimeseriesWindow(PlotlyWindowBase):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
+        self._build_menubar(layout)
 
         # Header: file name + which series is shown
         self.header_label = QLabel("")
@@ -406,58 +408,113 @@ class TimeseriesWindow(PlotlyWindowBase):
         self.next_button.setStyleSheet(btn_style)
         self.next_button.clicked.connect(self._next)
 
-        # Compare: overlay another result CSV on the current plot (bottom-left)
-        compare_style = """
-            QPushButton {
-                font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 600;
-                color: white; border: none; border-radius: 6px; padding: 6px 16px;
-                min-height: 26px; background: #2980b9;
-            }
-            QPushButton:hover { background: #3498db; }
-            QPushButton:pressed { background: #21618c; }
-        """
-        self.compare_button = QPushButton("Compare")
-        self.compare_button.setStyleSheet(compare_style)
-        self.compare_button.setToolTip(
-            "Open another result .csv and overlay its time series on this plot")
-        self.compare_button.clicked.connect(self._compare)
-
-        # Load an observed series and show KGE / NSE / PBIAS / RMSE vs. the current series
-        self.observed_button = QPushButton("Load observed")
-        self.observed_button.setStyleSheet(compare_style)
-        self.observed_button.setToolTip(
-            "Overlay an observed series (a CWatM result .csv or a simple date,value .csv) "
-            "and show KGE / NSE / PBIAS / RMSE against the current series")
-        self.observed_button.clicked.connect(self._toggle_observed)
-
-        # Save the series as a CWatM result .csv (discharge_daily.csv format)
-        self.save_csv_button = QPushButton("Save as csv")
-        self.save_csv_button.setStyleSheet(btn_style)
-        self.save_csv_button.setToolTip(
-            "Save the time series as a CWatM result .csv (discharge_daily.csv format)")
-        self.save_csv_button.clicked.connect(self._save_csv)
-
-        # Save the current self-contained plot HTML (shareable, opens in any browser)
-        self.save_html_button = QPushButton("Save HTML")
-        self.save_html_button.setStyleSheet(btn_style)
-        self.save_html_button.setToolTip(
-            "Save the plot as a self-contained HTML file (opens in any browser)")
-        self.save_html_button.clicked.connect(self._save_html)
-
-        btn_row.addWidget(self.compare_button)
-        btn_row.addWidget(self.observed_button)
         btn_row.addStretch()
         btn_row.addWidget(self.prev_button)
         btn_row.addWidget(self.next_button)
         btn_row.addStretch()
-        btn_row.addWidget(self.save_csv_button)
-        btn_row.addWidget(self.save_html_button)
 
         # The buttons only make sense with more than one result column
         multi = len(self.series) > 1
         self.prev_button.setVisible(multi)
         self.next_button.setVisible(multi)
         layout.addLayout(btn_row)
+
+    def _build_menubar(self, layout):
+        """File (Save as csv / Save HTML) and Action (Compare / Load observed / Flow
+        duration / Flow regime) - the occasional, one-off actions live in menus (same
+        convention as the main window); Backward/Forward stay buttons since they are
+        clicked repeatedly."""
+        mbar = QMenuBar(self)
+        mbar.setStyleSheet(
+            f"QMenuBar {{ background-color: {theme.c('menubar_bg')}; "
+            f"color: {theme.c('text')}; }}"
+            f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
+
+        file_menu = mbar.addMenu("File")
+        act = file_menu.addAction("Save as csv", self._save_csv)
+        act.setToolTip(
+            "Save the time series as a CWatM result .csv (discharge_daily.csv format)")
+        act = file_menu.addAction("Save HTML", self._save_html)
+        act.setToolTip(
+            "Save the plot as a self-contained HTML file (opens in any browser)")
+
+        action_menu = mbar.addMenu("Action")
+        act = action_menu.addAction("Compare", self._compare)
+        act.setToolTip(
+            "Open another result .csv and overlay its time series on this plot")
+        self.observed_action = action_menu.addAction("Load observed", self._toggle_observed)
+        self.observed_action.setToolTip(
+            "Overlay an observed series (a CWatM result .csv or a simple date,value .csv) "
+            "and show KGE / NSE / PBIAS / RMSE against the current series")
+        act = action_menu.addAction("Flow duration", self._show_flow_duration)
+        act.setToolTip("Displays a flow duration curve")
+        act = action_menu.addAction("Flow regime", self._show_flow_regime)
+        act.setToolTip("Displays a flow regime curve")
+
+        self._menus = [file_menu, action_menu]  # GC guard
+        layout.setMenuBar(mbar)
+
+    # ---------------------------------------------------- flow duration / regime
+    def _flow_duration_regime_dates(self):
+        """ISO 'YYYY-MM-DD' date strings for the currently displayed series - the
+        flow duration/regime helpers expect an unambiguous axis (built for the
+        NetCDF viewer's ISO time axis), while CWatM result csvs are day-first
+        ('dd/mm/yyyy'); reuse _parse_dates' day-first detection once here rather
+        than teach those helpers a second date convention."""
+        parsed = self._parse_dates(self.dates)
+        out = []
+        for d in parsed:
+            try:
+                out.append(d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d))
+            except Exception:
+                out.append(str(d))
+        return out
+
+    def _show_flow_duration(self):
+        """Action ▸ Flow duration: the currently displayed series (Backward/Forward
+        picks which one), as a flow duration curve - one gauge only, like the NetCDF
+        viewer's Flow duration when it was raised from a single point."""
+        from src.gui.widgets.analysis_flow_duration import FlowDurationWindow
+        name, values = self.series[self.index]
+        dates = self._flow_duration_regime_dates()
+        try:
+            win = FlowDurationWindow(
+                [(name, dates, values)], self.varname, self.unit, self.long_name,
+                self.settings_title, self.csv_path, parent=self)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Flow duration",
+                                f"Could not build the flow duration curve:\n{e}")
+            return
+        self._flowdur_window = win  # keep a reference so the non-modal window isn't GC'd
+        win.show()
+        win.raise_()
+        win.activateWindow()
+
+    def _show_flow_regime(self):
+        """Action ▸ Flow regime: the currently displayed series, as a seasonal
+        regime curve (daily or monthly, detected from the series)."""
+        from src.gui.widgets.analysis_flow_regime import FlowRegimeWindow
+        name, values = self.series[self.index]
+        dates = self._flow_duration_regime_dates()
+        try:
+            win = FlowRegimeWindow(
+                dates, values, name, self.varname, self.unit, self.long_name,
+                self.settings_title, self.csv_path, parent=self)
+        except ValueError as e:
+            QMessageBox.information(self, "Flow regime", str(e))
+            return
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Flow regime",
+                                f"Could not build the flow regime curve:\n{e}")
+            return
+        self._flowregime_window = win  # keep a reference so the non-modal window isn't GC'd
+        win.show()
+        win.raise_()
+        win.activateWindow()
 
     # _save_html is inherited from PlotlyWindowBase.
 
@@ -627,7 +684,7 @@ class TimeseriesWindow(PlotlyWindowBase):
         """Load an observed series (first click) or clear it (when one is loaded)."""
         if self.observed is not None:
             self.observed = None
-            self.observed_button.setText("Load observed")
+            self.observed_action.setText("Load observed")
             self._show_current()
             return
         start_dir = os.path.dirname(str(self.csv_path)) \
@@ -646,7 +703,7 @@ class TimeseriesWindow(PlotlyWindowBase):
             "x": self._parse_dates(dates),
             "values": values,
         }
-        self.observed_button.setText("Clear observed")
+        self.observed_action.setText("Clear observed")
         self._show_current()
 
     def _parse_observed(self, path):
