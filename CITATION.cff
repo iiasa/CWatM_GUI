@@ -7,8 +7,7 @@ abstract: >-
   water cycle at daily time steps and at global and local scales, historically
   and into the future. It assesses water supply, water demand and
   environmental needs, including water management and human influence within
-  the water cycle. CWatM is developed and maintained by IIASA's Water Security
-  group.
+  the water cycle. CWatM is developed and maintained by IIASA's Water Security group.
 version: "1.11"
 date-released: "2026-09-10"
 doi: 10.5281/zenodo.22686662
