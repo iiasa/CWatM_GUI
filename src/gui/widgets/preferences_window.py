@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QFrame, QVBoxLayout, QHBoxLayou
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont
 
-from src.gui.utils import theme, display_format, run_ledger
+from src.gui.utils import theme, display_format, run_ledger, i18n
 from src.gui.utils.gui_log import get_logger
 from src.gui.utils.window_geometry import scaled_default_size
 
@@ -84,7 +84,8 @@ class PreferencesWindow(QDialog):
         self.cat_list.setSpacing(2)
         row_h = self.cat_list.fontMetrics().height() + 14
         for name in CATEGORIES:
-            item = QListWidgetItem(name)
+            item = QListWidgetItem(i18n.tr(name))
+            item.setData(Qt.UserRole, name)
             item.setSizeHint(QSize(0, row_h))
             self.cat_list.addItem(item)
         body.addWidget(self.cat_list)
@@ -218,6 +219,12 @@ class PreferencesWindow(QDialog):
             "Display",
             "Colours, the banner, the settings-file font, and the defaults the map "
             "and number displays open with.")
+        self.cmb_language = QComboBox()
+        for label, code in i18n.LANGUAGES:
+            self.cmb_language.addItem(label, code)
+        self._row(lay, "Language:", self.cmb_language,
+                  "Language of the menus, buttons and tooltips - applied at once and "
+                  "remembered for the next start")
         self.cmb_theme = QComboBox()
         for label, key in theme.THEME_CHOICES:
             self.cmb_theme.addItem(label, key)
@@ -310,17 +317,17 @@ class PreferencesWindow(QDialog):
     def _page_history(self):
         page, lay = self._page(
             "Run History",
-            "Where the Run Ledger (the log of past runs) is stored and how long "
+            "Where the Journal of Runs (the log of past runs) is stored and how long "
             "it is kept.")
         self.ed_history_folder = self._path_row(
             lay, "Run history folder:", self._browse_history_folder,
-            tip="Folder where the Run Ledger (log of past runs) is stored")
+            tip="Folder where the Journal of Runs (log of past runs) is stored")
         self.sp_retention = QSpinBox()
         self.sp_retention.setRange(0, 100000)
         self.sp_retention.setSuffix(" days")
         self.sp_retention.setSpecialValueText("keep forever")
         self._row(lay, "Run history retention:", self.sp_retention,
-                  "How many days of runs to keep in the Run Ledger (0 = keep forever)")
+                  "How many days of runs to keep in the Journal of Runs (0 = keep forever)")
         lay.addStretch(1)
         return page
 
@@ -353,6 +360,7 @@ class PreferencesWindow(QDialog):
             "write_output": bool(mw.write_output_action.isChecked()),
             "load_previous": s.value("startup/load_previous", False, type=bool),
             "use_modflow": s.value("modflow/enabled", False, type=bool),
+            "language": i18n.current_language(),
             "theme": theme.current_theme(),
             "show_header": s.value("display/show_header", True, type=bool),
             # The editor font: the family actually rendered (the persisted choice,
@@ -381,6 +389,7 @@ class PreferencesWindow(QDialog):
         self.cb_write_output.setChecked(st["write_output"])
         self.cb_load_previous.setChecked(st["load_previous"])
         self.cb_use_modflow.setChecked(st["use_modflow"])
+        self._select_data(self.cmb_language, st["language"])
         self._select_data(self.cmb_theme, st["theme"])
         self.cb_show_header.setChecked(st["show_header"])
         self._select_font(st["editor_font"])
@@ -405,6 +414,7 @@ class PreferencesWindow(QDialog):
             "write_output": self.cb_write_output.isChecked(),
             "load_previous": self.cb_load_previous.isChecked(),
             "use_modflow": self.cb_use_modflow.isChecked(),
+            "language": self.cmb_language.currentData(),
             "theme": self.cmb_theme.currentData(),
             "show_header": self.cb_show_header.isChecked(),
             "editor_font": self.cmb_font.currentFont().family(),
@@ -479,6 +489,11 @@ class PreferencesWindow(QDialog):
             mw._on_load_previous_toggled(value)
         elif key == "use_modflow":
             mw._on_use_modflow_toggled(value)
+        elif key == "language":
+            i18n.set_language(value)
+            for row in range(self.cat_list.count()):   # a list item is not a widget
+                item = self.cat_list.item(row)
+                item.setText(i18n.tr(item.data(Qt.UserRole)))
         elif key == "theme":
             mw._set_theme_mode(value)
             self._apply_style()          # follow the new theme while open

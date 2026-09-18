@@ -475,6 +475,11 @@ def _create_app():
     theme.load_saved_theme()
     theme.apply_app_theme(app)
 
+    # Restore the saved GUI language (Preferences > Display > Language) BEFORE the
+    # main window is built, so its menus and buttons are translated as they appear.
+    from src.gui.utils import i18n
+    i18n.install()
+
     # Application-wide icon (taskbar + all windows). Use the small multi-size icon
     # (16/32/48 px) so the taskbar renders it; fall back to cwatm.ico. Only set it
     # if it loads, so a missing file does not blank the icon embedded in the .exe.

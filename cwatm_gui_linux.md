@@ -502,7 +502,7 @@ still edit the settings file in the GUI on your desktop and run it here.
 | **Opening files/folders** | Goes through `xdg-open` (the desktop's default handler) instead of `os.startfile`; needs `xdg-utils`. |
 | **Taskbar icon** | The Windows AppUserModelID call is skipped; your desktop environment decides the icon. |
 | **Model subprocess** | `python cwatm_gui.py --run-cwatm <ini>` instead of `CWatM_model.exe`. Same protocol, same behaviour (Stop is a real kill, a crash cannot take the GUI down). |
-| **Everything else** | Identical: the settings editor, Excel editor, Check settingsfile, Run Ledger, Batch Run, Hidden Run, the viewers, themes and preferences all behave the same. |
+| **Everything else** | Identical: the settings editor, Excel editor, Check settingsfile, Journal of Runs, Batch Run, Hidden Run, the viewers, themes and preferences all behave the same. |
 
 ---
 

@@ -85,7 +85,7 @@ def calc_turbulent_fluxes(parameters, wind_speed, lastsnowtemp, tavg,
     # Latent heat flux (E)
     if parameters['E0_app'] == 1:
         E = -(pa * CH * wind_speed) * (rhos - rhoa)  # Mass flux kg/m2/s
-    elif ['E0_app'] == 2:
+    elif parameters['E0_app'] == 2:
         E = -(pa * CH * wind_speed + Ex) * (rhos - rhoa)  # Mass flux kg/m2/s
 
     # Evaporation and sublimation energy flux (EV)

@@ -2475,12 +2475,12 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             print(f"Error opening Batch Run: {str(e)}", file=sys.stderr)
 
     def open_run_ledger(self):
-        """RUN CWATM > Run Ledger: show the log of past runs."""
+        """RUN CWATM > Journal of Runs: show the log of past runs."""
         try:
             from src.gui.widgets.run_ledger_window import open_run_ledger
             open_run_ledger(parent=self)
         except Exception as e:
-            print(f"Error opening Run Ledger: {str(e)}", file=sys.stderr)
+            print(f"Error opening Journal of Runs: {str(e)}", file=sys.stderr)
 
     def open_timeseries_analysis(self):
         """Analyse menu > Timeseries: open a result .csv and plot it with Plotly."""

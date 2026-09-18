@@ -87,8 +87,9 @@ if ($Steps -contains 'sync') {
     Measure-Step 'sync' {
         # Directories the build reads. Nothing else is needed: the spec bundles code
         # through collect_submodules('cwatm'/'src') and only assets, metaNetcdf.xml,
-        # the Help markdown + figures and the t5 routing libraries as data.
-        foreach ($d in 'src', 'cwatm', 'assets', 'documentation') {
+        # the Help markdown + figures, the translation table and the t5 routing
+        # libraries as data.
+        foreach ($d in 'src', 'cwatm', 'assets', 'documentation', 'translations') {
             Invoke-Robocopy (Join-Path $Repo $d) (Join-Path $Work $d) @('/MIR', '/MT:16', '/XD', '__pycache__', '.git')
         }
         # The installer script + its wizard images; keep a previously built setup.

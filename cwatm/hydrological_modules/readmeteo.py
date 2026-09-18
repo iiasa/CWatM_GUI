@@ -13,6 +13,21 @@ from cwatm.management_modules.data_handling import *
 import scipy.ndimage
 from scipy.interpolate import RegularGridInterpolator
 
+
+def kron_ones(a, n):
+    """
+    Same as np.kron(a, np.ones((n, n))), but faster: each value is repeated n times in both directions.
+
+    The 2D input is broadcast to (rows, n, cols, n) and reshaped, which copies every value once.
+    The result is float64 (as with np.kron and a float64 array of ones). Masked arrays use np.kron as before.
+    """
+    if np.ma.isMaskedArray(a):
+        return np.kron(a, np.ones((n, n)))
+    a = np.asarray(a, dtype=np.result_type(a, np.float64))
+    rows, cols = a.shape
+    return np.broadcast_to(a[:, None, :, None], (rows, n, cols, n)).reshape(rows * n, cols * n)
+
+
 class readmeteo(object):
     """
     Meteorological data reader and processor for CWatM.
@@ -541,9 +556,9 @@ class readmeteo(object):
 
         if buffer == 0:
           # this is creating an array resoint times bigger than input, by copying each item resoint times in x and y direction
-            down3 = np.kron(input, np.ones((resoint, resoint)))
+            down3 = kron_ones(input, resoint)
         else:
-            down3 = np.kron(input[buffer2:buffer1, buffer4:buffer3], np.ones((resoint, resoint)))
+            down3 = kron_ones(input[buffer2:buffer1, buffer4:buffer3], resoint)
 
 
         if downscale == 0:
@@ -599,7 +614,7 @@ class readmeteo(object):
                         # wc3mean looks like w4
                         wc3mean = np.nanmean(wc3, axis=(1, 3))
                         # Average of wordclim on the bigger input raster scale
-                        wc3kron = np.kron(wc3mean, np.ones((resoint, resoint)))
+                        wc3kron = kron_ones(wc3mean, resoint)
                         # the average values are spread out to the fine scale
                         # looks like quot_wc, but wc2 = input, wc3kron = wc4
                         wc4 = divideValues(wc2, wc3kron)
@@ -625,7 +640,7 @@ class readmeteo(object):
                 # on fine scale: wordclim fine scale - spreaded input data (same value for each big cell)
                 wc3 = diff_wc.reshape(wc2.shape[0] // resoint, resoint, wc2.shape[1] // resoint, resoint)
                 wc4 = np.nanmean(wc3, axis=(1, 3))
-                wc4kron = np.kron(wc4, np.ones((resoint, resoint)))
+                wc4kron = kron_ones(wc4, resoint)
                 # wordclim is averaged on big cell scale and the average is spread out to fine raster
                 down1 = diff_wc - wc4kron + down3
                 # result is the fine scale input data + the difference of wordclim - input data - the average difference of wordclim - input

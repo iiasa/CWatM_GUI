@@ -146,6 +146,7 @@ second implementation of it**. Adding a setting = one control + one `_read_state
 | Startup & Model | Load previous settings at start | Persisted `startup/load_previous`, default OFF; when ticked **every tab** of the last session is re-opened on the next startup (`tabs/files` + `tabs/active` → `open_files_in_tabs`; a pre-tabs session falls back to the most recently used file). Handled in `cwatm_gui.py main()` when no file is passed on the command line — a command-line file wins and opens a single tab |
 | Startup & Model | Use Modflow | Persisted `modflow/enabled`, default OFF; ON **pre-imports flopy** (the CWatM↔MODFLOW library — heavy, pulls the matplotlib stack) so in-process MODFLOW use is ready; OFF never loads flopy, keeping startup fast (`src/gui/utils/modflow.py`, `_on_use_modflow_toggled`) |
 | _(not exposed)_ | ~~Run model in separate process~~ | Not shown anywhere, but the functionality is kept: `run_subprocess_action` is created standalone in `_init_configure_state` (default ON, persisted `run/subprocess`) and still drives `_run_subprocess_enabled` (own OS process = real Stop, crash isolation). Add it to a Preferences page to expose it again |
+| Display | Language | **English** (default) / Deutsch / Italiano / Magyar / Română / Srpski (Latin script) / Hrvatski / Slovenčina / Български / Čeština / Українська — the language of menus, menu items, buttons, labels and tooltips; switches **live**, persisted `display/language` (`i18n.set_language`). The texts come from `translations/ui_strings_languages.csv` — see the GUI-language behavioral note |
 | Display | Mode | Colour theme of the whole GUI: **Normal** (classic light) / **Dark Mode** / **Mikhail** (black + amber); switches live (the open dialog re-themes itself), persisted `display/theme` |
 | Display | Show Header | Persisted `display/show_header`, default ON: show the top **banner** (CWatM icon + title + "The Community Water Model User Interface" + IIASA logo). Unticked hides it (`_banner_widget.setVisible(False)`) so everything below moves up (`_on_show_header_toggled`) |
 | Display | Font of settingsfile | Family the **settings editor** renders with — a `QFontComboBox` filtered to the **monospaced** fonts (columns + the gutter's fixed-width digits), persisted `editor/font_family`. Empty (the default) = the built-in fallback chain of `_editor_style()` (`'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace` — Consolas on Windows), so an untouched install renders exactly as before; a chosen family is put **in front of** that chain (`main_window._editor_font_css`). The box opens on the family actually rendered (`main_window.editor_font_family()` → the persisted choice, else `fontInfo().family()`), and `_select_font` inserts that family if the monospaced filter does not list it, so the box can never show a different font than the editor uses |
@@ -488,6 +489,23 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   `pointSize() == -1`, and a QToolButton is one of the widgets Qt's style asks for a
   *point* size — that is the source of the console line `QFont::setPointSize: Point
   size <= 0 (-1)`. Everything else (editor, labels, plain buttons) keeps px.
+- **GUI language (Preferences ▸ Display ▸ Language)**: `src/gui/utils/i18n.py`. The
+  English texts stay in the code; **every translation lives in one table,
+  `translations/ui_strings_languages.csv`** (`No, English`, then one column per
+  language — German, Italian, Hungarian, Romanian, Serbian, Croatian, Slovak, Bulgarian,
+  Czech, Ukrainian; a new language = a column + an entry in `i18n.LANGUAGES`/`_COLUMNS`;
+  bundled by the spec, synced by `build_release.ps1`). **No widget calls a translate function** — an
+  app-wide event filter swaps QAction texts on `ActionAdded`/`ActionChanged`, button and
+  label texts on `Polish` and before every `Paint` (so a later `setText` never shows
+  English), and shows tooltips translated on `ToolTip` without changing the stored
+  tooltip. The English source is kept per object (`_i18n_source`), so the switch is live
+  both ways. Rules: **a new UI string is translated by adding a CSV row** (a `{…}`
+  placeholder makes a template — `Run '{name}'`; captured values are translated only
+  when they are catalog words, e.g. `cell`, `3 rows`); **never branch on a displayed
+  `text()`** (in German it is not the English literal); **English installs no filter**
+  (zero cost). Not covered: window titles, `QMessageBox` messages, combo items, table
+  headers, placeholders. `i18n.tr()` exists for the few texts outside widgets (the
+  Preferences category list items).
 - **Asset paths**: never load assets with a relative path (`QPixmap("assets/...")`
   only worked when the CWD happened to contain an assets/ copy — in the frozen
   build assets live in `_internal/`, not next to the .exe). Always resolve through
@@ -754,6 +772,7 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/utils/cwatm_worker.py`**: Threaded CWatM execution worker (in-process fallback)
 - **`src/gui/utils/display_format.py`**: Global display-decimals setting (Preferences ▸ Display ▸ Show decimals)
 - **`src/gui/utils/modflow.py`**: Preferences ▸ Startup & Model ▸ Use Modflow toggle (`modflow/enabled`) — `is_enabled`/`set_enabled` + `warm_flopy` (background flopy pre-import); gates the heavy flopy/matplotlib import so a non-MODFLOW start stays fast
+- **`src/gui/utils/i18n.py`**: GUI language (Preferences ▸ Display ▸ Language) — the pure `Catalog` (exact + `{…}` template lookup, reverse lookup) over `translations/ui_strings_languages.csv`, and the app-wide event filter that applies it (`install` at startup, `set_language` live)
 - **`src/gui/utils/theme.py`**: Colour themes (Preferences ▸ Display ▸ Mode: Normal / Dark / Mikhail) — token sets, app palette/QSS, persistence
 - **`src/gui/utils/assets.py`**: `asset_path()` — absolute asset resolution (source, `_internal/`, exe folder)
 - **`src/gui/utils/open_path.py`**: `open_path()` — show a file/folder in the desktop's handler, portably: `os.startfile` on Windows (unchanged behaviour), else `QDesktopServices`, else `xdg-open`/`open`/`gio`. **Use it instead of `os.startfile`**, which does not exist off Windows — it is what the three "open this" actions (Analyse ▸ Open PathOut Folder, Journal of Runs PathOut, Output Explorer's `.html`/`.txt` fallback) call; returns False instead of raising, so each caller shows its own message
@@ -1112,7 +1131,7 @@ python tools/import_all.py          # import all of src/gui + build the main win
 
 `tests/` covers the **pure logic** — the layer that is otherwise only ever exercised by
 hand: `cell_formula` (the ast whitelist, and that `is_formula` does not over-claim),
-`cell_fill`, `metrics`, `var_dims`, `tab_manager.next_copy_path`, `temp_page`,
+`cell_fill`, `metrics`, `var_dims`, `i18n` (catalog rules, the shipped CSV's consistency, a live en→de→en switch), `tab_manager.next_copy_path`, `temp_page`,
 `run_ledger`, and the **Check settingsfile semantic pass** (`settings_check`, run on a
 bare host object — its only `self` use is a pure method, so it needs no window).
 `conftest.py` sets `QT_QPA_PLATFORM=offscreen` before the first PySide6 import, so

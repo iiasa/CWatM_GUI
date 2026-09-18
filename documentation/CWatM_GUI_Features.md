@@ -545,6 +545,11 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
   choices into effect and keeps the window open, **OK** applies them and closes, and
   **Cancel** throws away anything you have not applied yet. All settings are
   remembered for the next session (except *Write output box*, which always starts off).
+- **Language** (Preferences ▸ Display ▸ Language): **English** (default), Deutsch, Italiano,
+  Magyar, Română, Srpski, Hrvatski, Slovenčina, Български, Čeština or Українська.
+  Menus, menu items, buttons, labels and tooltips change at once, and the choice is
+  remembered for the next start. Messages, window titles and the settings file itself
+  stay in English.
 - **Colour modes** (Preferences ▸ Display ▸ Mode): switch the whole GUI between **Normal**
   (classic light), **Dark Mode**, and **Mikhail** (black background with amber
   font, CRT style). The choice applies immediately — including the settings

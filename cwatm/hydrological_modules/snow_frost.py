@@ -3,14 +3,16 @@
 # Purpose: Snow and frost processes module for precipitation partitioning and snow dynamics.
 # Simulates snowfall, snow accumulation, snowmelt, and refreezing processes.
 # Handles temperature-based precipitation phase determination and snow water equivalent.
+# Snow albedo: one snow albedo per cell from fresh snow, snow age and snow cover,
+# used in the radiation part of snow melt (snowmelt_radiation = True)
 #
 # Author:      PB, MS, SH
 # Created:     13/07/2016
+# Snow albedo: 15/09/2026
 # CWatM is licensed under GNU GENERAL PUBLIC LICENSE Version 3.
 # -------------------------------------------------------------------------
 
 from cwatm.management_modules.data_handling import *
-import pandas as pd
 
 # TODO remove this portion of the code using sys and make simular to what CWatM uses
 # Get the absolute path of /station_gap_fill and to sys.path
@@ -36,6 +38,12 @@ class snow_frost(object):
     and ice melt using temperature-based and radiation-based approaches, manages snow
     redistribution across elevation zones, and computes frost index for soil freezing.
     Supports multi-layer snow zones for topographic variability representation.
+
+    Snow albedo: one snow age and one snow albedo per cell for all snow layers.
+    Fresh snow resets the albedo to the fresh snow albedo, afterwards it decays with
+    age towards the old snow albedo; shallow snow is mixed with the ground albedo.
+    The resulting surface albedo reduces the short wave radiation in the radiation
+    part of snow melt of all layers (only used if snowmelt_radiation = True).
     
     Attributes
     ----------
@@ -43,15 +51,6 @@ class snow_frost(object):
         Reference to model variables object containing state variables
     model : object
         Reference to the main CWatM model instance
-
-
-
-
-
-
-
-
-
 
     **Global variables**
     ===================================  ==========    ======================================================================  =====
@@ -66,14 +65,14 @@ class snow_frost(object):
     ETRef                                Array         potential evapotranspiration rate from reference crop                   m    
     Precipitation                        Array         Precipitation (input for the model)                                     m    
     only_radiation                       Flag          Boolean if only radiation is use for calculation e.g JRC EMO dataset    bool 
-    Psurf                                Array         Instantaneous surface pressure                                          Pa   
-    Rsdl                                 Array         long wave downward surface radiation fluxes                             W m-2
+    Psurf                                Array         Instantaneous surface pressure                                          kPa
+    Rsdl                                 Array         long wave downward surface radiation fluxes                             MJ/m2/day
     huss                                 Array         2 m istantaneous specific humidity[kg / kg] (AI)                        --   
-    EAct                                 Array         Daily vapor pressure                                                    hPa  
+    EAct                                 Array         Daily vapor pressure                                                    kPa
     rhs                                  Array                                                                                 --   
     Tdew                                 Array         calculate Tdew (Magnus Formula) based on FAO56 https://www.fao.org/4/X  --   
-    Tavg                                 Array         Input, average air Temperature                                          K    
-    Rsds                                 Array         short wave downward surface radiation fluxes                            W m-2
+    Tavg                                 Array         Input, average air Temperature                                          °C
+    Rsds                                 Array         short wave downward surface radiation fluxes                            MJ/m2/day
     Wind                                 Array         wind speed                                                              m s-1
     snowmelt_radiation                   Array         use radiation term in snow melt (AI)                                    --   
     WtoMJ                                Array         Conversion factor from [W] to [MJ] for radiation: 86400 * 1E-6          --   
@@ -83,7 +82,7 @@ class snow_frost(object):
     lat                                  Array         Latitude                                                                deg  
     Rain                                 Array         Precipitation less snow                                                 m    
     SnowMelt                             Array         total snow melt from all layers                                         m    
-    IceMelt                              Array         Ice melt (not really ice but an additional snow melt in summer)         m    
+    IceMelt                              Array         Summer ice melt + snow melted by surplus potential of higher zones      m    
     snowEvap                             Array         total evaporation from snow for a snow layers                           m    
     SnowCover                            Array         snow cover (sum over all layers)                                        m    
     SnowFactor                           Array         Multiplier applied to precipitation that falls as snow                  --   
@@ -103,18 +102,18 @@ class snow_frost(object):
     z_0                                  Array         Roughness length (default: 0.00001 m) (10-5 - 10-3) (AI)                --   
     z_h                                  Array         Roughness length for heat (default: z_0/10) (AI)                        --   
     lw_max                               Array                                                                                 --   
-    Tstart                               Array         Starting temperature (default: 0Â°C) (AI)                               --   
-    Tadd                                 Array         Temperature adjustment (default: -10000Â°C) (AI)                        --   
+    Tstart                               Array         Starting temperature (default: 0°C) (AI)                                --   
+    Tadd                                 Array         Temperature adjustment (default: -10000°C) (AI)                         --   
     maxtax                               Array         Maximum tax (default: 0.9) (calib: 0.3-0.9) (AI)                        --   
     E0_value                             Array         Windless exchange coefficient (default: 1) (calib  0-2) (AI)            --   
     E0_app                               Array         Windless exchange application option (default: 1) (AI)                  --   
     E0_stable                            Array         Windless exchange stability option (default: 2) (AI)                    --   
-    Ts_add                               Array         Temperature add factor (default: 2Â°C) (calib 0-2) (AI)                 --   
+    Ts_add                               Array         Temperature add factor (default: 2°C) (calib 0-2) (AI)                  --   
     smooth_time_steps                    Array         Smoothing time steps (default: 12) (calib: 8-24) (AI)                   --   
     ground_albedo                        Array         Ground albedo (default: 0.25) (AI)                                      --   
     snow_emis                            Array         Snow emissivity (default: 0.98) (AI)                                    --   
-    snow_dens_default                    Array         Default snow density (default: 250 kg/mÂ³) (AI)                         --   
-    G                                    Array         Ground conduction (default: 173/86400 kJ/mÂ²/s) (AI)                    --   
+    snow_dens_default                    Array         Default snow density (default: 250 kg/m³) (AI)                          --   
+    G                                    Array         Ground conduction (default: 173/86400 kJ/m²/s) (AI)                     --   
     max_swe_height                       Array         Max height of SWE before solar radiation factor starts to work (defaul  --   
     downward_radiation_factor            Array                                                                                 --   
     downward_radiation_start_month       Array                                                                                 --   
@@ -149,6 +148,19 @@ class snow_frost(object):
     TempMelt                             Array         Average temperature at which snow melts                                 °C   
     SnowMeltRad                          Array         calibration value a factor to radiation coefficient                     --   
     SnowCoverS                           Array         snow cover for each layer                                               m    
+    useSnowAlbedo                        Flag          True: snow albedo from fresh snow, snow age and snow depth              bool
+    snowAlbedoMax                        Array         Albedo of fresh snow Amax (default: 0.85, range 0.80-0.90)              --
+    snowAlbedoMin                        Array         Albedo of old snow Amin (default: 0.55, range 0.50-0.60)                --
+    snowAlbedoAgingCold                  Array         Daily albedo aging coefficient alpha for T < TempMelt (default: 0.98)   --
+    snowAlbedoAgingWarm                  Array         Daily albedo aging coefficient alpha for T >= TempMelt (default: 0.90)  --
+    freshSnowThreshold                   Array         Snowfall (SWE) per day that resets albedo and snow age (default 0.001)  m
+    snowDensity                          Array         Snow density relative to water to get snow depth (default: 0.3)         --
+    snowDepthAlbedo                      Array         Snow depth below which ground shows through (default: 0.15)             m
+    groundAlbedo                         Array         Albedo of ground/vegetation under shallow snow (default: 0.20)          --
+    noSnowThreshold                      Number        Snow cover (SWE) below which a cell is taken as snow free (1e-6)        m
+    SnowAge                              Array         snow age of the cell (days since last fresh snow, 0 without snow)       day
+    SnowAlbedo                           Array         snow albedo of the cell (without snow depth correction)                 --
+    snowSurfaceAlbedo                    Array         surface albedo used in snow melt of all layers (with depth correction)  --
     adv_frost                            Flag          if this use, Kfrost and maxFrost is used                                --   
     maxFrostIndex                        Array         maximum frostindex, frostindex over max causes unusuaL floods in sprin  --   
     Kfrost                               Array         Snow depth reduction coefficient, (HH, p. 7.28)                         m-1  
@@ -156,8 +168,6 @@ class snow_frost(object):
     FrostIndexThreshold                  Array         Degree Days Frost Threshold (stops infiltration, percolation and capil  --   
     SnowWaterEquivalent                  Array         Snow water equivalent, (based on snow density of 450 kg/m3) (e.g. Tarb  --   
     FrostIndex                           Array         FrostIndex - Molnau and Bissel (1983), A Continuous Frozen Ground Inde  --   
-    lat}                                                                                                                       --   
-    Tavg}                                                                                                                      --   
     ExistSnow                            Array                                                                                 --   
     Rain_on_snow                         Array         spilt between rain on snow and rain (AI)                                --   
     Snow                                 Array         Snow (equal to a part of Precipitation)                                 m    
@@ -170,7 +180,7 @@ class snow_frost(object):
     snowmelt1                            Array                                                                                 --   
     precipitation_sn                     Array         CWatM uses a snow undercatch correction if calibrated. This precipitat  m    
     FrostDay                             Array         frost index in soil [degree days] based on Molnau and Bissel (1983, A   --   
-    potBareSoilEvap                      Array         potential bare soil evaporation (calculated with minus snow evaporatio  m    
+    potBareSoilEvap                      Array         potential bare soil evaporation (reduced by the snow covered fraction)  m    
     fracVegCover                         Array         Fraction of specific land covers (0=forest, 1=grasslands, etc.)         %    
     cellArea                             Array         Area of cell                                                            m2   
     ===================================  ==========    ======================================================================  =====
@@ -206,6 +216,7 @@ class snow_frost(object):
         - Snow redistribution parameters based on slope and land cover
         - Seasonal snow melt coefficient parameters
         - Initial snow cover distribution across elevation zones
+        - Snow albedo parameters and initial snow age / snow albedo of the cell (initial_snowalbedo)
         - Frost index parameters for soil freezing calculations
         """
 
@@ -253,18 +264,18 @@ class snow_frost(object):
             self.var.z_0 = loadmap('z_0')  # Roughness length (default: 0.00001 m) (10-5 - 10-3)
             self.var.z_h = loadmap('z_h')  # Roughness length for heat (default: z_0/10)
             self.var.lw_max = loadmap('lw_max')  # Maximum longwave radiation(default: 0.1)
-            self.var.Tstart = loadmap('Tstart')  # Starting temperature (default: 0Â°C)
-            self.var.Tadd = loadmap('Tadd')  # Temperature adjustment (default: -10000Â°C)
+            self.var.Tstart = loadmap('Tstart')  # Starting temperature (default: 0°C)
+            self.var.Tadd = loadmap('Tadd')  # Temperature adjustment (default: -10000°C)
             self.var.maxtax = loadmap('maxtax')  # Maximum tax (default: 0.9) (calib: 0.3-0.9)
             self.var.E0_value = loadmap('E0_value')  # Windless exchange coefficient (default: 1) (calib  0-2)
             self.var.E0_app = loadmap('E0_app')  # Windless exchange application option (default: 1)
             self.var.E0_stable = loadmap('E0_stable')  # Windless exchange stability option (default: 2)
-            self.var.Ts_add = loadmap('Ts_add')  # Temperature add factor (default: 2Â°C) (calib 0-2)
+            self.var.Ts_add = loadmap('Ts_add')  # Temperature add factor (default: 2°C) (calib 0-2)
             self.var.smooth_time_steps = loadmap('smooth_time_steps')  # Smoothing time steps (default: 12) (calib: 8-24)
             self.var.ground_albedo = loadmap('ground_albedo')  # Ground albedo (default: 0.25)
             self.var.snow_emis = loadmap('snow_emis')  # Snow emissivity (default: 0.98)
-            self.var.snow_dens_default = loadmap('snow_dens_default')  # Default snow density (default: 250 kg/mÂ³)
-            self.var.G = loadmap('G')  # Ground conduction (default: 173/86400 kJ/mÂ²/s)
+            self.var.snow_dens_default = loadmap('snow_dens_default')  # Default snow density (default: 250 kg/m³)
+            self.var.G = loadmap('G')  # Ground conduction (default: 173/86400 kJ/m²/s)
             self.var.max_swe_height = loadmap('max_swe_height')  # Max height of SWE before solar radiation factor starts to work (default: 100 m)
             self.var.downward_radiation_factor = loadmap(
                 'downward_radiation_factor')  # Factor to be multiplied by solar radiation when SWE > max_swe_height (default: 1.3)
@@ -329,27 +340,27 @@ class snow_frost(object):
             if returnBool('load_initial_pySnowClim'):
                 loadInitFilepySnowClim = cbinding('initLoad_pySnowClim')
                 for v in self.var.pySnowClimInitVars:
-                    var = readnetcdfInitial(loadInitFilepySnowClim, v)
-                    setattr(self.var.snowpack, v, var)
-                self.var.SnowCover = self.var.snowModelvars.SnowWaterEq / self.var.constSnowClim.WATERDENS
+                    # variable missing in init file -> keep the cold-start value of Snowpack (not a scalar 0)
+                    var = readnetcdfInitial(loadInitFilepySnowClim, v, default=None)
+                    if var is not None:
+                        setattr(self.var.snowpack, v, var)
 
-                    
+                #self.var.SnowCover = self.var.snowModelvars.SnowWaterEq / self.var.constSnowClim.WATERDENS  # replace 9/2026
+                # snowModelvars is only filled in dynamic -> take snow storage [m] directly from the loaded snowpack
+                self.var.SnowCover = self.var.snowpack.lastswe + self.var.snowpack.lastpackwater
 
             self.var.saveInitpySnowClim = returnBool('save_initial_pySnowClim')
             if self.var.saveInitpySnowClim:
                 self.var.saveInitFilepySnowClim = cbinding('initSave_pySnowClim')
 
- 
-            # snowfraction set to 0 -> ExistSnow for true or false
+            # snow fraction: 0 at start, calculated in dynamic from SnowCover
             self.var.SnowFraction = globals.inZero.copy()
             # icemelt =0 -> snowtowers are handled in pySnowClim
             self.var.IceMelt = globals.inZero.copy()
             self.var.snow_redistributed_previous = globals.inZero.copy()
 
-        
         # No pySnowClim
         else:
-
             self.var.numberSnowLayersFloat = loadmap('NumberSnowLayers')
             # now using dz_relative -> fix to 1 or several
             #if self.var.numberSnowLayersFloat > 1.0:
@@ -363,7 +374,7 @@ class snow_frost(object):
             # ElevationStD:   Standard Deviation of the DEM
             # 0.9674:    Quantile of the normal distribution: u(0,833)=0.9674 to split the pixel in 3 equal parts.
 
-            # from relative elevation take 5 levels: 80-100% -> 90% -> id11, 60-80% -> 70% -> id9  ...
+            # dzSnow: dzRel index per zone (id11 = 100% = highest point, id7 = 60% = reference); see snowZoneCentres below
             dzSnow = \
                 [[7],
                 [9, 5],
@@ -377,6 +388,28 @@ class snow_frost(object):
                 [11, 10, 9, 8, 7, 6, 5, 4, 3, 1]]
 
             self.var.dzSnow = dzSnow[self.var.numberSnowLayers - 1]
+            # elevation offset of each snow zone [m], computed once
+            # snowZoneCentres = True: centre of equal-area zones (linear between dzRel percentiles) relative to the mean
+            # of all zone centres -> mean temperature of all zones = Tavg; False (default): dzSnow table relative to dzRel[7] (60%)
+            self.var.snowZoneCentres = False
+            if 'snowZoneCentres' in binding:
+                self.var.snowZoneCentres = returnBool('snowZoneCentres')
+            pct = [0.01, 0.05, 0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00]
+            self.var.dzZone = []
+            for i in range(self.var.numberSnowLayers):
+                if self.var.snowZoneCentres:
+                    # zone 0 is the highest: centre at percentile 1 - (i + 0.5) / n
+                    p = 1.0 - (i + 0.5) / self.var.numberSnowLayers
+                    j = int(min(max(np.searchsorted(pct, p) - 1, 0), 10))
+                    w = (p - pct[j]) / (pct[j + 1] - pct[j])
+                    self.var.dzZone.append(self.var.dzRel[j] + w * (self.var.dzRel[j + 1] - self.var.dzRel[j]))
+                else:
+                    self.var.dzZone.append(self.var.dzRel[self.var.dzSnow[i]])
+            if self.var.snowZoneCentres:
+                dzRef = np.mean(self.var.dzZone, axis=0)
+            else:
+                dzRef = self.var.dzRel[7]
+            self.var.dzZone = [dz - dzRef for dz in self.var.dzZone]
 
             self.var.lapseratevar = False
             if 'LapseRateVariable' in binding:
@@ -441,10 +474,11 @@ class snow_frost(object):
 
             # New snowmelt includes radiation and a calibration factor for radiation
             if 'SnowMeltRad' in binding:
-                self.var.SnowMeltRad = loadmap('SnowMeltRad')        # initialize as many snow covers as snow layers -> read them as SnowCover1 , SnowCover2 ...
+                self.var.SnowMeltRad = loadmap('SnowMeltRad')
             else:
                 self.var.SnowMeltRad = 1 + globals.inZero
-                
+
+            # initialize as many snow covers as snow layers -> read them as SnowCover1, SnowCover2 ...
             # SnowCover1 is the highest zone
             self.var.SnowCoverS = []
             for i in range(self.var.numberSnowLayers):
@@ -453,14 +487,22 @@ class snow_frost(object):
             # initial snow depth in elevation zones A, B, and C, respectively  [mm]
             self.var.SnowCover = np.sum(self.var.SnowCoverS,axis=0) / self.var.numberSnowLayersFloat + globals.inZero
 
-            # if the EMO dataset for meteo data is used, only rd is given, so we need additional data like elevation and latitude
-            # it is loaded in evapopot, but not always evapopot is calculated
-            if self.var.only_radiation:
+            # incoming long wave for radiation snow melt: estimated with FAO-56 (as in evaporationPot) if only radiation is
+            # given (only_radiation, e.g. EMO) or long wave maps are too coarse (without_rlds; EAct from evaporationPot ->
+            # needs calc_evaporation), otherwise measured long wave Rsdl
+            self.var.snowFAOlongwave = self.var.without_rlds and (self.var.only_radiation or self.var.calc_evapo)
+            # radiation snow melt needs Rsds (and Rsdl) which are not read with PET_modus = 5 (Thornthwaite)
+            if self.var.snowmelt_radiation and self.var.pet_modus == 5:
+                msg = "Error: snowmelt_radiation = True needs radiation data, but with PET_modus = 5 (Thornthwaite) " \
+                      "no radiation is read -> use PET_modus 1-4 or snowmelt_radiation = False"
+                raise CWATMError(msg)
+            # FAO-56 long wave needs elevation and latitude (loaded in evapopot, but not always evapopot is calculated)
+            if self.var.snowFAOlongwave:
                 self.var.dem = loadmap('dem')
                 self.var.lat = loadmap('latitude')
 
-
-
+            # snow albedo: parameters and initial snow age / snow albedo -> see initial_snowalbedo
+            self.initial_snowalbedo()
 
 
         # ---------------------------------------------------------------------------------
@@ -468,11 +510,12 @@ class snow_frost(object):
 
         self.var.adv_frost = False
         if 'Advanced_FrostIndex' in binding:
-            self.var.adv_frost  = returnBool('Advanced_FrostIndex')
+            self.var.adv_frost = returnBool('Advanced_FrostIndex')
+        # Kfrost and maxFrostIndex only used with Advanced_FrostIndex (otherwise Kfrost = 0.08/0.5 and maxFrostIndex = 1000 in dynamic)
+        if self.var.adv_frost:
             self.var.maxFrostIndex = loadmap('maxFrostIndex')
+            self.var.Kfrost = loadmap('Kfrost')
 
-
-        self.var.Kfrost = loadmap('Kfrost')
         self.var.Afrost = loadmap('Afrost')
         self.var.FrostIndexThreshold = loadmap('FrostIndexThreshold')
         self.var.SnowWaterEquivalent = loadmap('SnowWaterEquivalent')
@@ -497,6 +540,7 @@ class snow_frost(object):
         The method processes each elevation zone sequentially and handles:
         - Temperature correction based on elevation and lapse rate
         - Precipitation partitioning using temperature thresholds
+        - Snow albedo of the cell from fresh snow, snow age and snow cover (dynamic_snowalbedo)
         - Snow and ice melt calculation with seasonal variations
         - Snow redistribution based on holding capacity and slope
         - Snow fraction calculation for each elevation zone
@@ -523,6 +567,9 @@ class snow_frost(object):
             self.var.potBareSoilEvap = 0
         else:
             self.var.potBareSoilEvap = self.var.cropCorrect * self.var.minCropKC * self.var.ETRef
+        # potential bare soil evaporation before the reduction by snow -> used for potential transpiration (evaporation.py)
+        # (otherwise the snow reduction of bare soil evaporation would increase potential transpiration)
+        self.var.potBareSoilEvapNoSnow = self.var.potBareSoilEvap
 
 
         if self.var.usepySnowClim:
@@ -587,9 +634,11 @@ class snow_frost(object):
             #Rain = precip.rain.copy()
 
             time_value = [dateVar['currDate'].year, dateVar['currDate'].month, dateVar['currDate'].day]
-            # Reset to 0 snow at the specified time of year,
+            # snow and pack water removed by the reset [m] -> reported as snowReset (water leaves the model)
+            self.var.snowReset = globals.inZero.copy()
             if self.var.snowoff_month > 0:
                 if time_value[1] == self.var.snowoff_month and time_value[2] == self.var.snowoff_day:
+                    self.var.snowReset = self.var.snowpack.lastswe + self.var.snowpack.lastpackwater
                     self.var.snowpack = self.var.Snowpack(globals.inZero.shape[0], self.var.snowclimParameters)
 
             self.var.snowpack.cellarea = self.var.cellArea
@@ -613,8 +662,14 @@ class snow_frost(object):
             self.var.Rain_on_snow = np.where(self.var.ExistSnow, precip.rain, 0)
             self.var.Rain = np.where(self.var.ExistSnow, 0, precip.rain)
             self.var.Snow = precip.sfe.copy()
+            # precipitation including snow undercatch correction (for water balance output)
+            self.var.precipitation_sn = self.var.Snow + self.var.Rain # + self.var.Rain_on_snow
             #self.var.SnowCover = self.var.snowModelvars.SnowWaterEq / self.var.constSnowClim.WATERDENS
             self.var.SnowCover = (self.var.snowModelvars.SnowWaterEq + self.var.snowModelvars.PackWater) / self.var.constSnowClim.WATERDENS
+            # snow fraction of the cell: same thresholds as for the snow zones without pySnowClim (here one zone)
+            self.var.SnowFraction = np.where(self.var.SnowCover > 0.02, 0.25, 0.)
+            self.var.SnowFraction = np.where(self.var.SnowCover > 0.05, 0.5, self.var.SnowFraction)
+            self.var.SnowFraction = np.where(self.var.SnowCover > 0.10, 1.0, self.var.SnowFraction)
 
             # lost due to sublimation and win through condensation (condesation is negative here)
             self.var.snowEvap = (self.var.snowModelvars.Sublimation + self.var.snowModelvars.Condensation) / self.var.constSnowClim.WATERDENS
@@ -634,10 +689,9 @@ class snow_frost(object):
             self.var.refrozen = self.var.snowModelvars.RefrozenWater / self.var.constSnowClim.WATERDENS
             self.var.snowmelt1 = self.var.snowModelvars.SnowMelt / self.var.constSnowClim.WATERDENS
 
-            # if snow on ground no bare soil evap
-            self.var.potBareSoilEvap = np.where(self.var.ExistSnow == 1, 0, self.var.potBareSoilEvap)
-            # substract snow evapo from BaresoilEVap for the fraction of cell which is not covered by snow
-            #self.var.potBareSoilEvap = np.maximum(0., self.var.potBareSoilEvap - self.var.snowEvap)
+            # bare soil evaporation only from the part of the cell which is not covered by snow
+            # (before: 0 for the whole cell if any snow existed at the start of the day)
+            self.var.potBareSoilEvap = self.var.potBareSoilEvap * (1 - self.var.SnowFraction)
 
             #---------------------------------------
             # Saving initial pySnowClim at saving timesteps
@@ -650,8 +704,7 @@ class snow_frost(object):
                     #np.savez_compressed(saveFile, **var_dict)
 
                     for v in self.var.pySnowClimInitVars:
-                        variable = "self.var.snowpack."+v
-                        initVar.append(eval(variable))
+                        initVar.append(getattr(self.var.snowpack, v))
                     writeIniNetcdf(saveFile, self.var.pySnowClimInitVars, initVar)
 
         #----------------------------
@@ -660,7 +713,7 @@ class snow_frost(object):
 
             # sinus shaped function between the
             # annual minimum (December 21st) and annual maximum (June 21st) for the northern hemisphere
-            # annual maximum (December 21st) and annual minimum (June 21st) for the northern hemisphere
+            # annual maximum (December 21st) and annual minimum (June 21st) for the southern hemisphere
             if 'SeasonalSnowMeltSin' in binding:
                 SnowMeltCycle = np.sin(np.radians((dateVar['doy'] - self.var.SeasonalSnowMeltSin)
                                         * self.var.SnowDayDegrees))
@@ -673,8 +726,9 @@ class snow_frost(object):
 
                 SummerSeason = np.sin(
                     math.radians((dateVar['doy'] - self.var.summerSeasonStart) * self.var.SnowDayDegrees * 2))
+                # half-year period (2 x SnowDayDegrees) so that the southern window mirrors the northern one; slightly shorter than IceDayDegrees (default branch)
 
-                SummerSeason = np.where(SummerSeason < 0 or SnowMeltCycle < 0, globals.inZero, SummerSeason)
+                SummerSeason = np.where((SummerSeason < 0) | (SnowMeltCycle < 0), globals.inZero, SummerSeason)
 
             else:
                 SeasSnowMeltCoef = self.var.SnowSeason * np.sin(math.radians((dateVar['doy'] - 81) * self.var.SnowDayDegrees)) + self.var.SnowMeltCoef
@@ -700,19 +754,20 @@ class snow_frost(object):
             #assume forest is most present at lowest location
             nr_frac_forest = self.var.numberSnowLayers - np.round(self.var.fracVegCover[0] / (1 / self.var.numberSnowLayers)) - 1
 
-            # if only radiation is given like in the EMO meteo dataset:
-            # then rsdl has to be calculted in this way
+            # if only radiation is given like in the EMO meteo dataset (only_radiation) or long wave maps are too coarse
+            # (without_rlds): incoming long wave is estimated with FAO-56 (as in evaporationPot)
             if self.var.snowmelt_radiation:
-                if self.var.only_radiation:
+                if self.var.snowFAOlongwave:
                     radian = np.pi / 180 * self.var.lat
                     distanceSun = 1 + 0.033 * np.cos(2 * np.pi * dateVar['doy'] / 365)
                     # Chapter 3: equation 24
                     declin = 0.409 * np.sin(2 * np.pi * dateVar['doy'] / 365 - 1.39)
-                    ws = np.arccos(-np.tan(radian * np.tan(declin)))
+                    ws = np.arccos(np.clip(-np.tan(radian) * np.tan(declin), -1.0, 1.0))
                     Ra = 24 * 60 / np.pi * 0.082 * distanceSun * (
                             ws * np.sin(radian) * np.sin(declin) + np.cos(radian) * np.cos(declin) * np.sin(ws))
                     # Equation 21 Chapter 3
                     Rso = Ra * (0.75 + (2 * 10 ** -5 * self.var.dem))  # in MJ/m2/day
+                    Rso = np.maximum(Rso, 1e-6)  # avoid division by zero in polar night (Ra = 0)
                     # Equation 37 Chapter 3
                     RsRso = 1.35 * self.var.Rsds / Rso - 0.35
                     RsRso = np.minimum(np.maximum(RsRso, 0.05), 1)
@@ -721,41 +776,61 @@ class snow_frost(object):
 
             month = dateVar['currDate'].month - 1
 
+            # temperature and snowfall of each zone, calculated once (used for the snow albedo and in the loop below)
+            # i=0 -> highest zone
+            TavgZone = []
+            SnowZone = []
+            for i in range(self.var.numberSnowLayers):
+                if self.var.lapseratevar:
+                    # lapse rate from Dutra et al. 2022 is negative
+                    TavgS = self.var.Tavg + self.var.lapseR[month] * self.var.dzZone[i]
+                else:
+                    TavgS = self.var.Tavg - self.var.lapseRate * self.var.dzZone[i]
+                TavgZone.append(TavgS)
+                # Precipitation is assumed to be snow if daily average temperature is below TempSnow
+                # Snow is multiplied by correction factor to account for undercatch of snow precipitation (which is common)
+                SnowZone.append(np.where(TavgS < self.var.TempSnow, self.var.SnowFactor * self.var.Precipitation, globals.inZero))
+
+            # snow albedo: one albedo for the cell before today's melt -> see dynamic_snowalbedo
+            if self.var.useSnowAlbedo:
+                self.dynamic_snowalbedo(SnowZone)
+
             # run through all snow layers
             for i in range(self.var.numberSnowLayers):
 
-                if self.var.lapseratevar:
-                    # lapse rate from Dutra et al. 2022 is negative
-                    TavgS = self.var.Tavg + self.var.lapseR[month] * (self.var.dzRel[self.var.dzSnow[i]] - self.var.dzRel[7])
-                else:
-                    TavgS = self.var.Tavg - self.var.lapseRate * (self.var.dzRel[self.var.dzSnow[i]] - self.var.dzRel[7])
-
-                # Temperature at center of each zone (temperature at zone B equals Tavg)
-                # i=0 -> highest zone
-                # i=2 -> lower zone
-                SnowS = np.where(TavgS < self.var.TempSnow, self.var.SnowFactor * self.var.Precipitation,
-                                     globals.inZero)
-                # Precipitation is assumed to be snow if daily average temperature is below TempSnow
-                # Snow is multiplied by correction factor to account for undercatch of
-                # snow precipitation (which is common)
+                # temperature and snowfall of the zone (calculated once before the loop)
+                TavgS = TavgZone[i]
+                SnowS = SnowZone[i]
                 RainS = np.where(TavgS >= self.var.TempSnow, self.var.Precipitation, globals.inZero)
 
                 # Snow melt with radiation
                 # Radiation part from evaporationPot -> snowmelt has now a temperature part and a radiation part
-                # from Erlandsen et al. 2021Hydrology Research 1 April 2021; 52 (2): 356â€“372 https://doi.org/10.2166/nh.2021.132
+                # from Erlandsen et al. 2021Hydrology Research 1 April 2021; 52 (2): 356–372 https://doi.org/10.2166/nh.2021.132
                 if self.var.snowmelt_radiation:
-                    RNup = 4.903E-9 * (TavgS + 273.16) ** 4
-                    # if only radiation is given like in the EMO meteo dataset:
-                    if self.var.only_radiation:
-                        RLN = RNup * RSNet
+                    # outgoing long wave radiation sigma * T^4 (T in K; T^4 as T2 * T2 - faster than ** 4)
+                    TK = TavgS + 273.15
+                    TK2 = TK * TK
+                    RNup = 4.903E-9 * (TK2 * TK2)
+                    # outgoing long wave of the snow surface: melting snow is at most 0 °C
+                    TS = np.minimum(TavgS, 0.) + 273.15
+                    TS2 = TS * TS
+                    RNsnow = 4.903E-9 * (TS2 * TS2)
+                    # only_radiation / without_rlds: incoming long wave estimated with FAO-56
+                    if self.var.snowFAOlongwave:
+                        # incoming long wave estimated from FAO-56 net long wave at air temperature: Rsdl = RNup * (1 - RSNet)
+                        RLN = RNsnow - RNup * (1 - RSNet)
                     else:
-                        RLN = RNup - self.var.Rsdl
-                    RN = (self.var.Rsds - RLN) / 334.0
+                        RLN = RNsnow - self.var.Rsdl
+                    if self.var.useSnowAlbedo:
+                        # snow albedo: only the absorbed part (1 - albedo) of short wave radiation melts snow
+                        RN = ((1 - self.var.snowSurfaceAlbedo) * self.var.Rsds - RLN) / 334.0
+                    else:
+                        RN = (self.var.Rsds - RLN) / 334.0
                     # latent heat of fusion = 0.334 mJKg-1 * desity of water = 1000 khm-3
 
-                    SnowMeltS = (TavgS - self.var.TempMelt) * SeasSnowMeltCoef + self.var.SnowMeltRad * RN
-                    # it is 1% per 1mm rain -> according to Conboy Carter RainS has to be from [m] -> [mm]
-                    SnowMeltS = SnowMeltS * (1 + 0.01 * 1000 * RainS) * self.var.DtDay
+                    # rain factor: 1% more melt per 1mm rain (Conboy Carter, RainS [m] -> [mm]) - only for the temperature part
+                    SnowMeltS = ((TavgS - self.var.TempMelt) * SeasSnowMeltCoef * (1 + 0.01 * 1000 * RainS)
+                                 + self.var.SnowMeltRad * RN) * self.var.DtDay
                 else:
                     # without radiation
                     SnowMeltS = (TavgS - self.var.TempMelt) * SeasSnowMeltCoef * (1 + 0.01 * 1000 * RainS) * self.var.DtDay
@@ -776,8 +851,10 @@ class snow_frost(object):
                 # Check if snow+ice not bigger than snowcover
                 SnowIceMeltS = np.maximum(np.minimum(SnowMeltS + IceMeltS + snowIceM_surplus, self.var.SnowCoverS[i]), globals.inZero)
 
-                # snowIceM_surplus: each elevation band snow melt potential is collected -> one way to melt additianl snow which might
-                # be colleted in the valley because of snow retribution
+                # snowIceM_surplus: melt potential (snow + ice) that finds no snow in this zone is passed down to the next lower zone
+                # and added to its own potential -> melts snow collected in lower zones (e.g. by snow redistribution) and mimics
+                # snow/glacier transport downhill. The melt caused by it is booked as IceMelt (in mountains most of IceMelt).
+                # e.g. Otta 1km 2008: 43% of all melt, 97% of IceMelt; without it the snow does not melt out in summer
                 snowIceM_surplus = np.abs(np.minimum(self.var.SnowCoverS[i] - (SnowMeltS + IceMeltS + snowIceM_surplus),0))
                 IceMeltS = np.maximum(SnowIceMeltS - SnowMeltS, globals.inZero)
                 SnowMeltS = np.maximum(SnowIceMeltS - IceMeltS, globals.inZero)
@@ -786,20 +863,24 @@ class snow_frost(object):
 
                 # Snow evaporation
                 snowEvap = np.minimum(self.var.SnowCoverS[i], self.var.snowEvapFactor * self.var.potBareSoilEvap)
-                self.var.potBareSoilEvap = np.maximum(0., self.var.potBareSoilEvap - self.var.snowEvap)
                 self.var.SnowCoverS[i] = self.var.SnowCoverS[i] - snowEvap
 
                 # snow redistribution inspired by Frey and Holzmann (2015) doi:10.5194/hess-19-4517-2015
                 # if snow cover higher than snow holding capacity redistribution
                 # get the thresholds for the snow based on the snow density and snow depth values in Frey and Holzmann (2015)
-                # capacity of forest 2.5m snow cover, assumed snow density 250kg/m3: 0.25 * 1000 * 2.5 / 1000
-                # capacity of other land cover 0.25m snow cover, assumed snow density 250kg/m3: 0.25 * 1000 * 0.25 / 1000
-                # but only for cells with std above 100m
-                # snow capacity depends on whether there is forest cover in the elevation zone
+                # capacity of forest: 2.5m snow depth, assumed snow density 250kg/m3: 0.25 * 1000 * 2.5 / 1000 = 0.625 m SWE (swe_forest)
+                # capacity of other land cover: default swe_other = 0.2 m SWE (= 0.8m snow depth at 250kg/m3;
+                #   0.25m snow depth would be only 0.0625 m SWE) - both can be set in the settings file
+                # not implemented: "only for cells with std of elevation above 100m"
+                # snow capacity depends on whether there is forest cover in the elevation zone (forest assumed in the lowest zones)
                 snowcapacity = np.where(i <= nr_frac_forest, self.var.swe_other, self.var.swe_forest)
-                # where snow cover is higher than capacity, a fraction of snow will be redistributed
+                # where snow cover is higher than capacity, a fraction (0.35 * slope/90 * reduction_factor) of the WHOLE snow pack
+                # is moved to the next lower zone (added there after its melt -> max. one zone per day)
+                # works together with snowIceM_surplus above: the snow moved down is mostly melted by the surplus melt potential
+                # of the (then snow free) higher zones. e.g. Otta 1km 2008: 171% of snowfall moved, but without redistribution
+                # discharge differs < 1% per month (surplus share of melt drops from 43% to 4%)
 
-                # reduction factor at lowest level no snow_retri, increasing to factor 0.9 at highest level
+                # reduction factor: 0 at the lowest zone (no redistribution), increasing to 1 - 1/n at the highest zone (0.9 for 10 zones)
                 reduction_factor = self.var.redistr_factor * (1 - (i + 1) / self.var.numberSnowLayers)
                 snow_redistributed = np.where(self.var.SnowCoverS[i] > snowcapacity,
                         self.var.frac_snow_redistribution * self.var.SnowCoverS[i] * reduction_factor, 0)
@@ -836,9 +917,12 @@ class snow_frost(object):
             self.var.IceMelt /= self.var.numberSnowLayersFloat
             self.var.SnowCover /= self.var.numberSnowLayersFloat
             self.var.snowEvap /= self.var.numberSnowLayersFloat
+            # snow albedo: reset snow age and albedo if the cell is snow free -> see reset_snowalbedo
+            if self.var.useSnowAlbedo:
+                self.reset_snowalbedo()
+            # bare soil evaporation only from the part of the cell which is not covered by snow (same as with pySnowClim)
+            self.var.potBareSoilEvap = self.var.potBareSoilEvap * (1 - self.var.SnowFraction)
             self.var.precipitation_sn = self.var.Snow + self.var.Rain
-
-
 
         # ---------------------------------------------------------------------------------
         # Dynamic part of frost index
@@ -865,6 +949,151 @@ class snow_frost(object):
         # SnowWaterEquivalent taken as 0.45
         # Afrost, (daily decay coefficient) is taken as 0.97 (Handbook of Hydrology, p. 7.28)
         # Kfrost, (snow depth reduction coefficient) is taken as 0.57 [1/cm], (HH, p. 7.28) -> from Molnau taken as 0.5 for t> 0 and 0.08 for T<0
+
+
+    # --------------------------------------------------------------------------
+    # Snow albedo
+    # one snow albedo for the cell (all snow layers together) from fresh snow, snow age and snow cover,
+    # used in the radiation part of snow melt: (1 - snowSurfaceAlbedo) * Rsds
+    # --------------------------------------------------------------------------
+
+    def initial_snowalbedo(self):
+        """
+        Initialize snow albedo parameters and the initial snow age / snow albedo of the cell.
+
+        Called in initial (part without pySnowClim). useSnowAlbedo = False -> no albedo in
+        snow melt (same results as snow_frost.py without albedo). Snow age and snow albedo
+        are added to the initial conditions (SnowAge, SnowAlbedo); an init file without them
+        starts with age 0 and fresh snow albedo.
+        """
+
+        # useSnowAlbedo = False -> no albedo in snow melt (same as snow_frost.py without albedo)
+        self.var.useSnowAlbedo = True
+        if 'useSnowAlbedo' in binding:
+            self.var.useSnowAlbedo = returnBool('useSnowAlbedo')
+        # radiation snow melt without snow albedo: the full short wave radiation is used for snow melt
+        if self.var.snowmelt_radiation and not self.var.useSnowAlbedo:
+            msg = "Warning: snowmelt_radiation = True but useSnowAlbedo = False: snow melt uses the full short wave " \
+                  "radiation without snow albedo -> SnowMeltRad has to account for the albedo"
+            print(CWATMWarning(msg))
+        # snow albedo is only used in radiation snow melt -> not calculated (and not saved) without snowmelt_radiation
+        self.var.useSnowAlbedo = self.var.useSnowAlbedo and self.var.snowmelt_radiation
+        if not self.var.useSnowAlbedo:
+            return
+
+        # fresh snow albedo Amax: 0.80 - 0.90 for clean, dry new snow
+        self.var.snowAlbedoMax = 0.85
+        if 'snowAlbedoMax' in binding:
+            self.var.snowAlbedoMax = loadmap('snowAlbedoMax')
+        # old snow albedo Amin: 0.50 - 0.60
+        self.var.snowAlbedoMin = 0.55
+        if 'snowAlbedoMin' in binding:
+            self.var.snowAlbedoMin = loadmap('snowAlbedoMin')
+        # daily aging coefficient alpha (0.5 - 0.99) in As(t) = (Amax - Amin) * alpha^t + Amin
+        # cold, dry snow ages slowly; melting (wet) snow ages faster (grain growth, impurities)
+        self.var.snowAlbedoAgingCold = 0.98
+        if 'snowAlbedoAgingCold' in binding:
+            self.var.snowAlbedoAgingCold = loadmap('snowAlbedoAgingCold')
+        self.var.snowAlbedoAgingWarm = 0.90
+        if 'snowAlbedoAgingWarm' in binding:
+            self.var.snowAlbedoAgingWarm = loadmap('snowAlbedoAgingWarm')
+        # fresh snow threshold as snow water equivalent [m] of snowfall in 24 hours
+        # Snew > 0.01 m fresh snow depth at a fresh snow density of 100 kg/m3 -> 0.001 m SWE
+        self.var.freshSnowThreshold = 0.001
+        if 'freshSnowThreshold' in binding:
+            self.var.freshSnowThreshold = loadmap('freshSnowThreshold')
+        # snow density relative to water [-] to convert SWE into snow depth: depth = SWE / snowDensity
+        self.var.snowDensity = 0.3
+        if 'snowDensity' in binding:
+            self.var.snowDensity = loadmap('snowDensity')
+        # snow depth correction: below snowDepthAlbedo [m] (0.10 - 0.20 m) bare ground or vegetation shows through
+        self.var.snowDepthAlbedo = 0.15
+        if 'snowDepthAlbedo' in binding:
+            self.var.snowDepthAlbedo = loadmap('snowDepthAlbedo')
+        # albedo of the ground or vegetation seen through shallow snow
+        self.var.groundAlbedo = 0.20
+        if 'groundAlbedo' in binding:
+            self.var.groundAlbedo = loadmap('groundAlbedo')
+        # snow cover [m] below which a cell is taken as snow free (-> next snowfall is fresh snow)
+        self.var.noSnowThreshold = 1e-6
+
+        # one snow age [days] and one snow albedo for the cell (all snow layers together)
+        # missing in init file -> age 0, fresh snow albedo
+        self.var.SnowAge = self.var.load_initial("SnowAge") + globals.inZero
+        albedo = self.var.load_initial("SnowAlbedo", default=self.var.snowAlbedoMax) + globals.inZero
+        # an init file without SnowAlbedo returns 0 (default of load_initial is only used without load_initial)
+        # -> snow albedo is never <= 0: take fresh snow albedo
+        self.var.SnowAlbedo = np.where(albedo > 0, albedo, self.var.snowAlbedoMax)
+        self.var.snowSurfaceAlbedo = self.var.SnowAlbedo.copy()
+
+        # snow age and snow albedo are saved as initial conditions too
+        # (initcondition.initial has filled the list before -> append here)
+        globals.initCondVar.append("SnowAge")
+        globals.initCondVarValue.append("SnowAge")
+        globals.initCondVar.append("SnowAlbedo")
+        globals.initCondVarValue.append("SnowAlbedo")
+
+    def dynamic_snowalbedo(self, SnowZone):
+        """
+        Calculate snow age, snow albedo and surface albedo of the cell before today's melt.
+
+        One value for all snow layers (useSnowAlbedo = True):
+        - snowfall = mean snowfall of all layers (each layer with its own temperature),
+          snow cover = mean of all layers, aging with the temperature of the cell (Tavg)
+        - fresh snow (snowfall > freshSnowThreshold, or any snowfall on a snow free cell):
+          snow age t = 0, snow albedo = snowAlbedoMax
+        - otherwise aging As(t) = (Amax - Amin) * alpha^t + Amin, calculated as recursion
+          As(t) = Amin + (As(t-1) - Amin) * alpha with alpha = snowAlbedoAgingCold (T < TempMelt)
+          or snowAlbedoAgingWarm (T >= TempMelt); same as the formula for constant alpha
+        - snow depth correction: surface albedo = f * As + (1 - f) * groundAlbedo,
+          f = min(1, snow depth / snowDepthAlbedo)
+        - the surface albedo reduces the short wave part of radiation snow melt: (1 - albedo) * Rsds
+
+        Parameters
+        ----------
+        SnowZone : list of arrays
+            snowfall [m] of each snow layer (zone temperature below TempSnow), calculated once in dynamic
+
+        References
+        ----------
+        Warren, S.G. (1982) Optical properties of snow. Rev. Geophys. 20(1), 67-89
+        https://opg.optica.org/abstract.cfm?uri=ao-38-18-3869
+        https://scholars.unh.edu/cgi/viewcontent.cgi?article=1056&context=ersc
+        """
+
+        # snow cover of the cell before today's snowfall and melt
+        snowCoverCell = np.sum(self.var.SnowCoverS, axis=0) / self.var.numberSnowLayersFloat
+        # snowfall of the cell = mean of the snowfall of each layer (calculated once in dynamic)
+        snowCell = globals.inZero.copy()
+        for SnowS in SnowZone:
+            snowCell += SnowS
+        snowCell /= self.var.numberSnowLayersFloat
+
+        # fresh snow: snowfall above threshold, or snow falling on a snow free cell -> age 0, albedo Amax
+        freshSnow = (snowCell > self.var.freshSnowThreshold) | ((snowCoverCell <= self.var.noSnowThreshold) & (snowCell > 0))
+        # aging coefficient alpha: slow aging for cold dry snow, faster aging for melting (wet) snow
+        albedoAging = np.where(self.var.Tavg < self.var.TempMelt, self.var.snowAlbedoAgingCold, self.var.snowAlbedoAgingWarm)
+        self.var.SnowAge = np.where(freshSnow, 0., self.var.SnowAge + 1.)
+        # As(t) = (Amax - Amin) * alpha^t + Amin as recursion As(t) = Amin + (As(t-1) - Amin) * alpha
+        # (identical for constant alpha, allows alpha to change with temperature from day to day)
+        self.var.SnowAlbedo = np.where(freshSnow, self.var.snowAlbedoMax,
+                self.var.snowAlbedoMin + (self.var.SnowAlbedo - self.var.snowAlbedoMin) * albedoAging)
+
+        # snow depth correction: for shallow snow bare ground or vegetation shows through
+        snowDepth = (snowCoverCell + snowCell) / self.var.snowDensity
+        fracSnowAlbedo = np.minimum(snowDepth / self.var.snowDepthAlbedo, 1.0)
+        # surface albedo of the cell used for all snow layers (ground albedo for a snow free cell)
+        self.var.snowSurfaceAlbedo = fracSnowAlbedo * self.var.SnowAlbedo + (1 - fracSnowAlbedo) * self.var.groundAlbedo
+
+    def reset_snowalbedo(self):
+        """
+        Reset snow age and snow albedo where no snow is left in the cell (next snowfall is fresh snow).
+
+        Called in dynamic after the loop over all snow layers (SnowCover = mean of all layers).
+        """
+        noSnow = self.var.SnowCover <= self.var.noSnowThreshold
+        self.var.SnowAge = np.where(noSnow, 0., self.var.SnowAge)
+        self.var.SnowAlbedo = np.where(noSnow, self.var.snowAlbedoMax, self.var.SnowAlbedo)
 
 
 

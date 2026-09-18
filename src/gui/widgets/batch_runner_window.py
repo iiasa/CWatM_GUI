@@ -954,7 +954,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             name = self._safe_name(row).lower()
             if name in seen_names:
                 warnings.append(f"{label}: same scenario name as row {seen_names[name]}"
-                                f" - both appear alike in the Run Ledger")
+                                f" - both appear alike in the Journal of Runs")
             else:
                 seen_names[name] = row + 1
             pathout = self._cell_text(row, 1)

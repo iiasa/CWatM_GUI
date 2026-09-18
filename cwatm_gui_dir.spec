@@ -286,6 +286,8 @@ datas = [
     # Screenshots referenced by the Help markdown (figures/*.png) - the Help viewer
     # sets its base URL to the documentation folder, so relative refs resolve here.
     (os.path.join(spec_root, 'documentation', 'figures', '*.png'), 'documentation/figures'),
+    # GUI language table (Preferences > Display > Language) - src/gui/utils/i18n.py
+    (os.path.join(spec_root, 'translations', 'ui_strings_languages.csv'), 'translations'),
 ]
 # Include rasterio's bundled GDAL/PROJ data files
 datas += rasterio_datas
