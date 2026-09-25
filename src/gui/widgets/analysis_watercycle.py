@@ -706,19 +706,24 @@ class WatercycleWindow(PlotlyWindowBase):
         labels = labels_1st + labels_out
         parents = parents_1st + parents_out
 
+        # The root wedge and 'Balance' use the theme's panel colour (white in
+        # Normal, matching the old hardcoded 'white') so the sunburst's centre
+        # follows Dark Mode / Mikhail instead of always punching a white hole
+        # through a dark chart.
+        hub_color = theme.c('panel_bg')
         label_color = {
-            'Water balance': 'white', 'Inputs': '#b0c4de', 'Outputs': '#d2691e', 'Balance': 'white',
+            'Water balance': hub_color, 'Inputs': '#b0c4de', 'Outputs': '#d2691e', 'Balance': hub_color,
             'Rain': '#60C4DE', 'Snow': '#8fd1d1', 'Glacier': '#ADD8E6',
-            'River discharge at outlet': 'chocolate', 'non-Irrigation consumption': 'chocolate',
+            'River discharge at outlet': '#d2691e', 'non-Irrigation consumption': '#d2691e',
             'Evapotranspiration': '#669C53', 'Transpiration': '#669C53',
             'Bare soil evapo': '#699C4F', 'Interception evapo': '#265312',
             'Open water evapo': '#60C4DE', 'Snow evapo': '#8fd1d1', 'Channel evaporation': '#60C4DE',
             'Forest': '#265312', 'Others': '#81c066', 'Paddy': '#B66934', 'non-Paddy': '#B66934',
         }
         colors = [
-            'white' if par == ''            # root wedge (station lon/lat)
+            hub_color if par == ''          # root wedge (station lon/lat)
             else '#00CC96' if lab == storetext
-            else label_color.get(lab, '#b0c4de' if par == 'Inputs' else 'chocolate')
+            else label_color.get(lab, '#b0c4de' if par == 'Inputs' else '#d2691e')
             for lab, par in zip(labels, parents)]
 
         inputs_idx = {i for i, p in enumerate(parents) if p == 'Inputs'} | {labels.index('Inputs')}
@@ -777,18 +782,27 @@ class WatercycleWindow(PlotlyWindowBase):
             for p in parents
         ]
 
-        fig = go.Figure(
-            go.Sunburst(
-                customdata=customdata,
-                labels=labels,
-                parents=parents,
-                values=values_out,
-                branchvalues='total',
-                marker=dict(colors=colors),
-                maxdepth=4,
-                hovertemplate=hovertemplate,
-            )
+        sunburst_kwargs = dict(
+            customdata=customdata,
+            labels=labels,
+            parents=parents,
+            values=values_out,
+            branchvalues='total',
+            marker=dict(colors=colors),
+            maxdepth=4,
+            hovertemplate=hovertemplate,
         )
+        if theme.is_dark():
+            # Leave the wedge fill colours as-is (they're deliberately fixed,
+            # theme-independent data colours - darkening them to chase text
+            # contrast made the palette muddy and less distinct in testing).
+            # Plotly instead auto-picks each wedge's inside-text as black or
+            # white from that wedge's own fill brightness, which for the
+            # lighter fills (Inputs, Rain, Snow, ...) picks black - fine on
+            # Normal's white background, illegible-looking against a black
+            # chart. Override it to the theme's text colour everywhere instead.
+            sunburst_kwargs['insidetextfont'] = dict(color=theme.c('text'))
+        fig = go.Figure(go.Sunburst(**sunburst_kwargs))
         fig.update_layout(
             template=theme.plotly_template(),
             autosize=True,  # fill the web view (no fixed height -> no scrollbar)
