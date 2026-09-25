@@ -118,7 +118,7 @@ class LineNumberGutter(QWidget):
         """Clicking a section header's gutter row toggles its fold; clicking any
         other row (on the line number) toggles a bookmark on that line."""
         try:
-            y = event.pos().y()
+            y = event.position().toPoint().y()
             for block, top, h in self._visible_blocks():
                 if top <= y <= top + h:
                     if is_section_header(block.text()):

@@ -103,8 +103,10 @@ Name: "iniassoc";    Description: "Add CWatM GUI to the 'Open with' menu for .in
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+; AppUserModelID = the ID cwatm_gui.py sets (_set_windows_app_id), so the taskbar
+; matches the running window to this shortcut and shows its icon from the start.
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "IIASA.CWatM.GUI"
+Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\{#MyAppExeName}"; AppUserModelID: "IIASA.CWatM.GUI"; Tasks: desktopicon
 
 [Registry]
 ; --- optional .ini "Open with" association (per-user HKCU, no admin) --------

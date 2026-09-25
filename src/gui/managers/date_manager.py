@@ -332,12 +332,13 @@ class DateTimeline(QWidget):
             self._dm.refresh_forcing_range()
         except Exception:
             log.debug("mousePressEvent: ignored", exc_info=True)
-        key = self._key_near(event.pos())
+        pos = event.position().toPoint()
+        key = self._key_near(pos)
         x0, x1, y = self._track_rect()
         lo, hi = self._axis()
         if key is None:
             # Click on the track: jump the nearest handle to the clicked day
-            qd = self._date_at(event.pos().x(), lo, hi, x0, x1)
+            qd = self._date_at(pos.x(), lo, hi, x0, x1)
             best, best_d = None, None
             for k, hd, _c in self._handles():
                 d = abs(hd.daysTo(qd))
@@ -347,16 +348,17 @@ class DateTimeline(QWidget):
         if key is None:
             return
         self._drag_key = key
-        self._apply(key, self._date_at(event.pos().x(), lo, hi, x0, x1))
+        self._apply(key, self._date_at(pos.x(), lo, hi, x0, x1))
 
     def mouseMoveEvent(self, event):
+        pos = event.position().toPoint()
         if self._drag_key:
             x0, x1, _y = self._track_rect()
             lo, hi = self._axis()
             self._apply(self._drag_key,
-                        self._date_at(event.pos().x(), lo, hi, x0, x1))
+                        self._date_at(pos.x(), lo, hi, x0, x1))
         else:
-            self.setCursor(Qt.SizeHorCursor if self._key_near(event.pos())
+            self.setCursor(Qt.SizeHorCursor if self._key_near(pos)
                            else Qt.ArrowCursor)
 
     def mouseReleaseEvent(self, event):

@@ -626,3 +626,49 @@ Zobrazuje se pouze na úrovni Expert; otevřené karty si zachovají obsah, doku
 449,short,kurze,breve,rövid,scurt,kratak,kratak,krátku,кратък,krátkou,коротку
 450,medium,mittellange,media,közepes,mediu,srednji,srednji,strednú,среден,střední,середню
 451,long,lange,lunga,hosszú,lung,dug,dug,dlhú,дълъг,dlouhou,довгу
+452,"CWatM is the in-house hydrological model of IIASA.
+
+The Community Water Model (CWatM) is designed as a tool for assessing water security in the context of global change including environmental flows. It includes an accounting of how future water demands will evolve in response to socioeconomic change and how water availability will change in response to climate change.
+
+CWatM is a spatially distributed model that simulates the water cycle including surface water, groundwater, and human water use at daily timestep and at resolutions from 30 arcsec to 30 arcmin.","CWatM ist das hauseigene hydrologische Modell des IIASA.
+
+Das Community Water Model (CWatM) ist als Werkzeug zur Bewertung der Wassersicherheit im Kontext des globalen Wandels einschließlich ökologischer Mindestabflüsse konzipiert. Es berücksichtigt, wie sich der künftige Wasserbedarf infolge sozioökonomischer Veränderungen entwickeln und wie sich die Wasserverfügbarkeit infolge des Klimawandels verändern wird.
+
+CWatM ist ein räumlich verteiltes Modell, das den Wasserkreislauf einschließlich Oberflächenwasser, Grundwasser und menschlicher Wassernutzung in täglichen Zeitschritten und mit Auflösungen von 30 Bogensekunden bis 30 Bogenminuten simuliert.","CWatM è il modello idrologico interno dell'IIASA.
+
+Il Community Water Model (CWatM) è concepito come strumento per valutare la sicurezza idrica nel contesto del cambiamento globale, compresi i deflussi ecologici. Tiene conto di come evolverà la futura domanda d'acqua in risposta ai cambiamenti socioeconomici e di come cambierà la disponibilità idrica in risposta ai cambiamenti climatici.
+
+CWatM è un modello spazialmente distribuito che simula il ciclo dell'acqua, comprese le acque superficiali, le acque sotterranee e l'uso umano dell'acqua, a passo temporale giornaliero e con risoluzioni da 30 secondi d'arco a 30 minuti d'arco.","A CWatM az IIASA saját fejlesztésű hidrológiai modellje.
+
+A Community Water Model (CWatM) a vízbiztonság értékelésére szolgáló eszköz a globális változások – köztük az ökológiai vízhozamok – összefüggésében. Figyelembe veszi, hogyan alakul a jövőbeli vízigény a társadalmi-gazdasági változások hatására, és hogyan változik a rendelkezésre álló vízkészlet az éghajlatváltozás hatására.
+
+A CWatM térben osztott modell, amely napi időlépéssel, 30 ívmásodperctől 30 ívpercig terjedő felbontásban szimulálja a vízkörforgást, beleértve a felszíni vizeket, a felszín alatti vizeket és az emberi vízhasználatot.","CWatM este modelul hidrologic propriu al IIASA.
+
+Community Water Model (CWatM) este conceput ca un instrument pentru evaluarea securității apei în contextul schimbărilor globale, inclusiv al debitelor ecologice. Acesta ține seama de modul în care cererea viitoare de apă va evolua ca răspuns la schimbările socioeconomice și de modul în care disponibilitatea apei se va modifica ca răspuns la schimbările climatice.
+
+CWatM este un model distribuit spațial care simulează ciclul apei, inclusiv apele de suprafață, apele subterane și utilizarea apei de către om, la pas de timp zilnic și la rezoluții de la 30 de secunde de arc la 30 de minute de arc.","CWatM je interni hidrološki model instituta IIASA.
+
+Community Water Model (CWatM) osmišljen je kao alat za procenu vodne bezbednosti u kontekstu globalnih promena, uključujući ekološke protoke. Obuhvata procenu kako će se buduće potrebe za vodom razvijati kao odgovor na socioekonomske promene i kako će se raspoloživost vode menjati kao odgovor na klimatske promene.
+
+CWatM je prostorno distribuirani model koji simulira hidrološki ciklus, uključujući površinske vode, podzemne vode i ljudsku upotrebu vode, sa dnevnim vremenskim korakom i u rezolucijama od 30 lučnih sekundi do 30 lučnih minuta.","CWatM je interni hidrološki model instituta IIASA.
+
+Community Water Model (CWatM) osmišljen je kao alat za procjenu vodne sigurnosti u kontekstu globalnih promjena, uključujući ekološke protoke. Obuhvaća procjenu kako će se buduće potrebe za vodom razvijati kao odgovor na socioekonomske promjene i kako će se raspoloživost vode mijenjati kao odgovor na klimatske promjene.
+
+CWatM je prostorno distribuirani model koji simulira hidrološki ciklus, uključujući površinske vode, podzemne vode i ljudsku upotrebu vode, s dnevnim vremenskim korakom i u rezolucijama od 30 lučnih sekundi do 30 lučnih minuta.","CWatM je vlastný hydrologický model inštitútu IIASA.
+
+Community Water Model (CWatM) je navrhnutý ako nástroj na hodnotenie vodnej bezpečnosti v kontexte globálnych zmien vrátane ekologických prietokov. Zohľadňuje, ako sa budúci dopyt po vode bude vyvíjať v reakcii na socioekonomické zmeny a ako sa dostupnosť vody zmení v reakcii na zmenu klímy.
+
+CWatM je priestorovo distribuovaný model, ktorý simuluje kolobeh vody vrátane povrchových vôd, podzemných vôd a využívania vody človekom s denným časovým krokom a v rozlíšeniach od 30 oblúkových sekúnd do 30 oblúkových minút.","CWatM е собственият хидрологичен модел на IIASA.
+
+Community Water Model (CWatM) е създаден като инструмент за оценка на водната сигурност в контекста на глобалните промени, включително екологичните водни потоци. Той отчита как бъдещото потребление на вода ще се развива в отговор на социално-икономическите промени и как наличността на вода ще се променя в отговор на изменението на климата.
+
+CWatM е пространствено разпределен модел, който симулира водния цикъл, включително повърхностните води, подземните води и използването на вода от човека, с дневна времева стъпка и при резолюции от 30 дъгови секунди до 30 дъгови минути.","CWatM je vlastní hydrologický model institutu IIASA.
+
+Community Water Model (CWatM) je navržen jako nástroj pro hodnocení vodní bezpečnosti v kontextu globálních změn včetně ekologických průtoků. Zohledňuje, jak se bude budoucí poptávka po vodě vyvíjet v reakci na socioekonomické změny a jak se bude dostupnost vody měnit v reakci na změnu klimatu.
+
+CWatM je prostorově distribuovaný model, který simuluje koloběh vody včetně povrchových vod, podzemních vod a využívání vody člověkem s denním časovým krokem a v rozlišeních od 30 obloukových sekund do 30 obloukových minut.","CWatM — власна гідрологічна модель IIASA.
+
+Community Water Model (CWatM) розроблено як інструмент для оцінки водної безпеки в контексті глобальних змін, зокрема екологічних витрат води. Модель враховує, як майбутні потреби у воді змінюватимуться внаслідок соціально-економічних змін і як доступність води змінюватиметься внаслідок зміни клімату.
+
+CWatM — просторово розподілена модель, яка моделює кругообіг води, зокрема поверхневі води, підземні води та водокористування людиною, з добовим часовим кроком і з роздільною здатністю від 30 кутових секунд до 30 кутових хвилин."
+453,Source of open available Gemini NotebookLM to search for information. You can use the default entry or you can put your own link,Quelle eines offen verfügbaren Gemini-NotebookLM zur Informationssuche. Sie können den Standardeintrag verwenden oder Ihren eigenen Link eingeben,Fonte di un NotebookLM Gemini liberamente disponibile per cercare informazioni. Puoi usare la voce predefinita o inserire il tuo link,"Nyilvánosan elérhető Gemini NotebookLM forrás információkereséshez. Használhatja az alapértelmezett bejegyzést, vagy megadhatja a saját hivatkozását",Sursa unui NotebookLM Gemini disponibil public pentru căutarea informațiilor. Puteți folosi intrarea implicită sau puteți introduce propriul link,Izvor javno dostupnog Gemini NotebookLM-a za pretragu informacija. Možete koristiti podrazumevani unos ili uneti sopstveni link,Izvor javno dostupnog Gemini NotebookLM-a za pretraživanje informacija. Možete koristiti zadani unos ili unijeti vlastitu poveznicu,Zdroj verejne dostupného Gemini NotebookLM na vyhľadávanie informácií. Môžete použiť predvolenú položku alebo zadať vlastný odkaz,Източник на свободно достъпен Gemini NotebookLM за търсене на информация. Можете да използвате записа по подразбиране или да въведете собствена връзка,Zdroj veřejně dostupného Gemini NotebookLM pro vyhledávání informací. Můžete použít výchozí položku nebo zadat vlastní odkaz,Джерело загальнодоступного Gemini NotebookLM для пошуку інформації. Ви можете використати запис за замовчуванням або ввести власне посилання

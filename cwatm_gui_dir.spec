@@ -273,7 +273,7 @@ hiddenimports += modflow_hiddenimports  # MODFLOW coupling (flopy + matplotlib s
 # folder bigger and slower to cold-start (more files for the OS/AV to touch).
 # Only the non-code data cwatm reads at runtime is included:
 #   - metaNetcdf.xml (editor hover tooltips + Analyse windows + model output)
-#   - the t5 routing libraries (added under `binaries` below, at the package
+#   - the t6 routing libraries (added under `binaries` below, at the package
 #     path where cwatm/management_modules/globals.py resolves them via __file__)
 datas = [
     # Include assets
@@ -321,10 +321,10 @@ routing_binaries_path = os.path.join(spec_root, 'cwatm', 'hydrological_modules',
 _routing_dest = 'cwatm/hydrological_modules/routing_reservoirs'
 if os.path.exists(routing_binaries_path):
     binaries.extend([
-        (os.path.join(routing_binaries_path, 't5.dll'), _routing_dest),
-        (os.path.join(routing_binaries_path, 't5_linux.so'), _routing_dest),
-        (os.path.join(routing_binaries_path, 't5_mac.so'), _routing_dest),
-        (os.path.join(routing_binaries_path, 't5cyg.so'), _routing_dest),
+        (os.path.join(routing_binaries_path, 't6.dll'), _routing_dest),
+        (os.path.join(routing_binaries_path, 't6_linux.so'), _routing_dest),
+        (os.path.join(routing_binaries_path, 't6_mac_arm64.so'), _routing_dest),
+        (os.path.join(routing_binaries_path, 't6_mac_x86_64.so'), _routing_dest),
     ])
 
 a = Analysis(
