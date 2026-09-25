@@ -284,14 +284,11 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         header_layout = QHBoxLayout(banner_widget)
         header_layout.setContentsMargins(0, 0, 0, 0)
 
-        # CWatM icon
+        # CWatM icon (dark-theme variant swapped in by _retheme)
         try:
             icon_label = QLabel()
-            from src.gui.utils.assets import asset_path
-            pixmap = QPixmap(asset_path("cwatm.ico"))
-            if not pixmap.isNull():
-                scaled_pixmap = pixmap.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                icon_label.setPixmap(scaled_pixmap)
+            self._banner_icon_label = icon_label
+            self._set_banner_icon_pixmap()
             header_layout.addWidget(icon_label)
         except Exception:
             log.debug("banner icon not shown", exc_info=True)
@@ -321,22 +318,16 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
 
         header_layout.addStretch()
 
-        # IIASA logo
+        # IIASA logo (dark-theme variant swapped in by _retheme)
         try:
             iiasa_label = QLabel()
-            from src.gui.utils.assets import asset_path
-            iiasa_pixmap = QPixmap(asset_path("iiasa-logo.svg"))
-            if not iiasa_pixmap.isNull():
-                scaled_iiasa = iiasa_pixmap.scaled(180, 90, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                iiasa_label.setPixmap(scaled_iiasa)
-                header_layout.addWidget(iiasa_label)
-            else:
-                iiasa_label.setText("IIASA")
-                iiasa_label.setStyleSheet("color: blue; font-weight: bold;")
-                header_layout.addWidget(iiasa_label)
+            self._banner_iiasa_label = iiasa_label
+            self._set_banner_iiasa_pixmap()
+            header_layout.addWidget(iiasa_label)
         except:
             iiasa_label = QLabel("IIASA")
             iiasa_label.setStyleSheet("color: blue; font-weight: bold;")
+            self._banner_iiasa_label = iiasa_label
             header_layout.addWidget(iiasa_label)
 
         self._banner_widget = banner_widget
@@ -347,6 +338,60 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         except Exception:
             show_header = True
         banner_widget.setVisible(bool(show_header))
+
+    def _set_banner_icon_pixmap(self):
+        """(Re)load the banner's CWatM icon for the active theme - a light-on-dark
+        variant for Dark Mode / Mikhail (theme.is_dark()), the normal icon otherwise.
+        Called from create_header and re-run by _retheme on a Mode switch."""
+        label = getattr(self, "_banner_icon_label", None)
+        if label is None:
+            return
+        from src.gui.utils.assets import asset_path
+        name = "cwatm_dark.png" if theme.is_dark() else "cwatm.ico"
+        pixmap = QPixmap(asset_path(name))
+        if not pixmap.isNull():
+            label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    @staticmethod
+    def _svg_pixmap(path, box_w, box_h):
+        """Rasterize an SVG straight to a pixmap that fits ``box_w x box_h``
+        (aspect preserved), sharp at that exact size.
+
+        ``QPixmap(svg_path)`` alone rasterizes at the SVG's tiny intrinsic
+        size (its declared width/height attribute - ~225x65 for the IIASA
+        logo) and a later ``.scaled()`` call is then just a blurry bilinear
+        resize of that small bitmap. ``QIcon``'s SVG icon engine renders
+        through ``QSvgRenderer`` at whatever pixmap size is actually
+        requested, so asking it for the already aspect-fitted size below
+        gives a crisp result with no separate blur step."""
+        from PySide6.QtSvg import QSvgRenderer
+        renderer = QSvgRenderer(path)
+        if not renderer.isValid():
+            return QPixmap()
+        natural = renderer.defaultSize()
+        nat_w = natural.width() or box_w
+        nat_h = natural.height() or box_h
+        ratio = min(box_w / nat_w, box_h / nat_h)
+        fit_w = max(1, round(nat_w * ratio))
+        fit_h = max(1, round(nat_h * ratio))
+        return QIcon(path).pixmap(fit_w, fit_h)
+
+    def _set_banner_iiasa_pixmap(self):
+        """(Re)load the banner's IIASA logo for the active theme - a white vector
+        variant for Dark Mode / Mikhail (theme.is_dark()), the normal logo
+        otherwise. Rendered via _svg_pixmap so it stays sharp at banner size.
+        Called from create_header and re-run by _retheme on a Mode switch."""
+        label = getattr(self, "_banner_iiasa_label", None)
+        if label is None:
+            return
+        from src.gui.utils.assets import asset_path
+        name = "iiasa-logo-dark.svg" if theme.is_dark() else "iiasa-logo.svg"
+        pixmap = self._svg_pixmap(asset_path(name), 180, 90)
+        if not pixmap.isNull():
+            label.setPixmap(pixmap)
+        else:
+            label.setText("IIASA")
+            label.setStyleSheet("color: blue; font-weight: bold;")
 
     def _update_interface_font(self):
         """Size the banner interface text to the current window width so it shrinks
@@ -2232,6 +2277,8 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             self.menu_bar.setStyleSheet(self._menu_bar_stylesheet())
             self._banner_title.setStyleSheet(f"color: {theme.c('accent')};")
             self.interface_label.setStyleSheet(f"color: {theme.c('text_muted')};")
+            self._set_banner_icon_pixmap()
+            self._set_banner_iiasa_pixmap()
             self._left_panel.setStyleSheet(self._left_panel_style())
             self._right_panel.setStyleSheet(self._right_panel_style())
             self.date_manager.retheme()
