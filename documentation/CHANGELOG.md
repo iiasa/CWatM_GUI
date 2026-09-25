@@ -4,6 +4,63 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
+## CWatM GUI 1.07 — what is new
+
+*Released 18 September 2026. Previous release: 1.06 (22 August 2026).*
+
+The headline of this release is that the GUI now speaks eleven languages. Alongside it
+come a way to run a settings file without the GUI, a consistent name for the run
+journal, and the switch to CWatM's new routing library.
+
+---
+
+### 1. GUI language
+
+**Preferences ▸ Display ▸ Language** offers **English** (default), **Deutsch**,
+**Italiano**, **Magyar**, **Română**, **Srpski** (Latin script), **Hrvatski**,
+**Slovenčina**, **Български**, **Čeština** and **Українська**. Menus, menu items,
+buttons, labels and tooltips switch **at once**, with no restart, in both directions,
+and the choice is remembered for the next start. Messages, window titles and the
+settings file itself stay in English.
+
+All translations live in one table, `translations/ui_strings_languages.csv`: a new
+text is one row, a new language one column. The English texts stay in the code, and
+an English install runs no translation layer at all.
+
+### 2. RUN CWATM ▸ Create batch (Expert)
+
+Writes a standalone Windows **`.bat`** file that runs the current settings file
+**without the GUI**, using exactly the same model launcher as *Run CWATM* (the bundled
+`CWatM_model.exe` in the installed app, the project's Python from source). It changes
+into the working directory first so relative paths resolve the same way, and ends with
+`pause` so the console stays open. Like *Check Data*, it warns when the editor has
+unsaved changes (the batch runs the file on disk), asks for the file name and opens the
+containing folder afterwards.
+
+### 3. "Journal of Runs" everywhere
+
+The remaining places that still said **Run Ledger** — error messages, the Preferences
+*Run History* page and the Batch Run duplicate-name warning — now say **Journal of
+Runs**, matching the menu.
+
+### 4. CWatM t6 routing library
+
+CWatM now uses the **t6** routing libraries (`t6.dll`, `t6_linux.so`,
+`t6_mac_arm64.so`, `t6_mac_x86_64.so`) instead of t5. The build bundles the new
+files at the path CWatM loads them from.
+
+### 5. Fixes
+
+- **Analyse ▸ Watercycle**: corrected a calculation in the sunburst water balance.
+
+### 6. Tests
+
+New tests for the language table and switching, Create batch, Flow duration / Flow
+regime, the Check settingsfile pass, the Batch Run window, the config parser, date and
+file managers, window geometry, Restore settingsfile, the basin viewer's shape/JSON
+readers, and startup speed.
+
+
 ## CWatM GUI 1.06 — what is new
 
 *Released 22 August 2026. Previous release: 1.05 (11 August 2026).*

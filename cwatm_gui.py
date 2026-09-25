@@ -227,6 +227,51 @@ def _set_windows_app_id():
             log.debug("setting AppUserModelID failed", exc_info=True)
 
 
+_class_icons = []   # the HICONs set on the window class; kept alive for the process
+
+
+def _set_windows_class_icon(window):
+    """Put the CWatM icon on the Qt window CLASS as well (Windows only).
+
+    Qt sets the icon per window (WM_SETICON), but the taskbar asks for it with a
+    timed-out WM_GETICON when it creates the button - and during startup the GUI
+    thread is busy, the query times out, and the shell falls back to the window
+    class icon, which Qt takes from the host exe (pythonw.exe from source -> the
+    Python icon). The class icon needs no message round-trip, so it is always
+    right. All Qt top-level windows share that class, which is what we want.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SetClassLongPtrW.argtypes = (ctypes.c_void_p, ctypes.c_int,
+                                            ctypes.c_void_p)
+        user32.SetClassLongPtrW.restype = ctypes.c_void_p
+        path = asset_path("cwatm_small.ico")
+        if not os.path.isfile(path):
+            path = asset_path("cwatm.ico")
+        hwnd = ctypes.c_void_p(int(window.winId()))
+        try:
+            dpi = user32.GetDpiForWindow(hwnd) or 96
+        except Exception:
+            dpi = 96
+        # (GCLP_HICON, SM_CXICON), (GCLP_HICONSM, SM_CXSMICON)
+        for index, metric in ((-14, 11), (-34, 49)):
+            try:
+                size = user32.GetSystemMetricsForDpi(metric, dpi)
+            except Exception:
+                size = user32.GetSystemMetrics(metric)
+            hicon = user32.LoadImageW(None, path, 1, size, size,
+                                      0x10)   # IMAGE_ICON, LR_LOADFROMFILE
+            if hicon:
+                _class_icons.append(hicon)
+                user32.SetClassLongPtrW(hwnd, index, hicon)
+    except Exception:
+        log.debug("setting the window class icon failed", exc_info=True)
+
+
 def _close_splash():
     """Close the PyInstaller splash screen once the main window is shown."""
     _splash("text", "UI loaded")
@@ -607,6 +652,7 @@ def main():
         window = CWatMMainWindow()
         _profile("main window constructed")
         _redirectors = _install_stdio_redirects(window)   # noqa: F841 (keep alive)
+        _set_windows_class_icon(window)   # before show(): the taskbar button reads it
 
         window.show()
         _profile("main window shown")

@@ -48,6 +48,12 @@ def _saved_basemap(settings):
     return saved if saved in {k for _l, k in BASEMAPS} else "OSM-WMS"
 
 
+def _saved_notebook(settings):
+    """The CWatM AI notebook link in use (empty/unset = the default notebook)."""
+    from src.gui.utils.notebooklm_client import saved_notebook
+    return saved_notebook(settings)
+
+
 class PreferencesWindow(QDialog):
     """The categorised Preferences dialog (see the module docstring)."""
 
@@ -311,6 +317,18 @@ class PreferencesWindow(QDialog):
             "can be open at once (right-click a tab for Delete Tab / Copy Tab / "
             "Run CWatM).\nShown in the Expert skill level only; open tabs keep "
             "their content while the bar is hidden.")
+        # CWatM AI notebook: pick one of the offered links or type your own
+        from src.gui.utils.notebooklm_client import NOTEBOOK_CHOICES
+        self.cmb_notebook = QComboBox()
+        self.cmb_notebook.setEditable(True)
+        self.cmb_notebook.setInsertPolicy(QComboBox.NoInsert)
+        self.cmb_notebook.addItems(NOTEBOOK_CHOICES)
+        self.cmb_notebook.setMinimumWidth(460)
+        self.cmb_notebook.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._row(lay, "NotebookLM:", self.cmb_notebook,
+                  "Source of open available Gemini NotebookLM to search for "
+                  "information. You can use the default entry or you can put your "
+                  "own link")
         lay.addStretch(1)
         return page
 
@@ -379,6 +397,7 @@ class PreferencesWindow(QDialog):
             "date_timeline": s.value("display/date_timeline", True, type=bool),
             "bookmark_change": s.value("editor/bookmark_change", False, type=bool),
             "use_tabs": s.value("editor/use_tabs", True, type=bool),
+            "notebook": _saved_notebook(s),
             "history_folder": run_ledger.history_dir(),
             "history_retention": run_ledger.retention_days(),
         }
@@ -404,6 +423,7 @@ class PreferencesWindow(QDialog):
         self.cb_timeline.setChecked(st["date_timeline"])
         self.cb_bookmark_change.setChecked(st["bookmark_change"])
         self.cb_use_tabs.setChecked(st["use_tabs"])
+        self.cmb_notebook.setCurrentText(st["notebook"])
         self.ed_history_folder.setText(st["history_folder"])
         self.sp_retention.setValue(st["history_retention"])
 
@@ -429,6 +449,7 @@ class PreferencesWindow(QDialog):
             "date_timeline": self.cb_timeline.isChecked(),
             "bookmark_change": self.cb_bookmark_change.isChecked(),
             "use_tabs": self.cb_use_tabs.isChecked(),
+            "notebook": self.cmb_notebook.currentText().strip(),
             "history_folder": self.ed_history_folder.text().strip(),
             "history_retention": self.sp_retention.value(),
         }
@@ -526,6 +547,15 @@ class PreferencesWindow(QDialog):
             mw._on_bookmark_change_toggled(value)
         elif key == "use_tabs":
             mw._on_use_tabs_toggled(value)
+        elif key == "notebook":
+            from src.gui.utils.notebooklm_client import NOTEBOOK_SETTINGS_KEY
+            mw._settings.setValue(NOTEBOOK_SETTINGS_KEY, value)
+            win = getattr(mw, "_cwatm_ai_window", None)   # an open CWatM AI window
+            if win is not None:
+                try:
+                    win.set_notebook(value)
+                except RuntimeError:
+                    pass                                  # C++ object already gone
         elif key == "history_folder":
             if value and os.path.isdir(value):
                 run_ledger.set_history_dir(value)

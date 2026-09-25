@@ -805,7 +805,7 @@ class SettingsEditor(QPlainTextEdit):
     def mouseDoubleClickEvent(self, event):
         """Double-clicking a section header line toggles its fold (single click
         still just places the cursor, so headers stay editable)."""
-        cursor = self.cursorForPosition(event.pos())
+        cursor = self.cursorForPosition(event.position().toPoint())
         if is_section_header(cursor.block().text()):
             self.toggle_block_section(cursor.block())
             event.accept()

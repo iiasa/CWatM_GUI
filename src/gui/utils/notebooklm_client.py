@@ -35,6 +35,22 @@ class QuestionCancelled(NotebookLMError):
     """The in-flight request was stopped by the user (Stop thinking)."""
 
 
+# The openly available CWatM notebook offered in Preferences > Editor & Dates >
+# NotebookLM (the default). The user may also type their own link.
+NOTEBOOK_CHOICES = [
+    "https://notebooklm.google.com/notebook/7ebbfd91-d730-4c43-8101-d5df2a00de72",
+]
+DEFAULT_NOTEBOOK = NOTEBOOK_CHOICES[0]
+NOTEBOOK_SETTINGS_KEY = "notebooklm/notebook_id"
+
+
+def saved_notebook(settings):
+    """The notebook link/id in use (QSettings ``notebooklm/notebook_id``); empty or
+    unset means the default notebook."""
+    value = (settings.value(NOTEBOOK_SETTINGS_KEY, "", type=str) or "").strip()
+    return value or DEFAULT_NOTEBOOK
+
+
 def _extract_notebook_id(value):
     """Accept a bare id or a NotebookLM URL (…/notebook/<id>) and return the id."""
     if not value:
