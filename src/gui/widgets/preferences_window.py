@@ -555,7 +555,11 @@ class PreferencesWindow(QDialog):
                 try:
                     win.set_notebook(value)
                 except RuntimeError:
-                    pass                                  # C++ object already gone
+                    # The Qt/C++ object may have been deleted while the window is closing.
+                    log.debug(
+                        "CWatM AI window was unavailable while updating the notebook",
+                        exc_info=True,
+                    )
         elif key == "history_folder":
             if value and os.path.isdir(value):
                 run_ledger.set_history_dir(value)

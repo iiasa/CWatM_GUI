@@ -304,6 +304,15 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self._banner_title = title_label
         header_layout.addWidget(title_label)
 
+        # Mikhail-only decorative replacement for the icon + title above (same
+        # left slot - _apply_mikhail_banner_logo toggles which of the two is
+        # shown). Hidden for Normal/Dark, where it takes no layout space.
+        mikhail_logo_label = QLabel()
+        mikhail_logo_label.setVisible(False)
+        self._banner_mikhail_logo_label = mikhail_logo_label
+        header_layout.addWidget(mikhail_logo_label)
+        self._apply_mikhail_banner_logo()
+
         header_layout.addStretch()
 
         # Interface description, centred in the middle of the banner
@@ -351,6 +360,41 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         pixmap = QPixmap(asset_path(name))
         if not pixmap.isNull():
             label.setPixmap(pixmap.scaled(50, 50, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def _apply_mikhail_banner_logo(self):
+        """Mikhail only: show the decorative 'CWatM Companion' banner logo in
+        place of the plain icon + 'CWatM GUI' title (both hidden while it's
+        shown - a hidden QLabel takes no space in the QHBoxLayout, so the
+        banner doesn't gain a gap). Normal / Dark Mode keep the icon + title.
+        Called from create_header and re-run by _retheme on a Mode switch."""
+        logo_label = getattr(self, "_banner_mikhail_logo_label", None)
+        icon_label = getattr(self, "_banner_icon_label", None)
+        title_label = getattr(self, "_banner_title", None)
+        if logo_label is None:
+            return
+        is_mikhail = theme.current_theme() == "mikhail"
+        if is_mikhail and not getattr(self, "_mikhail_logo_loaded", False):
+            from src.gui.utils.assets import asset_path
+            source = QPixmap(asset_path("cwatm_companion.png"))
+            if not source.isNull():
+                # Render at the screen's actual device-pixel ratio - a plain
+                # logical-pixel-sized QPixmap gets stretched across MORE
+                # physical pixels on a scaled (HiDPI) display and blurs no
+                # matter how good the source is. The shipped PNG is shot well
+                # above this box's physical size, so this is a mild downscale.
+                box_w, box_h = 260, 130
+                dpr = self.devicePixelRatioF()
+                scaled = source.scaled(
+                    round(box_w * dpr), round(box_h * dpr),
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                scaled.setDevicePixelRatio(dpr)
+                logo_label.setPixmap(scaled)
+                self._mikhail_logo_loaded = True
+        logo_label.setVisible(is_mikhail)
+        if icon_label is not None:
+            icon_label.setVisible(not is_mikhail)
+        if title_label is not None:
+            title_label.setVisible(not is_mikhail)
 
     @staticmethod
     def _svg_pixmap(path, box_w, box_h):
@@ -2279,6 +2323,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             self.interface_label.setStyleSheet(f"color: {theme.c('text_muted')};")
             self._set_banner_icon_pixmap()
             self._set_banner_iiasa_pixmap()
+            self._apply_mikhail_banner_logo()
             self._left_panel.setStyleSheet(self._left_panel_style())
             self._right_panel.setStyleSheet(self._right_panel_style())
             self.date_manager.retheme()
