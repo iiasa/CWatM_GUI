@@ -38,18 +38,19 @@ log = get_logger("i18n")
 
 # (name shown in Preferences, code). Each language names itself.
 LANGUAGES = [
-    ("English", "en"), ("Deutsch", "de"), ("Italiano", "it"), ("Magyar", "hu"),
-    ("Română", "ro"), ("Srpski", "sr"), ("Hrvatski", "hr"), ("Slovenčina", "sk"),
-    ("Български", "bg"), ("Čeština", "cs"), ("Українська", "uk"),
+    ("English", "en"), ("Deutsch", "de"), ("Français", "fr"), ("Español", "es"),
+    ("Italiano", "it"), ("Magyar", "hu"), ("Română", "ro"), ("Srpski", "sr"),
+    ("Hrvatski", "hr"), ("Slovenčina", "sk"), ("Български", "bg"), ("Čeština", "cs"),
+    ("Українська", "uk"),
 ]
 DEFAULT = "en"
 _SETTINGS_KEY = "display/language"
 _CSV_NAME = "ui_strings_languages.csv"
 # language code -> CSV column
 _COLUMNS = {
-    "de": "German", "it": "Italian", "hu": "Hungarian", "ro": "Romanian",
-    "sr": "Serbian", "hr": "Croatian", "sk": "Slovak", "bg": "Bulgarian",
-    "cs": "Czech", "uk": "Ukrainian",
+    "de": "German", "fr": "French", "es": "Spanish", "it": "Italian",
+    "hu": "Hungarian", "ro": "Romanian", "sr": "Serbian", "hr": "Croatian",
+    "sk": "Slovak", "bg": "Bulgarian", "cs": "Czech", "uk": "Ukrainian",
 }
 
 _PLACEHOLDER = re.compile(r"\{[^{}]*\}")

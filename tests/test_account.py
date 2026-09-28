@@ -221,3 +221,27 @@ def test_missing_library_says_so_instead_of_server_error(monkeypatch):
     assert info.value.code == "not_installed"
     assert sys.executable in info.value.message
     assert "pip install" in info.value.message
+
+
+class TestOwnLocation:
+    @pytest.mark.parametrize("lat,lon,ok", [
+        ("", "", True), ("48.067", "16.357", True), ("48,067", "16,357", True),
+        ("-90", "180", True), ("48.067", "", False), ("", "16.357", False),
+        ("north", "16.357", False), ("91", "16", False), ("48", "181", False)])
+    def test_location_problem(self, lat, lon, ok):
+        assert (V.location_problem(lat, lon) is None) is ok
+
+    def test_parse_rounds_to_a_thousandth(self):
+        assert V.parse_location(" 48.06749 ", "16,35712") == (48.067, 16.357)
+        assert V.parse_location("", "") == (None, None)
+
+    def test_format(self):
+        assert V.format_coord(48.067) == "48.067"
+        assert V.format_coord("16.300") == "16.3"
+        assert V.format_coord(None) == ""
+
+    def test_update_needs_both(self):
+        c = _bare_client()
+        with pytest.raises(AC.AccountError) as info:
+            c.update_profile(location_lat=48.0)
+        assert info.value.code == "invalid_input"

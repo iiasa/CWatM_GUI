@@ -211,3 +211,45 @@ class TestSettingsFingerprint:
 def re_fullmatch_hex64(value):
     import re
     return bool(value) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+class TestSettingsGauge:
+    @pytest.mark.parametrize("value,expected", [
+        ("17.25 48.60", (17.25, 48.60)),
+        ("17.25 48.60 18.1 49.2", (17.25, 48.60)),          # first pair only
+        ("17.25, 48.60", (17.25, 48.60)),                   # commas
+        ("-60.5 -3.2  # Amazon", (-60.5, -3.2)),            # comment
+    ])
+    def test_first_pair(self, value, expected):
+        content = f"[MASK_OUTLET]\nMaskMap = 17 48\nGauges = {value}\n"
+        assert run_ledger.settings_gauge(content) == expected
+
+    @pytest.mark.parametrize("value", [
+        "$(FILE_PATHS:PathRoot)/gauges.map",                # a map file
+        "C:/data/gauges.tif",
+        "4523000 1250000",                                  # projected x/y (UTM)
+        "17.25",                                            # half a pair
+        "0 0",                                              # the "unset" pair
+        "",
+    ])
+    def test_no_location(self, value):
+        assert run_ledger.settings_gauge(f"Gauges = {value}\n") is None
+
+    def test_last_gauges_line_counts(self):
+        content = "Gauges = 1 1\n[OTHER]\nGauges = 17.25 48.6\n"
+        assert run_ledger.settings_gauge(content) == (17.25, 48.6)
+
+    def test_make_entry_keeps_it_locally(self, ledger):
+        e = run_ledger.make_entry("a.ini", "t", "out", 0, True, 1.0,
+                                  content="Gauges = 17.25 48.6\n")
+        assert e["gauge"] == [17.25, 48.6]
+        assert account_runs.location_of(e) == (17.25, 48.6)
+
+    @pytest.mark.parametrize("gauge", [None, [], [1], ["x", 2], [200, 10]])
+    def test_location_of_rejects(self, gauge):
+        assert account_runs.location_of({"gauge": gauge}) is None
+
+    def test_location_is_not_part_of_the_points_request(self):
+        meta = account_runs.run_meta({"kind": "run", "gauge": [17.25, 48.6],
+                                      "timesteps": 400}, "1.07")
+        assert "gauge" not in meta and not any("48.6" in str(v) for v in meta.values())

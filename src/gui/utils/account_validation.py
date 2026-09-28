@@ -67,6 +67,48 @@ def code_problem(code):
     return None
 
 
+def _coord(text):
+    text = (text or "").strip().replace(",", ".")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return "bad"
+
+
+def location_problem(lat_text, lon_text):
+    """The optional own location: both empty, or both numbers in range."""
+    lat, lon = _coord(lat_text), _coord(lon_text)
+    if lat is None and lon is None:
+        return None
+    if lat is None or lon is None:
+        return "Please enter both latitude and longitude (or leave both empty)."
+    if lat == "bad" or lon == "bad":
+        return "Latitude and longitude must be numbers, e.g. 48.067 and 16.357."
+    if not -90 <= lat <= 90:
+        return "The latitude must be between -90 and 90."
+    if not -180 <= lon <= 180:
+        return "The longitude must be between -180 and 180."
+    return None
+
+
+def parse_location(lat_text, lon_text):
+    """(lat, lon) rounded to 0.001 degree, or (None, None) - call after
+    location_problem() returned None."""
+    lat, lon = _coord(lat_text), _coord(lon_text)
+    if lat is None or lon is None or "bad" in (lat, lon):
+        return None, None
+    return round(lat, 3), round(lon, 3)
+
+
+def format_coord(value):
+    """A stored coordinate for a text field ('' when unset): 48.067, 16.357."""
+    if value is None or value == "":
+        return ""
+    return f"{float(value):.3f}".rstrip("0").rstrip(".")
+
+
 def clean_optional(field, value):
     """Trim an optional profile field; '' becomes None. Too-long values are cut to the
     table's limit rather than rejected - these fields are free text."""

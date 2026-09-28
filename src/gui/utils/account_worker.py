@@ -27,7 +27,8 @@ OPS = frozenset({
     "username_available", "register", "confirm_signup", "resend_confirmation",
     "request_password_reset", "reset_password",
     "get_status", "update_profile", "award_run", "get_leaderboard", "get_badges",
-    "export_data", "delete_account", "set_remember",
+    "export_data", "delete_account", "set_remember", "record_location",
+    "get_run_locations", "get_user_locations",
 })
 
 

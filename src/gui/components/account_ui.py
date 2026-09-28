@@ -37,6 +37,9 @@ _STATUS_OPS = {"restore", "login", "confirm_signup", "reset_password", "get_stat
                "update_profile", "register"}
 # ...of those, the ones that start a session: the offline queue is sent after them.
 _LOGIN_OPS = {"restore", "login", "confirm_signup", "reset_password", "register"}
+# Interactive logins: the one-time run-location question is asked after these (not
+# after the silent re-login at startup - a question out of nowhere).
+_ASK_LOCATION_OPS = {"login", "confirm_signup", "reset_password"}
 # award_run answers that settle a run for good (anything else = try again later).
 _AWARD_FINAL = {"awarded", "duplicate", "too_short", "daily_limit", "invalid_run_uid",
                 "same_settings"}
@@ -126,6 +129,9 @@ class AccountMixin:
         self._update_account_button()
         if not account_config.is_configured():
             self._account_button.setVisible(False)
+            wm = getattr(self, "_world_map_action", None)
+            if wm is not None:
+                wm.setVisible(False)        # no server - nothing to show
             return
         # Every recorded run (main / Windowed / Batch) reaches _on_run_recorded.
         run_ledger.add_listener(self._on_run_recorded)
@@ -215,41 +221,102 @@ class AccountMixin:
     # ---- points for runs (S5) ------------------------------------------------------
     def _on_run_recorded(self, entry):
         """run_ledger listener: a run was recorded in the Journal of Runs."""
-        if not self.account_count_runs() or not account_runs.qualifies(entry):
+        if not account_runs.qualifies(entry):
+            return
+        if not self.account_count_runs():
             return
         meta = account_runs.run_meta(entry, GUI_VERSION)
+        # The gauge stays LOCAL with the request: it is reported (anonymously, on
+        # its own) only once the server has answered this run with "awarded" - so
+        # the run-location map holds only runs that earned a badge point.
+        gauge = account_runs.location_of(entry)
         state = self._account_state
         if state == "logged_in":
-            self._submit_award(entry["uid"], meta, self._account_username())
+            self._submit_award(entry["uid"], meta, self._account_username(), gauge)
         elif state in ("offline", "restoring"):
             # A login is stored but not (yet) reachable: keep the run for that user.
             user = self._settings.value("account/last_user", "")
             if user:
-                account_runs.add_pending(entry["uid"], meta, user)
+                account_runs.add_pending(entry["uid"], meta, user, gauge)
                 log.info("run kept for the CWatM account (offline)")
         # logged out: runs do not count
 
-    def _submit_award(self, uid, meta, user):
-        self._award_fifo.append((uid, meta, user))
+    def _shares_locations(self):
+        profile = (self.account_status() or {}).get("profile") or {}
+        return bool(profile.get("share_locations"))
+
+    def account_share_locations(self):
+        """For Preferences ▸ Account: the stored choice when logged in, else the
+        default (yes)."""
+        if self.account_status() is None:
+            return True
+        return self._shares_locations()
+
+    def _set_share_locations(self, value):
+        """Preferences ▸ Account ▸ Record the location of my runs - saved on the
+        server (the profile), so it needs a login."""
+        if self._account_state == "logged_in" and \
+                bool(value) != self._shares_locations():
+            self.account_worker().submit("update_profile", share_locations=bool(value))
+
+    def _report_location(self, gauge):
+        """An AWARDED run's first gauge -> the anonymous run-location count (consent
+        only). Sent as its own request, never inside award_run: the server stores it
+        without any user, and the two must not be joinable."""
+        if self._account_state != "logged_in" or not self._shares_locations():
+            return
+        loc = account_runs.location_of({"gauge": gauge}) if gauge else None
+        if loc is not None:
+            self.account_worker().submit("record_location", loc[0], loc[1])
+
+    def _ask_location_consent(self):
+        """Once per user and computer, at an interactive login: may the first gauge
+        of each run that earns a point be recorded (anonymously)? Accounts registered with
+        the tick already agreed; the answer can be changed in the account window."""
+        status = self.account_status()
+        if not status or self._shares_locations():
+            return
+        user = account_runs.user_key(self._account_username())
+        key = f"account/location_asked/{user}"
+        if not user or self._settings.value(key, False, type=bool):
+            return
+        self._settings.setValue(key, True)
+        answer = QMessageBox.question(
+            self, "CWatM run locations",
+            "May CWatM record where it is run?\n\n"
+            "For every run that earns a badge point, the location of the FIRST gauge (rounded to "
+            "about 100 m) is counted - anonymously: it is stored without your name "
+            "or account, only as 'a run at this place in this month'. This helps "
+            "IIASA see where CWatM is used.\n\n"
+            "You can change this at any time in your account window. Details: "
+            "Help ▸ CWatM account privacy.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)     # default: yes
+        if answer == QMessageBox.Yes:
+            self.account_worker().submit("update_profile", share_locations=True)
+
+    def _submit_award(self, uid, meta, user, gauge=None):
+        # the gauge is NOT sent - it waits here for the "awarded" answer
+        self._award_fifo.append((uid, meta, user, gauge))
         self.account_worker().submit("award_run", uid, meta)
 
     def _send_pending_awards(self):
         """After a login: send the runs this user finished while offline."""
         user = self._account_username()
-        queued = {u for u, _m, _n in self._award_fifo}
+        queued = {item[0] for item in self._award_fifo}
         for item in account_runs.pending_for(user):
             if item["uid"] not in queued:
-                self._submit_award(item["uid"], item.get("meta") or {}, user)
+                self._submit_award(item["uid"], item.get("meta") or {}, user,
+                                   item.get("gauge"))
 
     def _on_award_answer(self, result, code=None):
         """An award_run answer (result) or failure (code) for the oldest request."""
         if not self._award_fifo:
             return
-        uid, meta, user = self._award_fifo.pop(0)
+        uid, meta, user, gauge = self._award_fifo.pop(0)
         if code is not None:                       # failed - keep it for later
             if code in ("offline", "server_error", "session_expired",
                         "not_logged_in", "rate_limited"):
-                account_runs.add_pending(uid, meta, user)
+                account_runs.add_pending(uid, meta, user, gauge)
             return
         status = (result or {}).get("status")
         if status in _AWARD_FINAL:
@@ -259,12 +326,15 @@ class AccountMixin:
             if self._account_state == "logged_in":
                 self._send_pending_awards()
         else:                                      # e.g. email_not_confirmed
-            account_runs.add_pending(uid, meta, user)
+            account_runs.add_pending(uid, meta, user, gauge)
         for line in award_messages(result):
             self._account_note(line)
-        if status == "awarded" and self._account_state == "logged_in":
-            # points + badges changed: refresh the button (next badge included)
-            self.account_worker().submit("get_status")
+        if status == "awarded":
+            # only a run that earned a point goes on the run-location map
+            self._report_location(gauge)
+            if self._account_state == "logged_in":
+                # points + badges changed: refresh the button (next badge included)
+                self.account_worker().submit("get_status")
 
     def _account_note(self, text):
         try:
@@ -312,10 +382,15 @@ class AccountMixin:
     def _on_account_succeeded(self, op, result):
         if op == "award_run":
             self._on_award_answer(result)
+        elif op == "record_location":
+            log.debug("run location: %s", (result or {}).get("status"))
         elif op in _STATUS_OPS and isinstance(result, dict) and "profile" in result:
             self._set_account_status(result)
             if op in _LOGIN_OPS:
                 self._send_pending_awards()
+            if op in _ASK_LOCATION_OPS:
+                # after the login dialog has closed
+                QTimer.singleShot(400, self._ask_location_consent)
         elif op == "restore" and result is None:
             self._clear_account()               # nothing stored after all
         elif op in ("logout", "delete_account"):
@@ -327,6 +402,9 @@ class AccountMixin:
                 log.debug("status bar message failed", exc_info=True)
 
     def _on_account_failed(self, op, code, message):
+        if op == "record_location":
+            log.info("run location not recorded: %s", code)   # best-effort, no retry
+            return
         if op == "award_run":
             self._on_award_answer(None, code)
             if code in ("session_expired", "not_logged_in"):
@@ -348,6 +426,18 @@ class AccountMixin:
             self._clear_account()
 
     # ---- UI entry points -----------------------------------------------------------
+    def open_world_map(self):
+        """Info ▸ World Map - where users applied CWatM (public, no login needed)."""
+        if not account_config.is_configured():
+            return
+        try:
+            from src.gui.widgets.world_map_window import open_world_map
+            open_world_map(self)
+        except Exception as e:
+            log.warning("could not open the world map", exc_info=True)
+            QMessageBox.warning(self, "World Map",
+                                f"The world map could not be opened:\n{e}")
+
     def open_leaderboard(self):
         """Info ▸ Leaderboard (visible only while logged in)."""
         if self._account_state != "logged_in":

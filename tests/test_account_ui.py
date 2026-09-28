@@ -147,6 +147,7 @@ class TestLoginDialog:
         d._do_register()
         assert mw.worker.sent == []                       # consent not given
         d.reg_agree.setChecked(True)
+        d.reg_locations.setChecked(True)                  # run locations confirmed
         d._do_register()
         op, args, kwargs = mw.worker.sent[-1]
         assert op == "register" and args[2] == "Blabla"
@@ -470,3 +471,245 @@ class TestBadgeImages:
         # earned Breg + the next one (Thames) faded with its goal
         assert w.badge_grid.count() == 2
         assert w.lbl_badges.text() == "Badges"
+
+
+# ---- anonymous run locations ----------------------------------------------------------
+
+SHARING = dict(STATUS, profile=dict(STATUS["profile"], share_locations=True))
+
+
+class TestRunLocations:
+    def _logged_in(self, host, status):
+        host._init_account()
+        host._on_account_succeeded("restore", status)       # silent re-login
+        host.fake.sent.clear()
+        return host
+
+    def test_sent_only_after_the_point_is_awarded(self, host):
+        h = self._logged_in(host, SHARING)
+        h._on_run_recorded(dict(_run(), gauge=[17.25, 48.6]))
+        # first only the points request - without the gauge
+        assert [op for op, _a, _k in h.fake.sent] == ["award_run"]
+        assert "gauge" not in h.fake.sent[0][1][1]
+        h._on_account_succeeded("award_run", AWARDED)
+        ops = [op for op, _a, _k in h.fake.sent]
+        assert ("record_location", (17.25, 48.6), {}) in h.fake.sent
+        assert ops.index("record_location") > ops.index("award_run")  # separate, later
+
+    @pytest.mark.parametrize("answer", [
+        {"status": "same_settings"}, {"status": "too_short", "min_timesteps": 30},
+        {"status": "daily_limit", "daily_run_cap": 20}, {"status": "duplicate"}])
+    def test_not_sent_when_no_point_is_earned(self, host, answer):
+        h = self._logged_in(host, SHARING)
+        h._on_run_recorded(dict(_run(), gauge=[17.25, 48.6]))
+        h._on_account_succeeded("award_run", answer)
+        assert all(op != "record_location" for op, _a, _k in h.fake.sent)
+
+    def test_not_sent_without_consent(self, host):
+        h = self._logged_in(host, STATUS)                   # share_locations missing
+        h._on_run_recorded(dict(_run(), gauge=[17.25, 48.6]))
+        h._on_account_succeeded("award_run", AWARDED)
+        assert all(op != "record_location" for op, _a, _k in h.fake.sent)
+
+    def test_not_sent_for_a_failed_run_or_without_gauge(self, host):
+        h = self._logged_in(host, SHARING)
+        h._on_run_recorded(dict(_run(success=False), gauge=[17.25, 48.6]))
+        h._on_run_recorded(_run())                          # no gauge in the entry
+        h._on_account_succeeded("award_run", AWARDED)
+        assert all(op != "record_location" for op, _a, _k in h.fake.sent)
+
+    def test_not_sent_when_points_are_off(self, host):
+        # no points request -> no point earned -> no location
+        h = self._logged_in(host, SHARING)
+        h._set_account_count_runs(False)
+        h._on_run_recorded(dict(_run(), gauge=[17.25, 48.6]))
+        assert h.fake.sent == []
+
+    def test_offline_run_keeps_its_gauge_until_awarded(self, host):
+        from src.gui.utils import account_runs
+        h = self._logged_in(host, SHARING)
+        h._on_run_recorded(dict(_run(), gauge=[17.25, 48.6]))
+        h._on_account_failed("award_run", "offline", "no connection")
+        assert account_runs.pending_for("Blabla")[0]["gauge"] == [17.25, 48.6]
+        h.fake.sent.clear()
+        h._on_account_succeeded("restore", SHARING)         # next session
+        assert "gauge" not in h.fake.sent[0][1][1]           # not in the points request
+        h._on_account_succeeded("award_run", AWARDED)
+        assert ("record_location", (17.25, 48.6), {}) in h.fake.sent
+
+    def test_asked_once_at_login_yes_turns_it_on(self, host, monkeypatch):
+        from PySide6.QtWidgets import QMessageBox
+        asked = []
+        monkeypatch.setattr(account_ui.QMessageBox, "question",
+                            lambda *a, **k: asked.append(1) or QMessageBox.Yes)
+        h = self._logged_in(host, STATUS)
+        h._ask_location_consent()
+        assert asked == [1]
+        assert h.fake.sent[-1] == ("update_profile", (), {"share_locations": True})
+        h._ask_location_consent()                           # never twice
+        assert asked == [1]
+
+    def test_no_means_nothing_is_sent(self, host, monkeypatch):
+        from PySide6.QtWidgets import QMessageBox
+        monkeypatch.setattr(account_ui.QMessageBox, "question",
+                            lambda *a, **k: QMessageBox.No)
+        h = self._logged_in(host, STATUS)
+        h._ask_location_consent()
+        assert h.fake.sent == []
+
+    def test_only_interactive_logins_ask(self, host, monkeypatch):
+        scheduled = []
+        monkeypatch.setattr(account_ui.QTimer, "singleShot",
+                            lambda ms, fn: scheduled.append(fn.__name__))
+        host._init_account()
+        host._on_account_succeeded("restore", STATUS)
+        assert "_ask_location_consent" not in scheduled
+        host._on_account_succeeded("login", STATUS)
+        assert "_ask_location_consent" in scheduled
+
+    def test_register_needs_the_location_tick(self, mw):
+        from src.gui.widgets.account_dialogs import LoginDialog
+        d = LoginDialog(mw)
+        d.reg_username.setText("Blabla")
+        d.reg_email.setText("b@example.org")
+        d.reg_password.setText("secret123")
+        d.reg_repeat.setText("secret123")
+        d.reg_agree.setChecked(True)
+        assert d.reg_locations.isChecked()                  # default: yes
+        d.reg_locations.setChecked(False)                   # the user unticks it
+        d._do_register()
+        assert mw.worker.sent == []
+        assert "location" in d.status.text()
+        d.reg_locations.setChecked(True)
+        d._do_register()
+        assert mw.worker.sent[-1][2]["share_locations"] is True
+
+    def test_account_window_can_switch_it_off(self, qapp):
+        from src.gui.widgets.account_dialogs import AccountWindow
+        m = FakeMainWindow(status=SHARING)
+        w = AccountWindow(m)
+        m.worker.succeeded.emit("get_status", SHARING)
+        assert w.cb_locations.isChecked()
+        w.cb_locations.setChecked(False)
+        w._do_save()
+        assert m.worker.sent[-1] == ("update_profile", (), {"share_locations": False})
+        _dispose(qapp, m)
+
+
+class TestLocationDefaults:
+    def test_question_preselects_yes(self, host, monkeypatch):
+        from PySide6.QtWidgets import QMessageBox
+        calls = []
+        monkeypatch.setattr(account_ui.QMessageBox, "question",
+                            lambda *a, **k: calls.append(a) or QMessageBox.Yes)
+        host._init_account()
+        host._on_account_succeeded("restore", STATUS)
+        host._ask_location_consent()
+        assert calls[0][-1] == QMessageBox.Yes              # the default button
+
+    def test_preferences_value(self, host):
+        host._init_account()
+        assert host.account_share_locations() is True       # logged out: default yes
+        host._on_account_succeeded("restore", STATUS)       # stored: no
+        assert host.account_share_locations() is False
+        host._on_account_succeeded("restore", SHARING)
+        assert host.account_share_locations() is True
+
+    def test_preferences_change_is_saved_in_the_account(self, host):
+        host._init_account()
+        host._set_share_locations(False)                    # logged out: nothing
+        assert host.fake.sent == []
+        host._on_account_succeeded("restore", SHARING)
+        host.fake.sent.clear()
+        host._set_share_locations(True)                     # unchanged: nothing
+        assert host.fake.sent == []
+        host._set_share_locations(False)
+        assert host.fake.sent == [("update_profile", (), {"share_locations": False})]
+
+
+class TestOwnLocationUI:
+    def test_register_sends_the_location(self, mw):
+        from src.gui.widgets.account_dialogs import LoginDialog
+        d = LoginDialog(mw)
+        for w, t in ((d.reg_username, "Blabla"), (d.reg_email, "b@example.org"),
+                     (d.reg_password, "secret123"), (d.reg_repeat, "secret123"),
+                     (d.reg_lat, "48.067"), (d.reg_lon, "16.357")):
+            w.setText(t)
+        d.reg_agree.setChecked(True)
+        d._do_register()
+        kwargs = mw.worker.sent[-1][2]
+        assert (kwargs["location_lat"], kwargs["location_lon"]) == (48.067, 16.357)
+
+    def test_register_rejects_half_a_location(self, mw):
+        from src.gui.widgets.account_dialogs import LoginDialog
+        d = LoginDialog(mw)
+        for w, t in ((d.reg_username, "Blabla"), (d.reg_email, "b@example.org"),
+                     (d.reg_password, "secret123"), (d.reg_repeat, "secret123"),
+                     (d.reg_lat, "48.067")):
+            w.setText(t)
+        d.reg_agree.setChecked(True)
+        d._do_register()
+        assert mw.worker.sent == [] and "longitude" in d.status.text()
+
+    def test_account_window_sends_the_pair(self, qapp):
+        from src.gui.widgets.account_dialogs import AccountWindow
+        m = FakeMainWindow(status=STATUS)
+        w = AccountWindow(m)
+        m.worker.succeeded.emit("get_status", STATUS)
+        w.ed_lat.setText("48.067")
+        w.ed_lon.setText("16.357")
+        w._do_save()
+        assert m.worker.sent[-1] == ("update_profile", (),
+                                     {"location_lat": 48.067, "location_lon": 16.357})
+        # stored value shown unchanged -> nothing to save
+        loc = dict(STATUS, profile=dict(STATUS["profile"], location_lat=48.067,
+                                        location_lon=16.357))
+        m.worker.succeeded.emit("update_profile", loc)       # the answer to the save
+        m.worker.sent.clear()
+        w._do_save()
+        assert m.worker.sent == []
+        # emptied -> removed (both None)
+        w.ed_lat.setText("")
+        w.ed_lon.setText("")
+        w._do_save()
+        assert m.worker.sent[-1] == ("update_profile", (),
+                                     {"location_lat": None, "location_lon": None})
+        _dispose(qapp, m)
+
+
+class TestBadgeEnlarge:
+    EARNED = dict(STATUS, badges=[{"code": "breg", "name": "Breg",
+                                   "awarded_at": "2026-09-28T11:03:12.5+00:00"}])
+
+    def _window(self, qapp):
+        from src.gui.widgets.account_dialogs import AccountWindow
+        m = FakeMainWindow(status=self.EARNED)
+        w = AccountWindow(m)
+        m.worker.succeeded.emit("get_status", self.EARNED)
+        return m, w
+
+    def test_earned_badge_click_opens_it_large(self, qapp):
+        from src.gui.widgets.account_dialogs import BadgeViewer, _ClickableLabel
+        m, w = self._window(qapp)
+        earned = w.badge_grid.itemAt(0).widget().findChild(_ClickableLabel)
+        assert earned is not None and "click to enlarge" in earned.toolTip()
+        earned.clicked.emit()
+        v = w._badge_viewer
+        assert isinstance(v, BadgeViewer) and v.windowTitle() == "Breg"
+        assert v.medal.width() == BadgeViewer.BIG
+        assert not v.medal.pixmap().isNull()
+        texts = [lbl.text() for lbl in v.findChildren(type(v.medal))]
+        assert "Earned on 28 September 2026" in texts
+        _dispose(qapp, m)
+
+    def test_next_badge_is_not_clickable(self, qapp):
+        from src.gui.widgets.account_dialogs import _ClickableLabel
+        m, w = self._window(qapp)
+        nxt = w.badge_grid.itemAt(1).widget()              # the faded next badge
+        assert nxt.findChild(_ClickableLabel) is None
+        _dispose(qapp, m)
+
+    def test_date_format(self):
+        from src.gui.widgets.account_dialogs import _format_date
+        assert _format_date("2026-09-28T11:03:12.5+00:00") == "28 September 2026"
+        assert _format_date(None) == ""

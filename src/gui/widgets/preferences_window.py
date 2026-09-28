@@ -379,6 +379,13 @@ class PreferencesWindow(QDialog):
             "point), and badges as the points add up. Only the GUI version, the "
             "number of timesteps, the run time and a one-way fingerprint of the "
             "settings are sent - no paths, no settings.")
+        self.cb_account_locations = self._check(
+            lay, "Record the location of my runs anonymously (first gauge, ~100 m)",
+            "For every run that earns a badge point, the location of its first gauge (rounded to "
+            "about 100 m) is counted anonymously - stored without your name or "
+            "account, only as 'a run at this place in this month'. Saved in your "
+            "account, so it can be changed while you are logged in.")
+        self.cb_account_locations.setEnabled(status is not None)
         lay.addStretch(1)
         return page
 
@@ -435,6 +442,7 @@ class PreferencesWindow(QDialog):
             "history_retention": run_ledger.retention_days(),
             "account_remember": mw.account_remember(),
             "account_count_runs": mw.account_count_runs(),
+            "account_share_locations": mw.account_share_locations(),
         }
 
     def _to_widgets(self, st):
@@ -463,6 +471,7 @@ class PreferencesWindow(QDialog):
         self.sp_retention.setValue(st["history_retention"])
         self.cb_account_remember.setChecked(st["account_remember"])
         self.cb_account_count_runs.setChecked(st["account_count_runs"])
+        self.cb_account_locations.setChecked(st["account_share_locations"])
 
     def _from_widgets(self):
         """Read the state the user has dialled in."""
@@ -491,6 +500,7 @@ class PreferencesWindow(QDialog):
             "history_retention": self.sp_retention.value(),
             "account_remember": self.cb_account_remember.isChecked(),
             "account_count_runs": self.cb_account_count_runs.isChecked(),
+            "account_share_locations": self.cb_account_locations.isChecked(),
         }
 
     @staticmethod
@@ -608,6 +618,8 @@ class PreferencesWindow(QDialog):
             mw._set_account_remember(value)
         elif key == "account_count_runs":
             mw._set_account_count_runs(value)
+        elif key == "account_share_locations":
+            mw._set_share_locations(value)
 
     # ----------------------------------------------------------------- theme
 

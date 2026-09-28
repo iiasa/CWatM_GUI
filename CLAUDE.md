@@ -110,6 +110,7 @@ button in the bar's **right corner** that opens the Preferences window.
 | Help | CWatM account privacy | — | Render `documentation/CWatM_Account_Privacy.md` (the CWatM account's privacy notice - **draft**, awaiting IIASA review) in the same viewer; also linked from the login dialog's Register tab and the account window (`show_account_privacy`) |
 | Help | CWatM Homepage | — | Open the CWatM website in the desktop browser |
 | Info | About CWatM | — | About dialog |
+| Info | World Map | — | Tooltip "Shows a world map with points where users applied CWatM". **Visible to everyone** (no login; hidden only without a Supabase key). `world_map_window.py`: a zoomable folium EPSG:4326 map, basemap = Preferences ▸ Display ▸ Default openstreet map (WMS through the shared `osmtile://` handler, page `osmtile://worldmap/`), limited to **80°N–60°S** (beyond covered grey), first map area **1024×427 px** = −180…180° × 90°N…60°S at Leaflet zoom 1, then freely resizable; **maximise** button, **no Close/Refresh**. Two exclusive buttons below switch the layer + heading + text (`window.setMode`): **CWatM runs** = blue circles of the anonymous run-location totals (rpc `get_run_locations`), **User location** = orange circles of users' own locations, **only users who ticked** *Show my location on the world map* (`profiles.show_location_on_map`, default off), no names, 0.01° (rpc `get_user_locations`). Radius px = `4 + 3·√count` (area ∝ count), max 40; biggest drawn first; hover = count + lon/lat |
 | Info | Leaderboard | — | **Only visible while logged in** to the CWatM account (`account_ui._update_account_button` toggles `self._leaderboard_action`). Opens `LeaderboardWindow` (`account_dialogs.py`): rank, user, country, **highest badge**, points of the users who opted in (`get_leaderboard`), the viewer's own row bold + highlighted, or a hint how to take part; Refresh |
 
 - **Save locked while CWatM runs**: during a run all functionality stays available
@@ -149,7 +150,7 @@ second implementation of it**. Adding a setting = one control + one `_read_state
 | Startup & Model | Load previous settings at start | Persisted `startup/load_previous`, default OFF; when ticked **every tab** of the last session is re-opened on the next startup (`tabs/files` + `tabs/active` → `open_files_in_tabs`; a pre-tabs session falls back to the most recently used file). Handled in `cwatm_gui.py main()` when no file is passed on the command line — a command-line file wins and opens a single tab |
 | Startup & Model | Use Modflow | Persisted `modflow/enabled`, default OFF; ON **pre-imports flopy** (the CWatM↔MODFLOW library — heavy, pulls the matplotlib stack) so in-process MODFLOW use is ready; OFF never loads flopy, keeping startup fast (`src/gui/utils/modflow.py`, `_on_use_modflow_toggled`) |
 | _(not exposed)_ | ~~Run model in separate process~~ | Not shown anywhere, but the functionality is kept: `run_subprocess_action` is created standalone in `_init_configure_state` (default ON, persisted `run/subprocess`) and still drives `_run_subprocess_enabled` (own OS process = real Stop, crash isolation). Add it to a Preferences page to expose it again |
-| Display | Language | **English** (default) / Deutsch / Italiano / Magyar / Română / Srpski (Latin script) / Hrvatski / Slovenčina / Български / Čeština / Українська — the language of menus, menu items, buttons, labels and tooltips; switches **live**, persisted `display/language` (`i18n.set_language`). The texts come from `translations/ui_strings_languages.csv` — see the GUI-language behavioral note |
+| Display | Language | **English** (default) / Deutsch / Français / Español / Italiano / Magyar / Română / Srpski (Latin script) / Hrvatski / Slovenčina / Български / Čeština / Українська — the language of menus, menu items, buttons, labels and tooltips; switches **live**, persisted `display/language` (`i18n.set_language`). The texts come from `translations/ui_strings_languages.csv` — see the GUI-language behavioral note |
 | Display | Mode | Colour theme of the whole GUI: **Normal** (classic light) / **Dark Mode** / **Mikhail** (black + amber); switches live (the open dialog re-themes itself), persisted `display/theme` |
 | Display | Show Header | Persisted `display/show_header`, default ON: show the top **banner** (CWatM icon + title + "The Community Water Model User Interface" + IIASA logo). Unticked hides it (`_banner_widget.setVisible(False)`) so everything below moves up (`_on_show_header_toggled`) |
 | Display | Font of settingsfile | Family the **settings editor** renders with — a `QFontComboBox` filtered to the **monospaced** fonts (columns + the gutter's fixed-width digits), persisted `editor/font_family`. Empty (the default) = the built-in fallback chain of `_editor_style()` (`'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace` — Consolas on Windows), so an untouched install renders exactly as before; a chosen family is put **in front of** that chain (`main_window._editor_font_css`). The box opens on the family actually rendered (`main_window.editor_font_family()` → the persisted choice, else `fontInfo().family()`), and `_select_font` inserts that family if the monospaced filter does not list it, so the box can never show a different font than the editor uses |
@@ -499,7 +500,8 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   English texts stay in the code; **every translation lives in one table,
   `translations/ui_strings_languages.csv`** (`No, English`, then one column per
   language — German, Italian, Hungarian, Romanian, Serbian, Croatian, Slovak, Bulgarian,
-  Czech, Ukrainian; a new language = a column + an entry in `i18n.LANGUAGES`/`_COLUMNS`;
+  Czech, Ukrainian, French, Spanish; a new language = a column + an entry in
+  `i18n.LANGUAGES`/`_COLUMNS`;
   bundled by the spec, synced by `build_release.ps1`). **No widget calls a translate function** — an
   app-wide event filter swaps QAction texts on `ActionAdded`/`ActionChanged`, button and
   label texts on `Polish` and before every `Paint` (so a later `setText` never shows
@@ -510,8 +512,11 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   when they are catalog words, e.g. `cell`, `3 rows`); **never branch on a displayed
   `text()`** (in German it is not the English literal); **English installs no filter**
   (zero cost). Not covered: window titles, `QMessageBox` messages, combo items, table
-  headers, placeholders. `i18n.tr()` exists for the few texts outside widgets (the
-  Preferences category list items).
+  headers, placeholders — nor tab titles, rich-text (link) labels and progress-bar
+  texts. `i18n.tr()` exists for the few texts outside the filter's reach: the
+  Preferences category list items, and in the account windows the tab titles, the
+  *Read the full privacy notice* link and the badge progress text (those windows are
+  built fresh on every open, so a construction-time `tr()` follows a switch).
 - **Asset paths**: never load assets with a relative path (`QPixmap("assets/...")`
   only worked when the CWD happened to contain an assets/ copy — in the frozen
   build assets live in `_internal/`, not next to the .exe). Always resolve through
@@ -914,6 +919,27 @@ with the user and sent at **that** user's next login (never someone else's), cap
 simulation); `run_meta` sends it and `award_run` answers `same_settings` for a setup
 that already earned a point (migration `…150000_leaderboard_badge_repeat_runs.sql`).
 Only the hash leaves the machine — the privacy notice says so, and its test checks.
+**Anonymous run locations**: with the user's consent (`profiles.share_locations` —
+required tick at Register, a one-time question after an *interactive* login for older
+accounts, a tick in the account window and in Preferences ▸ Account; **default yes**
+everywhere: tick pre-ticked, Yes preselected, Preferences ticked + greyed while logged
+out) every qualifying run reports its **first
+gauge** (`run_ledger.settings_gauge`: first lon/lat pair of `Gauges`, None for a map
+file or a projected x/y pair; stored locally as `entry["gauge"]`) via its **own**
+request `record_location` → rpc `record_run_location`, **never inside `award_run`**
+(`run_meta` must not carry it — tested). The server keeps only **counts per
+(0.001°-rounded lon/lat, month)** in `run_locations`, which has **no user column**, so
+nothing links a location to an account (migration `…160000_run_locations.sql`); a
+per-user daily quota (`location_quota`, no location) caps it at
+`game_config.location_daily_cap`. **Only runs that earn a badge point are
+located**: the gauge rides along **locally** with the award request (`_award_fifo`
+item / pending item, never in `run_meta`) and `record_location` is submitted only
+when that request's answer is `awarded` (not `same_settings` / `too_short` /
+`daily_limit` / `duplicate`); with *Count my full CWatM runs* off there is no award,
+so no location. Separately, the user's **own location** (`profiles.location_lat/lon`,
+optional, 0.001°, both-or-none, migration `…190000_user_location.sql`) is ordinary
+personal profile data — account window / Register only, never on the map or
+leaderboard.
 **Badge images**: `assets/badges/<badge code>.png` (bundled by its own spec line —
 the `assets/*` glob does not reach a subfolder), drawn by
 `src/gui/utils/badge_images.badge_pixmap(code, size, faded, dpr)`: it **finds the

@@ -98,3 +98,12 @@ def test_register_sends_the_consent_version(monkeypatch):
     assert result["status"] == "confirm_email"
     assert auth.signed_up["options"]["data"]["privacy_version"] == \
         account_config.PRIVACY_VERSION
+
+
+def test_notice_describes_the_run_locations(notice):
+    for phrase in ("first gauge", "0.001°", "anonymous", "cannot be shown, exported or "
+                   "deleted per person", "Record the location of my runs",
+                   "Info ▸ World Map", "Only runs that earn a point",
+                   "Your location - latitude/longitude",
+                   "Show my location on the world map", "without your name"):
+        assert phrase in notice, phrase
