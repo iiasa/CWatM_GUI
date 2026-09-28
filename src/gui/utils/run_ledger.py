@@ -144,9 +144,36 @@ def _prune(entries):
     return keep
 
 
+# Called with every entry add_entry() records - the one place all three run paths
+# (main run, Windowed Run, Batch scenario) meet. The CWatM account (account_ui.py)
+# listens here to award points for full runs.
+_listeners = []
+
+
+def add_listener(fn):
+    """Call ``fn(entry)`` for every run recorded from now on (GUI thread)."""
+    if fn not in _listeners:
+        _listeners.append(fn)
+
+
+def remove_listener(fn):
+    if fn in _listeners:
+        _listeners.remove(fn)
+
+
 def add_entry(entry):
     """Append one run record (a dict) and persist, pruning old entries. Best-effort:
-    a failure is logged but never propagated (logging a run must not break a run)."""
+    a failure is logged but never propagated (logging a run must not break a run).
+    The listeners are told even if the journal could not be written."""
+    _write_entry(entry)
+    for fn in list(_listeners):
+        try:
+            fn(dict(entry))
+        except Exception:
+            log.warning("run-ledger listener failed", exc_info=True)
+
+
+def _write_entry(entry):
     try:
         os.makedirs(history_dir(), exist_ok=True)
         path = ledger_path()
@@ -271,6 +298,87 @@ def remove_entries(victims):
         return 0
 
 
+def _parse_step(value):
+    """A StepStart/StepEnd value the way CWatM reads it (timestep.py Calendar): a
+    number, or a day-first date with '/', '.' or '-' and a 2- or 4-digit year.
+    Returns an int, a datetime.date, or None."""
+    import datetime
+    value = (value or "").strip()
+    if not value:
+        return None
+    if re.fullmatch(r"[+-]?\d+(\.\d*)?", value):       # a timestep count
+        return int(float(value))
+    d = value.replace(".", "/").replace("-", "/")
+    fmt = "%d/%m/%Y" if len(d.split("/")[-1]) == 4 else "%d/%m/%y"
+    try:
+        return datetime.datetime.strptime(d, fmt).date()
+    except ValueError:
+        return None
+
+
+def settings_timesteps(content):
+    """Number of (daily) timesteps a settings file simulates, StepStart..StepEnd
+    inclusive - or None when it cannot be told (missing or unparseable values).
+
+    Mirrors CWatM: StepEnd is a date or a timestep **count**; a key given twice counts
+    by its last value (CWatM's flat binding dict). Pure - tested."""
+    if not content:
+        return None
+    values = {}
+    for line in content.splitlines():
+        s = line.split("#", 1)[0].strip()
+        if "=" not in s or s.startswith(("[", ";")):
+            continue
+        key, value = s.split("=", 1)
+        key = key.strip().lower()
+        if key in ("stepstart", "stepend"):
+            values[key] = value.strip()
+    start = _parse_step(values.get("stepstart"))
+    end = _parse_step(values.get("stepend"))
+    if end is None:
+        return None
+    if isinstance(end, int):
+        return end if end > 0 else None
+    if start is None or isinstance(start, int):
+        return None
+    days = (end - start).days + 1
+    return days if days > 0 else None
+
+
+# Keys that do not change what CWatM computes: the run's name, where the results go,
+# and which results are written. A setup differing only in these is the SAME setup
+# for the "one point per setup" rule (otherwise renaming Title would earn a point).
+_FINGERPRINT_IGNORED = ("title", "pathout")
+_FINGERPRINT_IGNORED_PREFIX = "out_"
+
+
+def settings_fingerprint(content):
+    """One-way SHA-256 fingerprint of a model setup (hex), or None without content.
+
+    Read the way CWatM reads the file: comments ('#' / ';'), blank lines, spacing,
+    section headers, line order and key case do not matter, a key given twice counts
+    by its last value (the flat binding dict). Title, PathOut and every OUT_* key are
+    left out - they do not change the simulation. The CWatM account sends only this
+    hash, never the settings, to award one point per distinct setup. Pure - tested."""
+    import hashlib
+    if not content:
+        return None
+    values = {}
+    for line in content.splitlines():
+        s = line.split("#", 1)[0].strip()
+        if not s or s.startswith((";", "[")) or "=" not in s:
+            continue
+        key, value = s.split("=", 1)
+        key = key.strip().lower()
+        if key in _FINGERPRINT_IGNORED or key.startswith(_FINGERPRINT_IGNORED_PREFIX):
+            continue
+        values[key] = " ".join(value.split())
+    if not values:
+        return None
+    canon = "\n".join(f"{k}={v}" for k, v in sorted(values.items()))
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
 def make_entry(settings_path, title, pathout, started_at, success, last_dis,
                kind="run", content=None, log_path=None, batch_id=None):
     """Build a ledger entry dict from the common run facts. When ``content`` (the
@@ -294,6 +402,15 @@ def make_entry(settings_path, title, pathout, started_at, success, last_dis,
         "success": bool(success),
         "last_dis": last_dis,
     }
+    # Length of the simulated period, from the settings the run actually used
+    # (the CWatM account counts only runs of at least game_config.min_timesteps).
+    steps = settings_timesteps(content)
+    if steps is not None:
+        entry["timesteps"] = steps
+    # Which model setup it was (one-way hash; the account's one-point-per-setup rule).
+    fingerprint = settings_fingerprint(content)
+    if fingerprint:
+        entry["settings_hash"] = fingerprint
     # Where this run's output was written, so the journal can show *why* it failed
     # instead of only *that* it failed.
     if log_path:

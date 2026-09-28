@@ -172,6 +172,33 @@ for _meta in ('notebooklm-py', 'httpx', 'anyio', 'rich', 'markdown-it-py'):
 # make sure it and rookiepy are in the graph even if static analysis misses them.
 ai_hiddenimports += ['click', 'rookiepy']
 
+# CWatM account (optional login, points, badges - src/gui/utils/account_*.py, GUI exe
+# only). supabase-py and its sub-clients import statically, but account_client.py
+# imports them lazily inside a method, so they are collected explicitly; pydantic,
+# websockets and cryptography have their own PyInstaller hooks.
+# keyring has NO hook and finds its backends through the 'keyring.backends' entry
+# points: without its dist metadata + backend modules + win32ctypes it silently falls
+# back to "no keyring" in the frozen exe and the login is never remembered.
+account_datas, account_binaries, account_hiddenimports = [], [], []
+for _pkg in ('supabase', 'supabase_auth', 'supabase_functions', 'postgrest',
+             'storage3', 'realtime', 'keyring', 'win32ctypes'):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+        account_datas += _d
+        account_binaries += _b
+        account_hiddenimports += _h
+    except Exception as _e:
+        print(f"[spec] account package not collected: {_pkg} ({_e})")
+for _meta in ('keyring', 'supabase', 'supabase_auth', 'postgrest', 'storage3',
+              'realtime', 'supabase_functions'):
+    try:
+        account_datas += copy_metadata(_meta)
+    except Exception as _e:
+        print(f"[spec] metadata not copied: {_meta} ({_e})")
+account_hiddenimports += ['keyring.backends.Windows', 'win32ctypes.pywin32',
+                          'win32ctypes.core', 'jaraco.classes', 'jaraco.context',
+                          'jaraco.functools', 'jwt', 'strenum', 'deprecation']
+
 # MODFLOW coupling: flopy (CWatM<->MODFLOW) + its matplotlib plotting stack and xmipy.
 # Bundled so a MODFLOW-coupled run works frozen; because flopy imports matplotlib, the
 # whole stack (matplotlib -> contourpy / kiwisolver / cycler / fontTools / PIL) is
@@ -265,6 +292,7 @@ hiddenimports += folium_hiddenimports + webengine_hiddenimports
 hiddenimports += openpyxl_hiddenimports + requests_hiddenimports
 hiddenimports += ai_hiddenimports  # CWatM AI (notebooklm) + markdown rendering
 hiddenimports += modflow_hiddenimports  # MODFLOW coupling (flopy + matplotlib stack)
+hiddenimports += account_hiddenimports  # CWatM account (supabase + keyring)
 
 # Data files to include.
 # §4.2: do NOT ship the whole cwatm/ and src/ trees - their code is already
@@ -278,11 +306,15 @@ hiddenimports += modflow_hiddenimports  # MODFLOW coupling (flopy + matplotlib s
 datas = [
     # Include assets
     (os.path.join(spec_root, 'assets', '*'), 'assets'),
+    # CWatM account river badges (assets/badges/<badge code>.png - badge_images.py)
+    (os.path.join(spec_root, 'assets', 'badges', '*.png'), 'assets/badges'),
     (os.path.join(spec_root, 'cwatm', 'metaNetcdf.xml'), 'cwatm'),
     # Documentation shown by the Help menu
     (os.path.join(spec_root, 'documentation', 'CWatM_GUI_Documentation.md'), 'documentation'),
     (os.path.join(spec_root, 'documentation', 'CWatM_GUI_Features.md'), 'documentation'),
     (os.path.join(spec_root, 'documentation', 'CWatM_GUI_FAQ.md'), 'documentation'),
+    # CWatM account privacy notice (Help menu, login dialog, account window)
+    (os.path.join(spec_root, 'documentation', 'CWatM_Account_Privacy.md'), 'documentation'),
     # Screenshots referenced by the Help markdown (figures/*.png) - the Help viewer
     # sets its base URL to the documentation folder, so relative refs resolve here.
     (os.path.join(spec_root, 'documentation', 'figures', '*.png'), 'documentation/figures'),
@@ -301,6 +333,8 @@ datas += folium_datas
 datas += ai_datas
 # Include MODFLOW coupling data (matplotlib mpl-data/fonts, flopy package data, ...)
 datas += modflow_datas
+# CWatM account: package data + the dist metadata keyring's backend discovery reads.
+datas += account_datas
 
 # Binary files to include (DLLs and shared libraries)
 binaries = list(folium_binaries)
@@ -312,6 +346,8 @@ binaries += ai_binaries
 binaries += rasterio_lib_binaries
 # MODFLOW coupling binaries (matplotlib/contourpy/kiwisolver/PIL C-extensions, ...).
 binaries += modflow_binaries
+# CWatM account binaries (none today - the compiled parts come via their own hooks).
+binaries += account_binaries
 
 # Add routing reservoir binaries. globals.py builds the library path from its
 # own __file__ (cwatm/management_modules/../hydrological_modules/routing_reservoirs),
@@ -438,6 +474,14 @@ model_a = Analysis(
         'osgeo',
         # notebooklm/playwright never run in the model child - exclude here too.
         'playwright', 'notebooklm',
+        # The CWatM account (login/points) lives in the GUI only - the model child
+        # never talks to the account server.
+        'supabase', 'supabase_auth', 'supabase_functions', 'postgrest', 'storage3',
+        'realtime', 'keyring',
+        # pydantic came with supabase; some model-side package imports it only
+        # optionally, so without this it is dragged into the model child for nothing
+        # (it was never installed before the account feature).
+        'pydantic', 'pydantic_core',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

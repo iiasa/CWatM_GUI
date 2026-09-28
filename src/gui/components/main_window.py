@@ -40,6 +40,7 @@ from src.gui.components.tab_manager import SettingsTabsMixin
 from src.gui.components.settings_check import SettingsCheckMixin
 from src.gui.components.find_replace import FindReplaceMixin
 from src.gui.components.main_window_styles import MainWindowStyleMixin
+from src.gui.components.account_ui import AccountMixin
 
 # Startup-cost note (report §4.1): basin_viewer (numpy/xarray/rasterio +
 # QtWebEngine) and check_data_window (cwatm.run_cwatm -> scipy/pandas/netCDF4)
@@ -73,7 +74,7 @@ _LEVEL_ALLOWED = {
 class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                       OutputBoxMixin, SettingsTabsMixin,
                       SettingsCheckMixin, FindReplaceMixin, MainWindowStyleMixin,
-                      QMainWindow):
+                      AccountMixin, QMainWindow):
     """Main application window for CWatM GUI.
     
     This class orchestrates all GUI components and manages user interactions
@@ -228,7 +229,10 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         
         self.setup_ui()
         self.setup_status_bar()
-        
+        # CWatM account: initial state + (if a login is stored) the background
+        # re-login a few seconds after the window is up - account_ui.py
+        self._init_account()
+
         # cwatminfo display updates immediately after each print command
         
     def setup_ui(self):
@@ -1685,6 +1689,12 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         """Help ▸ FAQ: common questions & troubleshooting."""
         self.show_documentation("CWatM_GUI_FAQ.md", "CWatM GUI — FAQ")
 
+    def show_account_privacy(self):
+        """Help ▸ CWatM account privacy (also linked from the login dialog and the
+        account window): what the optional CWatM account stores."""
+        from src.gui.utils.account_config import PRIVACY_DOC
+        self.show_documentation(PRIVACY_DOC, "CWatM account — Privacy notice")
+
     def show_info_dialog(self):
         """Show information dialog about CWatM"""
         dialog = QDialog(self)
@@ -2998,6 +3008,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
 
         # Final cleanup of any remaining file operations
         self.cleanup_file_operations()
+
+        # Let a pending account request finish and close its HTTP client
+        self._stop_account_worker()
 
         # Accept the close event
         event.accept()

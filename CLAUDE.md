@@ -95,7 +95,8 @@ button in the bar's **right corner** that opens the Preferences window.
 | RUN CWATM | Batch Run… | — | Run many scenarios from the loaded settings file — a table where each row overrides a few keys + its own PathOut → a temp `.ini` run in its own process, **up to N in parallel** — see `CWatM_GUI_Internals.md` |
 | RUN CWATM | Create batch | — | _(last item, separator above, **Expert only** — `_expert_only_actions`, hidden **and** disabled for Beginner/Advanced like Compare Tab)_ Tooltip "Creates a Windows batch file to run CWatM without the GUI". Writes a standalone `.bat` (`src/gui/utils/batch_file_creator.py`) that runs the **current settings file** with `-l` and a trailing `pause`, using the identical frozen/source launch mechanism a normal Run CWATM uses (`cwatm_process_worker.model_command` — `CWatM_model.exe` when frozen, the venv python running `cwatm_gui.py --run-cwatm` from source), `cd`'d into the working directory first so relative paths resolve the same way. Warns like Check Data if the editor has unsaved changes (the batch runs the file **on disk**); asks for the **destination filename** (`QFileDialog.getSaveFileName`, default: the working directory + the suggested `Run_<settings>.bat` name) and **opens the containing folder** afterwards |
 | Configure | Preferences… | Ctrl+, | **The only item in the menu.** Opens the **Preferences window** — every GUI setting, on five categorised pages, with OK / Cancel / Apply (see [Preferences window](#preferences-window-configure--preferences) below) |
-| _(menu bar)_ | ⋮ | — | A `QToolButton` in the menu bar's **right corner** (`menu_bar.setCornerWidget(…, Qt.TopRightCorner)`, `self._preferences_button`) — a second way into the same Preferences window. Styled from theme tokens inside `_menu_bar_stylesheet` (`QMenuBar QToolButton`), so a Mode switch re-themes it with the bar |
+| _(menu bar)_ | ⋮ | — | A `QToolButton` in the menu bar's **right corner** (`menu_bar.setCornerWidget(…, Qt.TopRightCorner)`, `self._preferences_button`) — a second way into the same Preferences window. Styled from theme tokens inside `_menu_bar_stylesheet` (`QMenuBar QToolButton`), so a Mode switch re-themes it with the bar. The corner widget is a small container (`self._menu_corner`) holding the **account button** and ⋮ |
+| _(menu bar)_ | Account button | — | Left of ⋮ (`#accountButton`, `account_ui.py`): **"Log in"** / **"<user> · <n> pt"** (tooltip: badges + next badge) / "Logging in…" / "Account (offline)". Click → the **login dialog** (Log in · Register · Forgot password, with the emailed-code step) or, logged in, the **account window** (points, badge progress, profile edit, leaderboard opt-in, Log out, Export my data, Delete account) — `account_dialogs.py`. Hidden when no Supabase key is configured |
 | Analyse | Open PathOut Folder | — | Open the resolved PathOut directory in the file explorer (first item, above a separator) |
 | Analyse | Output Explorer | — | Non-modal tree of the resolved PathOut; **double-click** a result opens the matching viewer — `*.nc`→NetCDF map, `*WaterCycle*.csv`→Watercycle sunburst, other `*.csv`→Timeseries, `*.html`/other→OS default — see `CWatM_GUI_Internals.md` |
 | Analyse | Timeseries | — | Open a CWatM result `.csv` and plot it (Plotly line chart); **File** (Save as csv, Save HTML), **Action** (Compare, Load observed, Flow duration, Flow regime), Backward/Forward stayed buttons — see `CWatM_GUI_Internals.md` |
@@ -106,8 +107,10 @@ button in the bar's **right corner** that opens the Preferences window.
 | Help | CWatM GUI Documentation | — | Render `documentation/CWatM_GUI_Documentation.md` as markdown |
 | Help | CWatM GUI Features | — | Render `documentation/CWatM_GUI_Features.md` (the user-facing feature tour) as markdown |
 | Help | FAQ | — | Render `documentation/CWatM_GUI_FAQ.md` (common questions & troubleshooting) as markdown |
+| Help | CWatM account privacy | — | Render `documentation/CWatM_Account_Privacy.md` (the CWatM account's privacy notice - **draft**, awaiting IIASA review) in the same viewer; also linked from the login dialog's Register tab and the account window (`show_account_privacy`) |
 | Help | CWatM Homepage | — | Open the CWatM website in the desktop browser |
 | Info | About CWatM | — | About dialog |
+| Info | Leaderboard | — | **Only visible while logged in** to the CWatM account (`account_ui._update_account_button` toggles `self._leaderboard_action`). Opens `LeaderboardWindow` (`account_dialogs.py`): rank, user, country, **highest badge**, points of the users who opted in (`get_leaderboard`), the viewer's own row bold + highlighted, or a hint how to take part; Refresh |
 
 - **Save locked while CWatM runs**: during a run all functionality stays available
   (so you can analyse, chat with CWatM AI, etc.) — only **Save** is greyed out (the
@@ -163,6 +166,8 @@ second implementation of it**. Adding a setting = one control + one `_read_state
 | Editor & Dates | NotebookLM | _(last item)_ The notebook **CWatM AI** asks — an **editable** combo box offering the one openly available CWatM notebook (`notebooklm_client.NOTEBOOK_CHOICES`, the default) or the user's own link/id. Persisted `notebooklm/notebook_id` — the **same** key the CWatM AI window's *Notebook…* button writes; empty = the default (`saved_notebook`). Applied live to an open CWatM AI window (`NotebookLMWindow.set_notebook`, which reconnects on the next question) |
 | Run History | Run history folder | The general folder where the **Journal of Runs** (`run_ledger.json`) is stored + **Browse…** (`history/folder`, default `%LOCALAPPDATA%/CWatM_GUI`); a path that is not an existing directory is ignored |
 | Run History | Run history retention | How many days of runs to keep in the Journal of Runs, `history/retention_days`, default 60; **0 shows as "keep forever"** (`setSpecialValueText`) |
+| Account | Stay logged in on this computer | Persisted `account/remember`, default ON: the CWatM account login is kept (refresh token in the OS keyring) and restored in the background at start. Unticked = the stored login is dropped at once (`_set_account_remember`, same setting as the login dialog's tick). The page also shows the login state |
+| Account | Count my full CWatM runs (earn points) | Persisted `account/count_runs`, default ON: while logged in, every successful main run / Windowed Run / Batch scenario is reported to the account (`AccountMixin._on_run_recorded`) — 1 point, badges as points add up; the result is noted in the output box + status bar |
 
 **Startup**: `menu_builder._init_configure_state()` (called while the menu bar is built)
 restores the settings that need an action *before* the Preferences window is ever
@@ -734,6 +739,10 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/components/tab_manager.py`**: `SettingsTabsMixin` + `SettingsTab` — the **settings-file tabs** (tab bar below the button row, one `SettingsEditor`/`LineNumberGutter`/`TextDisplayManager` page per tab in a `QStackedWidget`, the per-tab state the main window is re-pointed at on every switch, the Delete/Copy/Add-empty context menu, the `tabs/files` persistence and `open_files_in_tabs` used by *Load previous settings at start*), plus the pure `next_copy_path()` naming rule — see the Settings-file tabs behavioral note
 - **`src/gui/components/settings_check.py`**: `SettingsCheckMixin` — the whole **Check settingsfile** (F4) pass: the file-existence walk over the editor content (placeholder resolution, the `path*`-key strict rule, the section/key/value gating tables, the MODFLOW-soft rule, wrong-extension detection), `_semantic_settings_problems` (date ordering, `_OPTION_REQUIRES` dependencies, `out_*` grammar + varname/index validation), `_forcing_time_range`, and the toggle/clear/label plumbing — see [Check settingsfile](#check-settingsfile-settings-menu)
 - **`src/gui/components/find_replace.py`**: `FindReplaceMixin` — the combined non-modal **Find & Replace** window (shared Find box + Find/Replace tabs, Count, "Replace all in selection", its own status bar) plus `find_next`/`find_previous`/`_find_in_editor`; searches the **active tab's** editor through `self.text_area`
+- **`src/gui/utils/badge_images.py`**: `badge_pixmap` — the round river-badge medals from `assets/badges/<code>.png` (medal found and cropped automatically)
+- **`src/gui/components/account_ui.py`**: `AccountMixin` — the CWatM account in the main window: the menu-bar account button, the one `AccountWorker`, the login state and the background re-login at start (see *Gamification backend*)
+- **`src/gui/widgets/account_dialogs.py`**: `LoginDialog` (Log in / Register / Forgot password + the emailed-code steps) and `AccountWindow` (points, badges, profile, Log out / Export my data / Delete account); both talk only through `mw.account_worker()`
+- **`src/gui/utils/account_*.py`**: the account client layer — `account_config` (URL + publishable key), `account_validation` (pure input rules), `account_store` (refresh token in the OS keyring), `account_client` (the only `supabase` importer), `account_worker` (`QThread`), `account_runs` (which runs count, the sent metadata, the per-user offline queue `account_pending.json`)
 - **`src/gui/components/main_window_styles.py`**: `MainWindowStyleMixin` — the main window's stylesheet builders (left/right panel, field, output box, editor + font css, run button, modern/save-dirty buttons, level button, filename + gauges state colours). Pure presentation, every colour a `theme.c(token)`; owns `_LEVEL_COLORS`
 - **`src/gui/components/config_parser.py`**: Configuration file parsing and formatting logic
 - **`src/gui/managers/date_manager.py`**: Date input validation and management
@@ -850,6 +859,73 @@ cwatm_gui.py
   it calls `gui.progress_clock.setValue(pct)`, which both run modes intercept
   (marker line in the subprocess; signal proxy in-process).
 
+### Gamification backend (`supabase/`, in progress)
+Optional user login + points for full runs + river badges, on Supabase — schema,
+rpc API, Edge Functions and project setup in [`supabase/README.md`](supabase/README.md)
+(S1 server, S3 client layer, S2 packaging, S4 UI, S5 points for runs, S6 privacy
+done). **Privacy (S6)**: the notice `documentation/CWatM_Account_Privacy.md` must
+describe what the code does - `tests/test_account_privacy.py` ties its version line,
+the offline-queue facts and the run fields to the code, so changing what is stored or
+sent means changing the notice. Every sign-up carries `account_config.PRIVACY_VERSION`
+(`register(..., privacy_version=)`); the server **refuses** a sign-up without it and
+stores version + time in `profiles` (migration `…140000_privacy_consent.sql`). Invariants: the GUI holds only the
+project URL + **anon/publishable** key (`account_config.py`), **never** the
+service-role key; points are written **only** by the server function `award_run` (no
+client write policy on `point_events`), keyed on the Journal-of-Runs `uid` so a run
+counts once; no paths or settings content are sent.
+Client layer (`src/gui/utils/account_*.py`): **`account_client.py` is the only
+importer of `supabase`**, and only `AccountWorker` (a `QThread`, `submit(op, …)` →
+`succeeded`/`failed`/`busy` signals) creates it, **on its own thread** — never call it
+from the GUI thread. Only the **refresh token** is persisted, in the **OS keyring**
+(`account_store.py`, never QSettings), re-saved on every rotation
+(`_on_auth_event`); auto-refresh is off, `_session()` refreshes on demand. Every
+failure surfaces as `AccountError(code, message)`. `account_validation.py` holds the
+pure input rules — its username regex must match the `profiles.username` constraint.
+UI (`account_ui.py` = `AccountMixin`, `account_dialogs.py`): the mixin owns the **one**
+worker (created on first use) and the login state (`logged_out`/`restoring`/
+`logged_in`/`offline`); the dialogs only `submit` and react to the answer for **their
+own pending op** — never set the login state themselves. The startup re-login runs
+**only when** `account/remembered` says a login is stored, `_RESTORE_DELAY_MS` after
+construction, so a user who never logged in never loads supabase. At exit the worker
+is stopped, and **terminated** if still inside a request (a QThread child destroyed
+while running aborts the process). Tests: `QSettings("IIASA", "CWatM_GUI")` is
+**always the registry** — `setDefaultFormat()` (the `isolated_qsettings` fixture)
+does not apply to that constructor, so a test must give its host an explicit ini
+file; and a test must close its dialogs and flush `DeferredDelete` itself
+(`_dispose` in `test_account_ui.py`) — leaving it to teardown order corrupted the
+heap (0xc0000374).
+**Points for runs (S5)**: the one hook is `run_ledger.add_entry` — it tells its
+**listeners** (`add_listener`) about every recorded run, and all three run paths
+(main, Windowed, Batch) record through it, so a new run path is counted by recording
+it in the journal, nothing else. `make_entry` also stores **`timesteps`**
+(`settings_timesteps(content)`: StepStart..StepEnd read the way CWatM's `Calendar`
+does — StepEnd a date **or** a count, `/ . -`, 2- or 4-digit year, last duplicate
+key wins). `account_runs.qualifies` = success + kind run/hidden/batch; `run_meta`
+whitelists gui_version/kind/timesteps/duration_s. Logged out → the run does not
+count; logged in → `award_run`; a login stored but unreachable (offline/restoring)
+or a failed send → **`account_pending.json`** (next to `run_ledger.json`), tagged
+with the user and sent at **that** user's next login (never someone else's), capped
+100 entries / 30 days. Award answers are matched to requests **in submit order**
+(`_award_fifo`) — only the mixin submits `award_run`.
+**One point per distinct setup**: `make_entry` also stores `settings_hash` =
+`run_ledger.settings_fingerprint(content)` — SHA-256 over the settings read like CWatM
+(comments/blank lines/spacing/line order/key case ignored, last duplicate wins) with
+**`Title`, `PathOut` and every `OUT_*` key left out** (they do not change the
+simulation); `run_meta` sends it and `award_run` answers `same_settings` for a setup
+that already earned a point (migration `…150000_leaderboard_badge_repeat_runs.sql`).
+Only the hash leaves the machine — the privacy notice says so, and its test checks.
+**Badge images**: `assets/badges/<badge code>.png` (bundled by its own spec line —
+the `assets/*` glob does not reach a subfolder), drawn by
+`src/gui/utils/badge_images.badge_pixmap(code, size, faded, dpr)`: it **finds the
+medal in the square image itself** (middle row/column vs the corner colour), crops
+and clips it round, so white/dark backgrounds and watermarks never show on any theme,
+and a new river needs only a PNG named after its code. No image → 🏅 + name. Shown
+88 px in the account window (earned + the next one faded) and 32 px in the
+leaderboard's badge column (which fetches the ladder via `get_badges` for name →
+code). Present: breg, thames, morava, inn.
+Note: the repo-root `supabase/` folder is importable as an empty namespace package;
+the installed `supabase` library wins over it, but only while it is installed.
+
 ## Technical Details
 
 ### Requirements
@@ -873,6 +949,13 @@ cwatm_gui.py
   large `.nc`; trimmed in the frozen build, see the spec note below)
 - **notebooklm-py[cookies]** (+ `rookiepy`) — CWatM AI / NotebookLM chat (needs
   Python ≥ 3.10)
+- **supabase** (supabase-py 2.31, reuses httpx) + **keyring** (+ `pywin32-ctypes` on
+  Windows, `SecretStorage`/`jeepney` on Linux) — the optional CWatM account; imported
+  lazily by `account_client.py` / `account_store.py` only. Bundled into the **GUI exe
+  only** (`account_*` in `cwatm_gui_dir.spec`, excluded from `CWatM_model.exe`);
+  **keyring has no PyInstaller hook** — the spec collects its backends, its dist
+  metadata (backend discovery reads the `keyring.backends` entry points) and
+  `win32ctypes`, without which the frozen exe silently never remembers a login
 
 ### Key Components
 - **CWatMMainWindow**: Main application window with split-panel layout

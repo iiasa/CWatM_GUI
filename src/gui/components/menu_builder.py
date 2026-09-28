@@ -10,7 +10,7 @@ CWatMMainWindow - all state lives on the main window instance.
 
 import os
 
-from PySide6.QtWidgets import QMenuBar, QToolButton
+from PySide6.QtWidgets import QMenuBar, QToolButton, QWidget, QHBoxLayout
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtCore import Qt, QUrl
 
@@ -295,6 +295,10 @@ class MenuBuilderMixin:
         faq_action = help_menu.addAction("FAQ")
         faq_action.setToolTip("Common questions & troubleshooting")
         faq_action.triggered.connect(lambda: self.show_faq())
+        privacy_action = help_menu.addAction("CWatM account privacy")
+        privacy_action.setToolTip(
+            "What the optional CWatM account stores, and how to export or delete it")
+        privacy_action.triggered.connect(lambda: self.show_account_privacy())
         homepage_action = help_menu.addAction("CWatM Homepage")
         homepage_action.setToolTip("Open the CWatM homepage in your web browser")
         homepage_action.triggered.connect(
@@ -306,6 +310,14 @@ class MenuBuilderMixin:
         # Add action for showing info dialog
         info_action = info_menu.addAction("About CWatM")
         info_action.triggered.connect(self.show_info_dialog)
+        # The CWatM account leaderboard - shown only while logged in (account_ui.py
+        # toggles it with the login state).
+        self._leaderboard_action = info_menu.addAction("Leaderboard")
+        self._leaderboard_action.setToolTip(
+            "Ranking of the CWatM account users who share their points")
+        self._leaderboard_action.triggered.connect(lambda: self.open_leaderboard())
+        self._leaderboard_action.setVisible(False)
+        info_menu.setToolTipsVisible(True)
 
         # "⋮" in the menu bar's right corner - a second way into Preferences
         # (the familiar overflow/settings affordance). Kept referenced so PySide
@@ -316,8 +328,17 @@ class MenuBuilderMixin:
         prefs_button.setAutoRaise(True)
         prefs_button.setCursor(Qt.PointingHandCursor)
         prefs_button.clicked.connect(lambda: self.open_preferences())
-        menu_bar.setCornerWidget(prefs_button, Qt.TopRightCorner)
         self._preferences_button = prefs_button
+        # The corner holds one widget: the CWatM account button (account_ui.py -
+        # "Log in" / "<user> · <points> pt") left of the ⋮ button.
+        corner = QWidget()
+        corner_lay = QHBoxLayout(corner)
+        corner_lay.setContentsMargins(0, 0, 0, 0)
+        corner_lay.setSpacing(2)
+        corner_lay.addWidget(self._create_account_button())
+        corner_lay.addWidget(prefs_button)
+        menu_bar.setCornerWidget(corner, Qt.TopRightCorner)
+        self._menu_corner = corner
 
         # Style the menu bar (theme-aware; re-applied on a mode switch)
         menu_bar.setStyleSheet(self._menu_bar_stylesheet())
@@ -445,6 +466,17 @@ class MenuBuilderMixin:
             }}
             QMenuBar QToolButton:hover {{
                 background-color: {theme.c('menu_sel_bg')};
+                color: {theme.c('menu_sel_text')};
+            }}
+            /* the CWatM account button left of the ⋮ - menu-item sized text, not the
+               large ⋮ glyph (pt, for the same reason as above) */
+            QMenuBar QToolButton#accountButton {{
+                font-size: 9pt;
+                font-weight: normal;
+                color: {theme.c('accent')};
+                padding: 2px 8px;
+            }}
+            QMenuBar QToolButton#accountButton:hover {{
                 color: {theme.c('menu_sel_text')};
             }}
         """
