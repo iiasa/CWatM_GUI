@@ -48,10 +48,16 @@ def _saved_basemap(settings):
     return saved if saved in {k for _l, k in BASEMAPS} else "OSM-WMS"
 
 
+# The CWatM AI notebook link: a free-text NotebookLM URL/id, persisted under this
+# key (the same one NotebookLMWindow itself reads/writes - notebooklm_client.py
+# resolves an empty value to the default notebook, so "" is a valid choice too).
+NOTEBOOK_SETTINGS_KEY = "notebooklm/notebook_id"
+NOTEBOOK_CHOICES = [""]   # "" = the default notebook; the box is editable for a custom link
+
+
 def _saved_notebook(settings):
     """The CWatM AI notebook link in use (empty/unset = the default notebook)."""
-    from src.gui.utils.notebooklm_client import saved_notebook
-    return saved_notebook(settings)
+    return settings.value(NOTEBOOK_SETTINGS_KEY, "", type=str)
 
 
 class PreferencesWindow(QDialog):
@@ -217,6 +223,11 @@ class PreferencesWindow(QDialog):
         self.cb_use_modflow = self._check(
             lay, "Use Modflow",
             "Load flopy for MODFLOW coupling. Off = flopy is not loaded (faster start).")
+        self.cb_academy = self._check(
+            lay, "Enable CWatM Academy",
+            "A guided, ten-level introduction to the CWatM GUI, styled like "
+            "Mikhail mode. Turning this on opens CWatM Academy now and each "
+            "time the GUI starts, until you finish or turn it off.")
         lay.addStretch(1)
         return page
 
@@ -318,7 +329,6 @@ class PreferencesWindow(QDialog):
             "Run CWatM).\nShown in the Expert skill level only; open tabs keep "
             "their content while the bar is hidden.")
         # CWatM AI notebook: pick one of the offered links or type your own
-        from src.gui.utils.notebooklm_client import NOTEBOOK_CHOICES
         self.cmb_notebook = QComboBox()
         self.cmb_notebook.setEditable(True)
         self.cmb_notebook.setInsertPolicy(QComboBox.NoInsert)
@@ -378,6 +388,7 @@ class PreferencesWindow(QDialog):
             "write_output": bool(mw.write_output_action.isChecked()),
             "load_previous": s.value("startup/load_previous", False, type=bool),
             "use_modflow": s.value("modflow/enabled", False, type=bool),
+            "academy_enabled": s.value("academy/enabled", False, type=bool),
             "language": i18n.current_language(),
             "theme": theme.current_theme(),
             "show_header": s.value("display/show_header", True, type=bool),
@@ -408,6 +419,7 @@ class PreferencesWindow(QDialog):
         self.cb_write_output.setChecked(st["write_output"])
         self.cb_load_previous.setChecked(st["load_previous"])
         self.cb_use_modflow.setChecked(st["use_modflow"])
+        self.cb_academy.setChecked(st["academy_enabled"])
         self._select_data(self.cmb_language, st["language"])
         self._select_data(self.cmb_theme, st["theme"])
         self.cb_show_header.setChecked(st["show_header"])
@@ -434,6 +446,7 @@ class PreferencesWindow(QDialog):
             "write_output": self.cb_write_output.isChecked(),
             "load_previous": self.cb_load_previous.isChecked(),
             "use_modflow": self.cb_use_modflow.isChecked(),
+            "academy_enabled": self.cb_academy.isChecked(),
             "language": self.cmb_language.currentData(),
             "theme": self.cmb_theme.currentData(),
             "show_header": self.cb_show_header.isChecked(),
@@ -510,6 +523,8 @@ class PreferencesWindow(QDialog):
             mw._on_load_previous_toggled(value)
         elif key == "use_modflow":
             mw._on_use_modflow_toggled(value)
+        elif key == "academy_enabled":
+            mw._on_academy_toggled(value)
         elif key == "language":
             i18n.set_language(value)
             for row in range(self.cat_list.count()):   # a list item is not a widget
@@ -548,7 +563,6 @@ class PreferencesWindow(QDialog):
         elif key == "use_tabs":
             mw._on_use_tabs_toggled(value)
         elif key == "notebook":
-            from src.gui.utils.notebooklm_client import NOTEBOOK_SETTINGS_KEY
             mw._settings.setValue(NOTEBOOK_SETTINGS_KEY, value)
             win = getattr(mw, "_cwatm_ai_window", None)   # an open CWatM AI window
             if win is not None:
