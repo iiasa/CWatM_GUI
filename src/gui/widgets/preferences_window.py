@@ -34,7 +34,8 @@ from src.gui.utils.window_geometry import scaled_default_size
 log = get_logger("preferences")
 
 # Category pages, in list order.
-CATEGORIES = ["Output", "Startup & Model", "Display", "Editor & Dates", "Run History"]
+CATEGORIES = ["Output", "Startup & Model", "Display", "Editor & Dates", "Run History",
+              "Account"]
 
 # Default OpenStreetMap basemap for Show Basin - the EPSG:4326 WMS layers of
 # basin_viewer2 (kept in sync with its _B2_PROVIDERS).
@@ -116,6 +117,7 @@ class PreferencesWindow(QDialog):
         self.pages.addWidget(self._page_display())
         self.pages.addWidget(self._page_editor())
         self.pages.addWidget(self._page_history())
+        self.pages.addWidget(self._page_account())
 
         self.cat_list.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.cat_list.setCurrentRow(0)
@@ -359,6 +361,37 @@ class PreferencesWindow(QDialog):
         lay.addStretch(1)
         return page
 
+    def _page_account(self):
+        page, lay = self._page(
+            "Account",
+            "The optional CWatM account: logged in, full CWatM runs earn points and "
+            "river badges. Log in, log out and edit your profile with the account "
+            "button in the menu bar (left of ⋮).")
+        status = getattr(self.mw, "account_status", lambda: None)()
+        if status:
+            name = (status.get("profile") or {}).get("username", "")
+            text = f"Logged in as {name} - {status.get('total_points', 0)} point(s)."
+        else:
+            text = "Not logged in."
+        state = QLabel(text)
+        state.setObjectName("prefSub")
+        lay.addWidget(state)
+        self.cb_account_remember = self._check(
+            lay, "Stay logged in on this computer",
+            "Log in automatically when CWatM GUI starts. The login is kept in the "
+            "Windows Credential Manager, never in a settings file. Untick to forget "
+            "it now.")
+        self.cb_account_count_runs = self._check(
+            lay, "Count my full CWatM runs (earn points)",
+            "While you are logged in, every successful full run (main run, Windowed "
+            "Run, Batch scenario) is reported to your CWatM account: 1 point per "
+            "distinct model setup (the same settings run again earn no further "
+            "point), and badges as the points add up. Only the GUI version, the "
+            "number of timesteps, the run time and a one-way fingerprint of the "
+            "settings are sent - no paths, no settings.")
+        lay.addStretch(1)
+        return page
+
     # -------------------------------------------------------------- browsing
 
     def _default_output_file_hint(self):
@@ -411,6 +444,8 @@ class PreferencesWindow(QDialog):
             "notebook": _saved_notebook(s),
             "history_folder": run_ledger.history_dir(),
             "history_retention": run_ledger.retention_days(),
+            "account_remember": mw.account_remember(),
+            "account_count_runs": mw.account_count_runs(),
         }
 
     def _to_widgets(self, st):
@@ -438,6 +473,8 @@ class PreferencesWindow(QDialog):
         self.cmb_notebook.setCurrentText(st["notebook"])
         self.ed_history_folder.setText(st["history_folder"])
         self.sp_retention.setValue(st["history_retention"])
+        self.cb_account_remember.setChecked(st["account_remember"])
+        self.cb_account_count_runs.setChecked(st["account_count_runs"])
 
     def _from_widgets(self):
         """Read the state the user has dialled in."""
@@ -465,6 +502,8 @@ class PreferencesWindow(QDialog):
             "notebook": self.cmb_notebook.currentText().strip(),
             "history_folder": self.ed_history_folder.text().strip(),
             "history_retention": self.sp_retention.value(),
+            "account_remember": self.cb_account_remember.isChecked(),
+            "account_count_runs": self.cb_account_count_runs.isChecked(),
         }
 
     @staticmethod
@@ -579,6 +618,10 @@ class PreferencesWindow(QDialog):
                 run_ledger.set_history_dir(value)
         elif key == "history_retention":
             run_ledger.set_retention_days(value)
+        elif key == "account_remember":
+            mw._set_account_remember(value)
+        elif key == "account_count_runs":
+            mw._set_account_count_runs(value)
 
     # ----------------------------------------------------------------- theme
 

@@ -124,6 +124,41 @@ playwright==1.61.0
 greenlet==3.5.3
 pyee==13.0.1
 
+# ---- CWatM account (optional login, points, badges - see supabase/README.md) ----
+# supabase-py talks to the Supabase backend (auth + rpc); it reuses httpx above.
+# keyring keeps the login's refresh token in the Windows Credential Manager (Secret
+# Service on Linux) instead of a plain-text QSettings value. Both are imported only
+# by src/gui/utils/account_*.py, lazily - never on the startup path.
+supabase==2.31.0
+supabase-auth==2.31.0
+supabase-functions==2.31.0
+postgrest==2.31.0
+storage3==2.31.0
+realtime==2.31.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+annotated-types==0.8.0
+typing-inspection==0.4.4
+PyJWT==2.15.0
+cryptography==50.0.1
+cffi==2.1.1
+pycparser==3.0
+deprecation==2.1.0
+StrEnum==0.4.15
+websockets==15.0.1
+h2==4.4.1
+hpack==4.2.0
+hyperframe==6.1.0
+yarl==1.25.1
+multidict==7.0.0
+propcache==0.5.4
+keyring==25.7.0
+pywin32-ctypes==0.2.3; sys_platform == "win32"
+jaraco.classes==3.4.0
+jaraco.context==6.1.2
+jaraco.functools==4.6.0
+more-itertools==11.1.0
+
 # ---- Common / shared dependencies ----
 python-dateutil==2.9.0.post0
 pytz==2026.2

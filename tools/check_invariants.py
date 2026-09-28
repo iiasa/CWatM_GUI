@@ -21,6 +21,8 @@ SRC = "src/gui"
 HEAVY = {
     "xarray", "rasterio", "plotly", "folium", "netCDF4", "scipy", "pandas",
     "matplotlib", "flopy", "branca", "openpyxl",
+    # CWatM account: only src/gui/utils/account_client.py may import these, lazily.
+    "supabase", "supabase_auth", "postgrest", "pydantic", "keyring",
 }
 HEAVY_PREFIXES = ("cwatm.run_cwatm", "cwatm.management_modules",
                   "cwatm.hydrological_modules")
@@ -34,6 +36,7 @@ STARTUP_MODULES = {
     "src/gui/components/settings_check.py",
     "src/gui/components/find_replace.py",
     "src/gui/components/main_window_styles.py",
+    "src/gui/components/account_ui.py",
 }
 
 # Line separators that str.splitlines() breaks on but Python's tokenizer does not.
