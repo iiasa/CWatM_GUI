@@ -278,6 +278,14 @@ class MenuBuilderMixin:
 
         self._init_configure_state()
 
+        # "CWatM Academy" - a clickable menu-bar button (same pattern as CWatM AI
+        # below), placed left of it. Opens the ten-level guided tour. Kept
+        # referenced so PySide cannot GC it.
+        self._academy_action = menu_bar.addAction("CWatM Academy")
+        self._academy_action.setToolTip(
+            "A guided, ten-level introduction to the CWatM GUI")
+        self._academy_action.triggered.connect(lambda: self.open_academy())
+
         # "CWatM AI" - a clickable menu-bar button (a top-level QAction fires on
         # click instead of opening a dropdown), placed left of Help. Opens the
         # Gemini NotebookLM chat window. Kept referenced so PySide cannot GC it.
@@ -363,11 +371,15 @@ class MenuBuilderMixin:
         # settings sections shown in the editor; the same idea applied to the menus -
         # everything a beginner has no use for yet, and could set up wrongly, is out of
         # the way. Advanced and Expert see everything.
+        # Analyse ▸ Watercycle is the one exception: CWatM Academy's Level 2 (Running
+        # CWatM) sends a Beginner there directly to read their own run's water
+        # balance, so it stays visible at every level - Tools ▸ Add output
+        # Watercycle (a setup/config action, not part of that lesson) still hides.
         self._beginner_hidden_actions = [
             watercycle_action, options_action, workbook_action, check_action,
             restore_action, ledger_action,                      # Tools
             hidden_run_action, batch_action,                    # RUN CWATM
-            analyse_watercycle_action, flowdiagram_action,      # Analyse
+            flowdiagram_action,                                 # Analyse
         ]
         # Entries only an **Expert** sees. Compare Tab works on the settings-file
         # tabs, and those are Expert-only themselves (Preferences ▸ Use Tabs ×

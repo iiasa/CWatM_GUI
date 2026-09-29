@@ -155,8 +155,9 @@ try:
                 job.reply(b"text/html", buf)
                 return
             import re as _re, os as _os, tempfile
-            # A WMS GetMap request (Show Basin2, EPSG:4326): osmtile://wms/service?<query>.
-            # The query (LAYERS/BBOX/SRS/...) is forwarded verbatim to a real OSM WMS
+            # A WMS GetMap request (Show Basin2, EPSG:4326, and CWatM Academy's
+            # outlet-picker map): osmtile://wms/service?<query>. The query
+            # (LAYERS/BBOX/SRS/...) is forwarded verbatim to a real OSM WMS
             # endpoint - so an EPSG:4326 map gets a correctly-projected OSM basemap
             # (XYZ tiles are Web-Mercator and cannot align on a 4326 map). Fetched with
             # Python (proxy-proof) and cached by the query.

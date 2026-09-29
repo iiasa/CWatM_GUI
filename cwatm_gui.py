@@ -609,6 +609,21 @@ def _load_initial_settings(window):
             0, lambda p=paths, a=active: window.open_files_in_tabs(p, a))
 
 
+def _maybe_open_academy(window):
+    """Queue opening CWatM Academy once the UI is up, if Preferences ▸ Startup &
+    Model ▸ Enable CWatM Academy is on - queued last (after the tasks in
+    _schedule_startup_tasks and any initial settings file) so it ends up on top,
+    the "starts right away with an introduction" entry point."""
+    try:
+        from src.gui.utils import academy_progress
+        if not academy_progress.is_enabled():
+            return
+    except Exception:
+        log.debug("academy startup check failed", exc_info=True)
+        return
+    QTimer.singleShot(0, window.open_academy)
+
+
 def _exec(app):
     """Run the Qt event loop and return the process exit code.
 
@@ -673,6 +688,7 @@ def main():
 
         _schedule_startup_tasks(window)
         _load_initial_settings(window)
+        _maybe_open_academy(window)
 
         # This is the point the user can actually start working - everything after
         # is either already-idle event loop or the background warm-up threads/timers

@@ -54,7 +54,15 @@ except Exception as _wc_err:  # pragma: no cover - import guard
 
 
 def open_watercycle(parent=None):
-    """Prompt for a WaterCycle result .csv file and open the sunburst window."""
+    """Prompt for a WaterCycle result .csv file and open the sunburst window.
+
+    Records the opened window on ``parent._last_watercycle_window`` right
+    before showing it - reached only once a real file was picked and the
+    window built without error (a cancelled file dialog returns before this
+    point) - so CWatM Academy's Level 2 walkthrough can gate its own
+    completion on this actually having happened, instead of just trusting
+    the learner clicked through the menu (see
+    academy_window.AcademyWindow._watercycle_opened)."""
     if not _WC_AVAILABLE:
         QMessageBox.warning(
             parent, "Watercycle",
@@ -73,6 +81,12 @@ def open_watercycle(parent=None):
         return
     try:
         win = WatercycleWindow(path, parent)
+        if parent is not None:
+            try:
+                parent._last_watercycle_window = win
+            except Exception:
+                log.debug("open_watercycle: could not record _last_watercycle_window",
+                          exc_info=True)
         win.exec()
     except Exception as e:
         import traceback

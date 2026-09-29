@@ -155,6 +155,14 @@ def c(token):
     return _THEMES[_current][token]
 
 
+def theme_colors(key):
+    """The full token dict for ``key`` ('normal' / 'dark' / 'mikhail'), regardless
+    of the currently active theme - for a widget whose look is fixed to one theme
+    on purpose (e.g. CWatM Academy, always styled like Mikhail) rather than
+    following ``current_theme()``."""
+    return dict(_THEMES[key])
+
+
 def qcolor(token):
     """QColor for ``token`` in the active theme."""
     return QColor(c(token))

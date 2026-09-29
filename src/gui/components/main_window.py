@@ -1257,6 +1257,26 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             except Exception:
                 log.debug("flopy pre-warm failed", exc_info=True)
 
+    def _on_academy_toggled(self, checked):
+        """Preferences ▸ Startup & Model ▸ Enable CWatM Academy: persist the choice
+        and, when just turned on, open it right away (cwatm_gui.py handles opening
+        it at the *next* startup - this is only for toggling it on mid-session)."""
+        try:
+            from src.gui.utils import academy_progress
+            academy_progress.set_enabled(checked)
+        except Exception:
+            log.debug("persist academy/enabled failed", exc_info=True)
+        if checked:
+            self.open_academy()
+
+    def open_academy(self):
+        """Open (or reuse) the CWatM Academy window."""
+        try:
+            from src.gui.widgets.academy_window import open_academy
+            open_academy(parent=self)
+        except Exception as e:
+            print(f"Error opening CWatM Academy: {str(e)}", file=sys.stderr)
+
     def _on_use_tabs_toggled(self, checked):
         """Preferences ▸ Editor & Dates ▸ Use Tabs: persist the choice and show or
         hide the tab bar (Expert only - see tabs_enabled)."""

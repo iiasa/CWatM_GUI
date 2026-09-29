@@ -149,6 +149,7 @@ second implementation of it**. Adding a setting = one control + one `_read_state
 | Output | Write output box | Writes the run log to that file (can slow down a run). Backed by the standalone `write_output_action` QAction — `run_controller` reads `.isChecked()` |
 | Startup & Model | Load previous settings at start | Persisted `startup/load_previous`, default OFF; when ticked **every tab** of the last session is re-opened on the next startup (`tabs/files` + `tabs/active` → `open_files_in_tabs`; a pre-tabs session falls back to the most recently used file). Handled in `cwatm_gui.py main()` when no file is passed on the command line — a command-line file wins and opens a single tab |
 | Startup & Model | Use Modflow | Persisted `modflow/enabled`, default OFF; ON **pre-imports flopy** (the CWatM↔MODFLOW library — heavy, pulls the matplotlib stack) so in-process MODFLOW use is ready; OFF never loads flopy, keeping startup fast (`src/gui/utils/modflow.py`, `_on_use_modflow_toggled`) |
+| Startup & Model | Enable CWatM Academy | Persisted `academy/enabled`, default OFF: ticking opens **CWatM Academy** (the guided ten-level introduction, `academy_window.py`, also reached by the **CWatM Academy** menu-bar button left of CWatM AI) at once and at every start (`cwatm_gui._maybe_open_academy`) until turned off (`_on_academy_toggled`). The Academy sets the level to **Beginner** (the user can switch back afterwards) |
 | _(not exposed)_ | ~~Run model in separate process~~ | Not shown anywhere, but the functionality is kept: `run_subprocess_action` is created standalone in `_init_configure_state` (default ON, persisted `run/subprocess`) and still drives `_run_subprocess_enabled` (own OS process = real Stop, crash isolation). Add it to a Preferences page to expose it again |
 | Display | Language | **English** (default) / Deutsch / Français / Español / Italiano / Magyar / Română / Srpski (Latin script) / Hrvatski / Slovenčina / Български / Čeština / Українська — the language of menus, menu items, buttons, labels and tooltips; switches **live**, persisted `display/language` (`i18n.set_language`). The texts come from `translations/ui_strings_languages.csv` — see the GUI-language behavioral note |
 | Display | Mode | Colour theme of the whole GUI: **Normal** (classic light) / **Dark Mode** / **Mikhail** (black + amber); switches live (the open dialog re-themes itself), persisted `display/theme` |
@@ -276,8 +277,11 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   `_apply_menu_level`, run when the menus are built and from `set_experience_level`):
   a **Beginner** does not see Tools ▸ *Add output Watercycle* · *Change Options* ·
   *Excel Crops/Reservoirs* · *Check Data* · *Restore settingsfile* · *Journal of Runs*,
-  RUN CWATM ▸ *Windowed Run CWatM* · *Batch Run…*, Analyse ▸ *Watercycle* ·
-  *Flow Diagram*; Advanced and Expert see those. The reverse list
+  RUN CWATM ▸ *Windowed Run CWatM* · *Batch Run…*, Analyse ▸ *Flow Diagram*; Advanced
+  and Expert see those. **Analyse ▸ Watercycle is the one exception** — visible at every
+  level, because CWatM Academy's Level 2 (Running CWatM) sends a Beginner there
+  directly to read their own run's water balance (Tools ▸ *Add output Watercycle*, a
+  setup/config action rather than that lesson's own step, still hides as normal). The reverse list
   (`_expert_only_actions`) is shown to **Expert alone**: Settings ▸ *Compare Tab*,
   which works on the (Expert-only) settings-file tabs, and RUN CWATM ▸ *Create batch*
   — both hidden **and** disabled below Expert (Compare Tab because an invisible

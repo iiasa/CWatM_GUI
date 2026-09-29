@@ -219,6 +219,11 @@ class PreferencesWindow(QDialog):
         self.cb_use_modflow = self._check(
             lay, "Use Modflow",
             "Load flopy for MODFLOW coupling. Off = flopy is not loaded (faster start).")
+        self.cb_academy = self._check(
+            lay, "Enable CWatM Academy",
+            "A guided, ten-level introduction to the CWatM GUI, styled like "
+            "Mikhail mode. Turning this on opens CWatM Academy now and each "
+            "time the GUI starts, until you finish or turn it off.")
         lay.addStretch(1)
         return page
 
@@ -424,6 +429,7 @@ class PreferencesWindow(QDialog):
             "write_output": bool(mw.write_output_action.isChecked()),
             "load_previous": s.value("startup/load_previous", False, type=bool),
             "use_modflow": s.value("modflow/enabled", False, type=bool),
+            "academy_enabled": s.value("academy/enabled", False, type=bool),
             "language": i18n.current_language(),
             "theme": theme.current_theme(),
             "show_header": s.value("display/show_header", True, type=bool),
@@ -457,6 +463,7 @@ class PreferencesWindow(QDialog):
         self.cb_write_output.setChecked(st["write_output"])
         self.cb_load_previous.setChecked(st["load_previous"])
         self.cb_use_modflow.setChecked(st["use_modflow"])
+        self.cb_academy.setChecked(st["academy_enabled"])
         self._select_data(self.cmb_language, st["language"])
         self._select_data(self.cmb_theme, st["theme"])
         self.cb_show_header.setChecked(st["show_header"])
@@ -486,6 +493,7 @@ class PreferencesWindow(QDialog):
             "write_output": self.cb_write_output.isChecked(),
             "load_previous": self.cb_load_previous.isChecked(),
             "use_modflow": self.cb_use_modflow.isChecked(),
+            "academy_enabled": self.cb_academy.isChecked(),
             "language": self.cmb_language.currentData(),
             "theme": self.cmb_theme.currentData(),
             "show_header": self.cb_show_header.isChecked(),
@@ -565,6 +573,8 @@ class PreferencesWindow(QDialog):
             mw._on_load_previous_toggled(value)
         elif key == "use_modflow":
             mw._on_use_modflow_toggled(value)
+        elif key == "academy_enabled":
+            mw._on_academy_toggled(value)
         elif key == "language":
             i18n.set_language(value)
             for row in range(self.cat_list.count()):   # a list item is not a widget
