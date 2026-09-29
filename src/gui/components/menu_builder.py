@@ -325,6 +325,12 @@ class MenuBuilderMixin:
             "Ranking of the CWatM account users who share their points")
         self._leaderboard_action.triggered.connect(lambda: self.open_leaderboard())
         self._leaderboard_action.setVisible(False)
+        # Where CWatM has been run - the anonymous run-location counts (public, so
+        # also without a login; world_map_window.py)
+        self._world_map_action = info_menu.addAction("World Map")
+        self._world_map_action.setToolTip(
+            "Shows a world map with points where users applied CWatM")
+        self._world_map_action.triggered.connect(lambda: self.open_world_map())
         info_menu.setToolTipsVisible(True)
 
         # "⋮" in the menu bar's right corner - a second way into Preferences

@@ -56,6 +56,20 @@ def run_meta(entry, gui_version):
     return meta
 
 
+def location_of(entry):
+    """The (lon, lat) to report for a qualifying run, or None (no/invalid gauge)."""
+    gauge = entry.get("gauge")
+    if not gauge or len(gauge) != 2:
+        return None
+    try:
+        lon, lat = float(gauge[0]), float(gauge[1])
+    except (TypeError, ValueError):
+        return None
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+        return None
+    return (lon, lat)
+
+
 def user_key(username):
     return (username or "").strip().lower()
 
@@ -99,13 +113,16 @@ def _save_pending(items):
         log.warning("could not write the pending account awards", exc_info=True)
 
 
-def add_pending(uid, meta, username):
-    """Keep a run for ``username`` to send later (idempotent per uid)."""
+def add_pending(uid, meta, username, gauge=None):
+    """Keep a run for ``username`` to send later (idempotent per uid). ``gauge``
+    stays local until the run is awarded (then it is reported, anonymously)."""
     if not uid or not user_key(username):
         return
     items = [i for i in load_pending() if i.get("uid") != uid]
-    items.append({"uid": uid, "meta": meta, "user": user_key(username),
-                  "ts": time.time()})
+    item = {"uid": uid, "meta": meta, "user": user_key(username), "ts": time.time()}
+    if gauge:
+        item["gauge"] = list(gauge)
+    items.append(item)
     _save_pending(items)
 
 

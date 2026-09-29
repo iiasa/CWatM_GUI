@@ -35,7 +35,11 @@ log = get_logger("preferences")
 
 # Category pages, in list order.
 CATEGORIES = ["Output", "Startup & Model", "Display", "Editor & Dates", "Run History",
-              "Account"]
+              "Account", "CWatM Academy"]
+
+# Points for each finished Academy level - the server's game_config
+# 'points_per_academy_level' (migration ..._academy_progress.sql) decides.
+ACADEMY_POINTS = 5
 
 # Default OpenStreetMap basemap for Show Basin - the EPSG:4326 WMS layers of
 # basin_viewer2 (kept in sync with its _B2_PROVIDERS).
@@ -49,16 +53,10 @@ def _saved_basemap(settings):
     return saved if saved in {k for _l, k in BASEMAPS} else "OSM-WMS"
 
 
-# The CWatM AI notebook link: a free-text NotebookLM URL/id, persisted under this
-# key (the same one NotebookLMWindow itself reads/writes - notebooklm_client.py
-# resolves an empty value to the default notebook, so "" is a valid choice too).
-NOTEBOOK_SETTINGS_KEY = "notebooklm/notebook_id"
-NOTEBOOK_CHOICES = [""]   # "" = the default notebook; the box is editable for a custom link
-
-
 def _saved_notebook(settings):
     """The CWatM AI notebook link in use (empty/unset = the default notebook)."""
-    return settings.value(NOTEBOOK_SETTINGS_KEY, "", type=str)
+    from src.gui.utils.notebooklm_client import saved_notebook
+    return saved_notebook(settings)
 
 
 class PreferencesWindow(QDialog):
@@ -118,6 +116,7 @@ class PreferencesWindow(QDialog):
         self.pages.addWidget(self._page_editor())
         self.pages.addWidget(self._page_history())
         self.pages.addWidget(self._page_account())
+        self.pages.addWidget(self._page_academy())
 
         self.cat_list.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.cat_list.setCurrentRow(0)
@@ -225,11 +224,6 @@ class PreferencesWindow(QDialog):
         self.cb_use_modflow = self._check(
             lay, "Use Modflow",
             "Load flopy for MODFLOW coupling. Off = flopy is not loaded (faster start).")
-        self.cb_academy = self._check(
-            lay, "Enable CWatM Academy",
-            "A guided, ten-level introduction to the CWatM GUI, styled like "
-            "Mikhail mode. Turning this on opens CWatM Academy now and each "
-            "time the GUI starts, until you finish or turn it off.")
         lay.addStretch(1)
         return page
 
@@ -312,6 +306,12 @@ class PreferencesWindow(QDialog):
         self._row(lay, "Skill of user:", self.cmb_level,
                   "The skill of the user determines how much of the settingsfile "
                   "is presented")
+        if not getattr(self.mw, "levels_unlocked", lambda: True)():
+            # logged out = Beginner only; Advanced / Expert need a login
+            self.cmb_level.setEnabled(False)
+            self.cmb_level.setToolTip(
+                "Without a login CWatM GUI runs in the Beginner level - log in to "
+                "your CWatM account to choose Advanced or Expert")
         self.cb_web_picker = self._check(
             lay, "Web-style date picker",
             "Pick the Start/Spin/End dates with a modern frameless calendar popup "
@@ -331,6 +331,7 @@ class PreferencesWindow(QDialog):
             "Run CWatM).\nShown in the Expert skill level only; open tabs keep "
             "their content while the bar is hidden.")
         # CWatM AI notebook: pick one of the offered links or type your own
+        from src.gui.utils.notebooklm_client import NOTEBOOK_CHOICES
         self.cmb_notebook = QComboBox()
         self.cmb_notebook.setEditable(True)
         self.cmb_notebook.setInsertPolicy(QComboBox.NoInsert)
@@ -389,6 +390,29 @@ class PreferencesWindow(QDialog):
             "point), and badges as the points add up. Only the GUI version, the "
             "number of timesteps, the run time and a one-way fingerprint of the "
             "settings are sent - no paths, no settings.")
+        self.cb_account_locations = self._check(
+            lay, "Record the location of my runs anonymously (first gauge, ~100 m)",
+            "For every run that earns a badge point, the location of its first gauge (rounded to "
+            "about 100 m) is counted anonymously - stored without your name or "
+            "account, only as 'a run at this place in this month'. Saved in your "
+            "account, so it can be changed while you are logged in.")
+        self.cb_account_locations.setEnabled(status is not None)
+        lay.addStretch(1)
+        return page
+
+    def _page_academy(self):
+        page, lay = self._page(
+            "CWatM Academy",
+            "The guided, ten-level introduction to the CWatM GUI. Logged in, every "
+            f"finished level earns {ACADEMY_POINTS} points.")
+        self.cb_academy = self._check(
+            lay, "Enable CWatM Academy",
+            "A guided, ten-level introduction to the CWatM GUI, styled like "
+            "Mikhail mode. Turning this on opens CWatM Academy now and each "
+            "time the GUI starts, until you finish or turn it off.")
+        self.cb_academy_link = self._check(
+            lay, "Link CWatM Academy to your login",
+            "Links the progression of the Academy to your login")
         lay.addStretch(1)
         return page
 
@@ -422,6 +446,7 @@ class PreferencesWindow(QDialog):
             "load_previous": s.value("startup/load_previous", False, type=bool),
             "use_modflow": s.value("modflow/enabled", False, type=bool),
             "academy_enabled": s.value("academy/enabled", False, type=bool),
+            "academy_link": s.value("academy/link_login", True, type=bool),
             "language": i18n.current_language(),
             "theme": theme.current_theme(),
             "show_header": s.value("display/show_header", True, type=bool),
@@ -446,6 +471,7 @@ class PreferencesWindow(QDialog):
             "history_retention": run_ledger.retention_days(),
             "account_remember": mw.account_remember(),
             "account_count_runs": mw.account_count_runs(),
+            "account_share_locations": mw.account_share_locations(),
         }
 
     def _to_widgets(self, st):
@@ -455,6 +481,7 @@ class PreferencesWindow(QDialog):
         self.cb_load_previous.setChecked(st["load_previous"])
         self.cb_use_modflow.setChecked(st["use_modflow"])
         self.cb_academy.setChecked(st["academy_enabled"])
+        self.cb_academy_link.setChecked(st["academy_link"])
         self._select_data(self.cmb_language, st["language"])
         self._select_data(self.cmb_theme, st["theme"])
         self.cb_show_header.setChecked(st["show_header"])
@@ -475,6 +502,7 @@ class PreferencesWindow(QDialog):
         self.sp_retention.setValue(st["history_retention"])
         self.cb_account_remember.setChecked(st["account_remember"])
         self.cb_account_count_runs.setChecked(st["account_count_runs"])
+        self.cb_account_locations.setChecked(st["account_share_locations"])
 
     def _from_widgets(self):
         """Read the state the user has dialled in."""
@@ -484,6 +512,7 @@ class PreferencesWindow(QDialog):
             "load_previous": self.cb_load_previous.isChecked(),
             "use_modflow": self.cb_use_modflow.isChecked(),
             "academy_enabled": self.cb_academy.isChecked(),
+            "academy_link": self.cb_academy_link.isChecked(),
             "language": self.cmb_language.currentData(),
             "theme": self.cmb_theme.currentData(),
             "show_header": self.cb_show_header.isChecked(),
@@ -504,6 +533,7 @@ class PreferencesWindow(QDialog):
             "history_retention": self.sp_retention.value(),
             "account_remember": self.cb_account_remember.isChecked(),
             "account_count_runs": self.cb_account_count_runs.isChecked(),
+            "account_share_locations": self.cb_account_locations.isChecked(),
         }
 
     @staticmethod
@@ -564,6 +594,8 @@ class PreferencesWindow(QDialog):
             mw._on_use_modflow_toggled(value)
         elif key == "academy_enabled":
             mw._on_academy_toggled(value)
+        elif key == "academy_link":
+            mw._set_academy_link(value)
         elif key == "language":
             i18n.set_language(value)
             for row in range(self.cat_list.count()):   # a list item is not a widget
@@ -602,6 +634,7 @@ class PreferencesWindow(QDialog):
         elif key == "use_tabs":
             mw._on_use_tabs_toggled(value)
         elif key == "notebook":
+            from src.gui.utils.notebooklm_client import NOTEBOOK_SETTINGS_KEY
             mw._settings.setValue(NOTEBOOK_SETTINGS_KEY, value)
             win = getattr(mw, "_cwatm_ai_window", None)   # an open CWatM AI window
             if win is not None:
@@ -622,6 +655,8 @@ class PreferencesWindow(QDialog):
             mw._set_account_remember(value)
         elif key == "account_count_runs":
             mw._set_account_count_runs(value)
+        elif key == "account_share_locations":
+            mw._set_share_locations(value)
 
     # ----------------------------------------------------------------- theme
 

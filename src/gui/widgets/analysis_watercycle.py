@@ -217,6 +217,7 @@ class WatercycleWindow(PlotlyWindowBase):
     """Window showing the overall water balance of a WaterCycle csv as a sunburst."""
 
     _save_fallback = "watercycle"
+    _csv_name = "watercycle.csv"
 
     def __init__(self, csv_path, parent=None):
         super().__init__(parent)
@@ -526,6 +527,7 @@ class WatercycleWindow(PlotlyWindowBase):
         self.next_button.setVisible(multi)
 
         btn_row = QHBoxLayout()
+        btn_row.addWidget(self._make_save_csv_button(btn_style))   # lower left
         btn_row.addStretch()
         btn_row.addWidget(self.prev_button)
         btn_row.addWidget(self.next_button)
@@ -534,7 +536,7 @@ class WatercycleWindow(PlotlyWindowBase):
         layout.addLayout(btn_row)
         self._update_station_nav()
 
-    # _save_html is inherited from PlotlyWindowBase.
+    # _save_html / _save_csv are inherited from PlotlyWindowBase.
 
     def _on_range_changed(self, low, high):
         """Slider moved: update the selected window + labels live, debounce a rebuild."""
@@ -747,6 +749,7 @@ class WatercycleWindow(PlotlyWindowBase):
         discharge_idx = labels.index(discharge_label) if discharge_label in labels else -1
 
         volume, fraction, otherunit = [], [], []
+        csv_rows = []
         for part, v in enumerate(values_out):
             if part == 0:
                 fra1 = 1.
@@ -768,11 +771,20 @@ class WatercycleWindow(PlotlyWindowBase):
             fraction.append("Percent: {:.{prec}%}".format(fra1, prec=prec))
             volume.append("Volume: {:.{prec1}} km<sup>3</sup>".format(v / convert, prec1=prec1))
 
+            mmyear = v / cellAreaSum * 1000 / noyears if cellAreaSum else 0.
             if part == discharge_idx:
                 otherunit.append("Discharge: {:.2f} m<sup>3</sup>s".format(discharge))
             else:
-                mmyear = v / cellAreaSum * 1000 / noyears if cellAreaSum else 0.
                 otherunit.append("mm/year: {:.0f} mm".format(mmyear))
+            # Save CSV: the same numbers, unformatted (the root wedge's label is the
+            # lon/lat HTML - named plainly here)
+            csv_rows.append([
+                parents[part] if part else "",
+                labels[part] if part else "Water balance",
+                round(v / convert, 6),
+                round(mmyear, 3),
+                round(fra1 * 100, 3),
+                round(float(discharge), 3) if part == discharge_idx else ""])
 
         fraction = np.array(fraction)
         fraction[0] = " "
@@ -785,6 +797,13 @@ class WatercycleWindow(PlotlyWindowBase):
         addinfo = np.full(len(values_out), '', dtype='<U100')
         addinfo[0] = (f"Basin: {name}<br>Area: {area_km2:.0f} km<sup>2</sup><br>"
                       + date_range_str)
+
+        self._csv_data = (
+            [("Basin", name), ("lon", self.lon), ("lat", self.lat),
+             ("Period", date_range_str), ("Area_km2", round(area_km2, 3))],
+            ["Group", "Component", "Volume_km3", "mm_per_year", "Percent",
+             "Discharge_m3s"],
+            csv_rows)
 
         customdata = np.stack([fraction, otherunit, volume, addinfo], axis=-1)
 

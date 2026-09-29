@@ -244,6 +244,20 @@ class FlowRegimeWindow(PlotlyWindowBase):
 
     # _save_html is inherited from PlotlyWindowBase.
 
+    def set_data(self, dates, values):
+        """New data for the open window - the Timeseries window's displayed period
+        changed (its range slider). A period too short for a regime keeps the last
+        diagram and says so in the header."""
+        try:
+            result = compute_regime(dates, values)
+        except ValueError as e:
+            self.header_label.setText(f"{self._title_text}\n({e})")
+            return
+        self._year_series, self._avg_x, self._avg_y, self._resolution, self._bands = \
+            result
+        self.header_label.setText(self._title_text)
+        self._show_figure()
+
     def _toggle_years(self):
         self._show_years = not self._show_years
         self.years_button.setText(

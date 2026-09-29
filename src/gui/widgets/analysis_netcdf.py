@@ -5,24 +5,28 @@ NetCDF analysis widget (Analyse ▸ NetCDF) - the NetCDF viewer on a **folium**
 Draws the variable as a Leaflet **ImageOverlay** over an OSM **WMS** basemap
 (EPSG:4326, like Show Basin), with a timestep slider + Play, Speed and Log-scale
 toggle inline; File (Save HTML / Load JSON / Load shape) and Action (Fast Display
-Timeserie / Total Timeseries / Compare A-B / Flow duration / Flow regime) menus; and
+Timeserie / Total Timeseries / Compare A-B / Flow duration / Flow regime / Calculate
+mean / Calculate percentile - the last two write a new one-map NetCDF via
+``netcdf_stats`` and show it in place of the original, ``_show_file``) menus; and
 a top-level Display action that opens a small window (colour-scale selector,
 OSM-transparency slider, basemap selector). Load JSON/Load shape are the same
 feature as Show Basin's (shared readers + shared window.addGeoJson JS helper from
-``basin_viewer2.py``) - draws a GeoJSON or ESRI shapefile overlay on the map. A left click drops the red pending marker and remembers
-the cell (self._clicked); right-clicking anywhere on the map then opens every
+``basin_viewer2.py``) - draws a GeoJSON or ESRI shapefile overlay on the map. A left
+click on the map (or on a gauge pin) **toggles** that cell: a new cell is added to
+the selected points (a numbered pin), a selected one - or its pin - is removed
+again; the newest selection is also self._clicked. Right-clicking anywhere on the map then opens every
 Action-menu item at the cursor (same label/tooltip, mirrored off the real
 QActions) - Qt-native (customContextMenuRequested), not the page's own
 'contextmenu' DOM event, which raced unreliably with QWebEngineView's native
 Back/Forward/Reload menu. Fast/Total Timeserie, Flow duration and Flow regime all
-work off that last-clicked point - Total Timeseries plots every point clicked so
-far, Flow duration/regime only ever the most recent one, each plotting every
+work off the selection - the Timeseries items plot every selected point, Flow
+duration/regime only ever the most recent one, each plotting every
 calendar year as its own curve plus the multi-year average in black at double
 width.
 
 The data-reading, meta lookup and per-cell time-series re-read are **reused from
 ``NetcdfDataBase``** (in ``analysis_netcdf_base.py``; this class subclasses it); only
-the rendering/interaction is implemented here. The clicked points are drawn as
+the rendering/interaction is implemented here. The selected points are drawn as
 **numbered pin icons coloured to match their line** in the Timeseries window.
 """
 
@@ -121,6 +125,29 @@ class _PointSeriesWorker(QThread):
                 self.progress.emit(i + 1, n)
             self.finished_ok.emit(out)
         except Exception as e:  # pragma: no cover - defensive
+            self.failed.emit(str(e))
+
+
+_DETACHED_WORKERS = []    # statistic workers whose window closed while they ran
+
+
+class _StatisticWorker(QThread):
+    """Calculate mean / Calculate percentile off the GUI thread: reads the whole
+    variable once, so on a large file it takes a while (netcdf_stats does the work)."""
+
+    done = Signal(str)          # the written file
+    failed = Signal(str)
+
+    def __init__(self, kwargs, parent=None):
+        super().__init__(parent)
+        self._kwargs = kwargs
+
+    def run(self):
+        try:
+            from src.gui.utils.netcdf_stats import compute_statistic
+            self.done.emit(compute_statistic(**self._kwargs))
+        except Exception as e:
+            log.warning("NetCDF statistic failed", exc_info=True)
             self.failed.emit(str(e))
 
 
@@ -378,6 +405,7 @@ class NetcdfWindow(NetcdfDataBase):
         speed_label = QLabel("Speed:")
         speed_label.setStyleSheet(_lbl)
         speed_label.setVisible(self._multi)
+        self.speed_label = speed_label
         row1.addWidget(speed_label)
         self.speed_combo = QComboBox()
         for name in _PLAY_SPEEDS:
@@ -476,6 +504,9 @@ class NetcdfWindow(NetcdfDataBase):
             f"QMenuBar::item:selected {{ background-color: {theme.c('menu_sel_bg')}; }}")
 
         file_menu = mbar.addMenu("File")
+        act_load_nc = file_menu.addAction("Load netcdf", self._load_netcdf)
+        act_load_nc.setToolTip(
+            "Load another NetCDF file (from the folder of this one) and show it here")
         act_save_html = file_menu.addAction("Save HTML", self._save_html)
         act_save_html.setToolTip(
             "Save the map as a self-contained HTML file (opens in any browser)")
@@ -488,7 +519,7 @@ class NetcdfWindow(NetcdfDataBase):
         self.ts_fast_action = action_menu.addAction(
             "Fast Display Timeserie", self._display_timeseries_fast)
         self.ts_fast_action.setToolTip(
-            "Plot the clicked point quickly using the map's timesteps but has gaps")
+            "Plot the selected points quickly using the map's timesteps but has gaps")
         self.ts_fast_action.setVisible(self._multi)
         self.ts_action = action_menu.addAction(
             "Total Timeseries", self._display_timeseries_full)
@@ -504,6 +535,15 @@ class NetcdfWindow(NetcdfDataBase):
         self.flowregime_action = action_menu.addAction("Flow regime", self._show_flow_regime)
         self.flowregime_action.setToolTip("Displays a flow regime curve")
         self.flowregime_action.setVisible(self._multi)
+        action_menu.addSeparator()
+        self.mean_action = action_menu.addAction("Calculate mean", self._calculate_mean)
+        self.mean_action.setToolTip("Calculates the mean of the given netcdf")
+        self.mean_action.setVisible(self._multi)
+        self.percentile_action = action_menu.addAction(
+            "Calculate percentile", self._calculate_percentile)
+        self.percentile_action.setToolTip(
+            "Select a percentile and it calculates this percentile from the given netcdf")
+        self.percentile_action.setVisible(self._multi)
 
         # "Display" - a clickable menu-bar button (a top-level QAction fires on click
         # instead of opening a dropdown), same pattern as the main window's CWatM AI.
@@ -564,6 +604,10 @@ class NetcdfWindow(NetcdfDataBase):
 
     # -------------------------------------------------------------- map build
     def _show_map(self):
+        # built again when File > Load netcdf brings another grid: connect the load
+        # handler only once
+        first_build = not getattr(self, "_load_handler_connected", False)
+        self._load_handler_connected = True
         west, east, south, north = self._grid_bounds()
         bounds = [[south, west], [north, east]]
         # Projected grid: Leaflet CRS.Simple treats "lat/lng" as raw y/x, so the
@@ -644,7 +688,8 @@ class NetcdfWindow(NetcdfDataBase):
             except Exception:
                 log.debug("_show_map: ignored", exc_info=True)
             profile.installUrlSchemeHandler(b"osmtile", self._tile_handler)
-            self.web_view.loadFinished.connect(self._on_loaded)
+            if first_build:
+                self.web_view.loadFinished.connect(self._on_loaded)
             self.web_view.load(QUrl("osmtile://ncmap/"))
         except Exception:
             log.debug("netcdf: osmtile serving failed", exc_info=True)
@@ -654,7 +699,8 @@ class NetcdfWindow(NetcdfDataBase):
             tmp.write(html)
             tmp.close()
             self._temp_html = tmp.name
-            self.web_view.loadFinished.connect(self._on_loaded)
+            if first_build:
+                self.web_view.loadFinished.connect(self._on_loaded)
             self.web_view.load(QUrl.fromLocalFile(tmp.name))
 
     def _fmt_val(self, v):
@@ -684,7 +730,9 @@ class NetcdfWindow(NetcdfDataBase):
           window.setGauges=function(arr){window.gaugeGroup.clearLayers();
             arr.forEach(function(g,i){
               L.marker([g[0],g[1]],{icon:gpin(String(i+1))}).addTo(window.gaugeGroup)
-               .bindTooltip('Gauge '+(i+1));
+               .bindTooltip('Gauge '+(i+1)+' (click to select)')
+               .on('click',function(ev){L.DomEvent.stopPropagation(ev);
+                 document.title='NC2 '+g[1]+'|'+g[0]+'|'+Date.now();});
             });};
           window.setBasemap=function(layer){
             if(PROJ)return; // projected x/y grid: no lon/lat basemap
@@ -699,13 +747,6 @@ class NetcdfWindow(NetcdfDataBase):
           window.updateNc=function(uri){if(window._ov)window._ov.setUrl(uri);};
           window.setNcOpacity=function(o){window._op=o;
             if(window._ov)window._ov.setOpacity(o);};
-          window.pendingMarker=null;
-          window.setPending=function(lat,lon){
-            if(window.pendingMarker){MAP.removeLayer(window.pendingMarker);}
-            window.pendingMarker=L.marker([lat,lon],{icon:pin('#e11d1d','')})
-              .addTo(MAP);};
-          window.clearPending=function(){if(window.pendingMarker){
-            MAP.removeLayer(window.pendingMarker);window.pendingMarker=null;}};
           window.ptGroup=L.layerGroup().addTo(MAP);
           window.setPoints=function(arr){window.ptGroup.clearLayers();
             arr.forEach(function(p){
@@ -729,7 +770,10 @@ class NetcdfWindow(NetcdfDataBase):
                 if(t)layer.bindPopup(t);}}}).addTo(window.geoGroup);
             try{MAP.fitBounds(gj.getBounds());}catch(e){}
             }catch(e){document.title='NC2ERR geojson '+e;}};
-          MAP.on('click',function(e){document.title='NC2 '+e.latlng.lng+'|'+e.latlng.lat;});
+          // the trailing timestamp makes every click a new title, so clicking the
+          // same place twice (select, then deselect) fires titleChanged both times
+          MAP.on('click',function(e){
+            document.title='NC2 '+e.latlng.lng+'|'+e.latlng.lat+'|'+Date.now();});
           window.onerror=function(m){document.title='NC2ERR '+m;return false;};
           window.setBasemap(__BASEKEY__);
           setTimeout(function(){MAP.invalidateSize();MAP.fitBounds(window._bounds);
@@ -951,7 +995,7 @@ class NetcdfWindow(NetcdfDataBase):
         self.log_button.blockSignals(False)
         # Point time-series makes no sense on a difference map — disable while comparing.
         for a in (self.ts_action, self.ts_fast_action, self.flowdur_action,
-                 self.flowregime_action):
+                 self.flowregime_action, self.mean_action, self.percentile_action):
             a.setEnabled(self._multi and not self._compare_mode)
         self.header_label.setText(header_text)
         if self.time_labels:
@@ -980,36 +1024,61 @@ class NetcdfWindow(NetcdfDataBase):
         if not title.startswith("NC2 "):
             return
         try:
-            lon_s, lat_s = title[4:].split("|", 1)
+            # "NC2 lon|lat|stamp" (map click or gauge pin click)
+            lon_s, lat_s = title[4:].split("|")[:2]
             lon, lat = float(lon_s), float(lat_s)
         except Exception:
             return
-        self._mark_clicked_cell(lon, lat)
+        self._toggle_point(lon, lat)
 
-    def _mark_clicked_cell(self, lon, lat, prefix=""):
-        """Snap (lon, lat) to the nearest cell, remember it as the clicked point
-        (self._clicked), drop the pending marker and update the info label - shared
-        by a plain map click and a gauge right-click."""
+    def _cell_of(self, lon, lat):
+        """(lon, lat) snapped to the nearest cell centre, plus its (lati, loni)."""
         loni = int(np.argmin(np.abs(self.lons - lon)))
         lati = int(np.argmin(np.abs(self.lats - lat)))
-        lonc, latc = float(self.lons[loni]), float(self.lats[lati])
+        return (float(self.lons[loni]), float(self.lats[lati])), lati, loni
+
+    def _toggle_point(self, lon, lat):
+        """A left click on the map (or on a gauge pin): select that cell - a new
+        numbered pin, added to the points every Timeseries action plots - or, when
+        the cell is already selected, deselect it. An open Timeseries window follows
+        at once."""
+        cell, _lati, _loni = self._cell_of(lon, lat)
+        if cell in self._displayed_points:
+            self._remove_point(self._displayed_points.index(cell))
+            self._show_cell_info(cell, prefix="Removed point - ", value=False)
+            return
+        self._displayed_points.append(cell)
+        self._mark_clicked_cell(*cell)
+        self._update_map_markers()
+        self._open_or_refresh_timeseries(open_if_closed=False)
+
+    def _mark_clicked_cell(self, lon, lat, prefix=""):
+        """Remember (lon, lat)'s cell as the most recently selected point
+        (self._clicked - what Flow duration / Flow regime use) and update the info
+        label."""
+        cell, lati, loni = self._cell_of(lon, lat)
         z = None
         try:
             val = float(self.frames[self._ti][lati, loni])
             z = val if np.isfinite(val) else None
         except Exception:
             log.debug("_mark_clicked_cell: ignored", exc_info=True)
-        self._clicked = (lonc, latc, z)
-        self._js("if(window.setPending) setPending(%f,%f);" % (latc, lonc))
+        self._clicked = (cell[0], cell[1], z)
+        self._show_cell_info(cell, z, prefix)
+
+    def _show_cell_info(self, cell, z=None, prefix="", value=True):
+        lonc, latc = cell
         # Coordinate/value read-out (like Show Basin's info label).
         from src.gui.utils import display_format
-        vtxt = "no data" if z is None else (
-            display_format.fmt(z) + (f" {self.unit}" if self.unit else ""))
-        step = f" | {self.time_labels[self._ti]}" if self.time_labels else ""
         xl, yl = ("X", "Y") if self._projected else ("Lon", "Lat")
-        self.info_label.setText(
-            f"{prefix}{xl}: {display_format.fmt(lonc)} | {yl}: {display_format.fmt(latc)} | "
-            f"Value: {vtxt}{step}")
+        text = (f"{prefix}{xl}: {display_format.fmt(lonc)} | "
+                f"{yl}: {display_format.fmt(latc)}")
+        if value:
+            vtxt = "no data" if z is None else (
+                display_format.fmt(z) + (f" {self.unit}" if self.unit else ""))
+            step = f" | {self.time_labels[self._ti]}" if self.time_labels else ""
+            text += f" | Value: {vtxt}{step}"
+        self.info_label.setText(text)
 
     def _on_web_context_menu(self, pos):
         """Right-click anywhere on the map - Qt-native (customContextMenuRequested,
@@ -1017,8 +1086,8 @@ class NetcdfWindow(NetcdfDataBase):
         QWebEngineView's native Back/Forward/Reload menu unreliably. Opens every
         Action-menu item at the cursor; no hit-testing needed (and no dependency on
         gauges existing at all) since every item already works off whatever point
-        was last left-clicked (self._clicked) - same point the red pending marker
-        shows, exactly like Total Timeseries."""
+        was selected last (self._clicked) or, for the Timeseries items, every
+        selected point."""
         global_pos = self.web_view.mapToGlobal(pos)
         self._open_map_action_menu(global_pos)
 
@@ -1039,7 +1108,160 @@ class NetcdfWindow(NetcdfDataBase):
         _mirror(self.compare_action, self._toggle_compare)
         _mirror(self.flowdur_action, self._show_flow_duration)
         _mirror(self.flowregime_action, self._show_flow_regime)
+        if self.mean_action.isVisible():
+            menu.addSeparator()
+            _mirror(self.mean_action, self._calculate_mean)
+            _mirror(self.percentile_action, self._calculate_percentile)
         menu.exec(global_pos)
+
+    # ------------------------------------------------ mean / percentile over time
+    def _calculate_mean(self):
+        """Action ▸ Calculate mean: the time mean of the variable -> a new NetCDF
+        (``<var>_mean.nc`` next to the original), then shown instead of the original."""
+        self._calculate_statistic("mean")
+
+    def _calculate_percentile(self):
+        """Action ▸ Calculate percentile: ask for the percentile, then as the mean
+        (``<var>_<p>_percentile.nc``)."""
+        from PySide6.QtWidgets import QInputDialog
+        p, ok = QInputDialog.getDouble(
+            self, "Calculate percentile",
+            "Percentile (0 - 100), e.g. 50 for the 50% percentile (median):",
+            50.0, 0.0, 100.0, 1)
+        if ok:
+            self._calculate_statistic("percentile", p)
+
+    def _calculate_statistic(self, statistic, percentile=None):
+        from src.gui.utils import netcdf_stats
+        if getattr(self, "_stat_worker", None) is not None:
+            QMessageBox.information(self, "NetCDF", "A calculation is already running.")
+            return
+        src = self._point_source
+        name = netcdf_stats.default_name(self.varname, statistic, percentile)
+        title = "Save mean as NetCDF" if statistic == "mean" else \
+            "Save percentile as NetCDF"
+        out, _ = QFileDialog.getSaveFileName(
+            self, title, os.path.join(os.path.dirname(os.path.abspath(self.nc_path)), name),
+            "NetCDF files (*.nc)")
+        if not out:
+            return
+        if not out.lower().endswith(".nc"):
+            out += ".nc"
+        if os.path.abspath(out) == os.path.abspath(self.nc_path):
+            QMessageBox.warning(self, "NetCDF",
+                                "Choose another name - the original file is kept.")
+            return
+        worker = _StatisticWorker(dict(
+            src_path=self.nc_path, out_path=out, varname=src["varname"],
+            lat_name=src["lat_name"], lon_name=src["lon_name"],
+            time_name=src["time_name"], extra_sel=src["extra_sel"],
+            statistic=statistic, percentile=percentile), parent=self)
+        self._stat_worker = worker
+        worker.done.connect(self._on_statistic_done)
+        worker.failed.connect(self._on_statistic_failed)
+        worker.finished.connect(self._on_statistic_finished)
+        self._start_point_series_read_ui(indeterminate=True)
+        self.ts_progress.setFormat("calculating…")
+        self.ts_cancel_button.setVisible(False)     # one read, cannot be interrupted
+        self.mean_action.setEnabled(False)
+        self.percentile_action.setEnabled(False)
+        worker.start()
+
+    def _on_statistic_done(self, path):
+        try:
+            self._show_file(path)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "NetCDF",
+                                f"Saved {path}\nbut it could not be displayed:\n{e}")
+
+    def _on_statistic_failed(self, msg):
+        QMessageBox.warning(self, "NetCDF", f"The calculation failed:\n{msg}")
+
+    def _on_statistic_finished(self):
+        self._stat_worker = None
+        try:
+            self._stop_point_series_read_ui()
+            self.mean_action.setEnabled(self._multi and not self._compare_mode)
+            self.percentile_action.setEnabled(self._multi and not self._compare_mode)
+        except RuntimeError:
+            log.debug("_on_statistic_finished: window gone", exc_info=True)
+
+    def _load_netcdf(self):
+        """File ▸ Load netcdf: pick another .nc (starting in this file's folder) and
+        show it in this window instead of the current one."""
+        start_dir = os.path.dirname(os.path.abspath(self.nc_path))
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load NetCDF file", start_dir, "NetCDF files (*.nc)")
+        if not path:
+            return
+        try:
+            self._show_file(path)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.warning(self, "Load netcdf", f"Could not open the file:\n{e}")
+
+    def _show_file(self, path):
+        """Show ``path`` in this window instead of the current file - a calculated
+        mean/percentile map, or any file picked with File ▸ Load netcdf. The selected
+        points go; the time controls follow the new file. A file on another grid
+        rebuilds the map page."""
+        if self._compare_mode:
+            self._exit_compare()
+        self._play_timer.stop()
+        (varname, lons, lats, frames, labels,
+         zmin, zmax, title) = self._load(path)
+        same_grid = (lons.shape == self.lons.shape and lats.shape == self.lats.shape
+                     and np.allclose(lons, self.lons) and np.allclose(lats, self.lats))
+        self.nc_path = path
+        self.varname = varname
+        self.settings_title = title
+        self.lons, self.lats = lons, lats
+        self.frames, self.time_labels = frames, labels
+        self.zmin, self.zmax = zmin, zmax
+        self.unit, self.long_name, self.description = self._lookup_meta(varname)
+        self._ti = 0
+        self._displayed_points = []
+        self._clicked = None
+        self._update_map_markers()
+        self._close_ts_window()
+        multi = len(frames) > 1
+        for w in (self.play_button, self.time_slider, self.time_label,
+                  self.speed_label, self.speed_combo):
+            w.setVisible(multi)
+        for a in (self.ts_fast_action, self.ts_action, self.flowdur_action,
+                  self.flowregime_action, self.mean_action, self.percentile_action):
+            a.setVisible(multi)
+        head = os.path.basename(path)
+        if self.settings_title:
+            head += f"   —   {self.settings_title}"
+        self.setWindowTitle(f"\U0001F5FA NetCDF: {os.path.basename(path)}")
+        if not same_grid:
+            self._rebuild_for_new_grid()
+        self._apply_data_swap(head)
+        self.info_label.setText(f"Shown: {path}")
+
+    def _rebuild_for_new_grid(self):
+        """The file just loaded lies on another grid: redo the grid-dependent state
+        of __init__ (projected or lon/lat, lon orientation, basemap controls) and
+        build the map page again (its bounds are baked into the page)."""
+        from src.gui.utils import display_format as _df
+        self._projected = not grid_is_latlon(self.lats, self.lons)
+        self._lon_ascending = bool(self.lons[0] <= self.lons[-1])
+        if self._projected:
+            self._base_opacity, self._overlay_opacity = 0.0, 1.0
+        else:
+            t = self.opacity_slider.value() / 100.0 if self.opacity_slider.isEnabled() \
+                else max(0.0, min(1.0, _df.get_transparency() / 100.0))
+            self._base_opacity, self._overlay_opacity = t, 1.0 - 0.5 * t
+        self.basemap_combo.setEnabled(not self._projected)
+        self.opacity_slider.setEnabled(not self._projected)
+        self._uri_cache.clear()
+        self._map_ready = False
+        self._js_queue = []
+        self._show_map()
 
     # ------------------------------------------------- points / timeseries
     # ``self._displayed_points`` holds the confirmed cell centres as (lon, lat)
@@ -1071,25 +1293,19 @@ class NetcdfWindow(NetcdfDataBase):
         self._display_timeseries(full=True)
 
     def _display_timeseries(self, full=True):
-        """Add the currently clicked cell to the persisted point set (if any) and
-        (re)build the Timeseries window from all persisted points, in ``full`` mode
-        (Total = every timestep, off-thread with a progress bar) or fast mode (strided
-        map timesteps, read synchronously - quick, with gaps)."""
+        """(Re)build the Timeseries window from every selected point (the numbered
+        pins - a left click selects/deselects them, see _toggle_point), in ``full``
+        mode (Total = every timestep, off-thread with a progress bar) or fast mode
+        (strided map timesteps, read synchronously - quick, with gaps)."""
         if not self._multi:
             QMessageBox.information(self, "Timeserie",
                                     "This file has no time dimension to plot.")
             return
-        if self._clicked:
-            lon, lat, _z = self._clicked
-            loni = int(np.argmin(np.abs(self.lons - lon)))
-            lati = int(np.argmin(np.abs(self.lats - lat)))
-            cell = (float(self.lons[loni]), float(self.lats[lati]))
-            if cell not in self._displayed_points:
-                self._displayed_points.append(cell)
         if not self._displayed_points:
             QMessageBox.information(
                 self, "Timeserie",
-                "Click a point on the map first, then press a Timeserie button.")
+                "Click one or more points on the map first, then press a Timeserie "
+                "button.")
             return
         self._ts_full = full
         self._open_or_refresh_timeseries()
@@ -1428,20 +1644,26 @@ class NetcdfWindow(NetcdfDataBase):
         self._ts_window = None
 
     def _remove_point(self, idx):
-        """Remove a confirmed point (clicked pin) from the map and the Timeseries."""
+        """Remove a selected point (its pin clicked, or its cell clicked again) from
+        the map and the Timeseries."""
         if idx < 0 or idx >= len(self._displayed_points):
             return
-        del self._displayed_points[idx]
+        removed = self._displayed_points.pop(idx)
+        # Flow duration / regime work off the most recent selection: fall back to
+        # the newest point still selected when that one goes
+        if self._clicked and (self._clicked[0], self._clicked[1]) == removed:
+            self._clicked = None
+            if self._displayed_points:
+                self._mark_clicked_cell(*self._displayed_points[-1])
         self._update_map_markers()
         self._open_or_refresh_timeseries(open_if_closed=False)
 
     def _update_map_markers(self):
-        """Redraw the confirmed points as NUMBERED pin icons (colour = Timeseries line
-        colour, by index) and clear the pending red marker."""
+        """Redraw the selected points as NUMBERED pin icons (colour = Timeseries line
+        colour, by index)."""
         arr = [[p[1], p[0], self._point_color(i), str(i + 1)]   # [lat, lon, colour, num]
                for i, p in enumerate(self._displayed_points)]
         self._js("if(window.setPoints) setPoints(%s);" % json.dumps(arr))
-        self._js("if(window.clearPending) clearPending();")
 
     def _save_html(self):
         if not getattr(self, "_page_html", None):
@@ -1526,6 +1748,20 @@ class NetcdfWindow(NetcdfDataBase):
                 worker.wait(4000)
             except Exception:
                 log.debug("closeEvent: ignored", exc_info=True)
+        # A mean/percentile calculation cannot be interrupted: let it finish writing
+        # its file detached from this window (a QThread destroyed while running
+        # aborts the process), just without showing the result.
+        worker = getattr(self, "_stat_worker", None)
+        if worker is not None and worker.isRunning():
+            for sig in (worker.done, worker.failed, worker.finished):
+                try:
+                    sig.disconnect()
+                except Exception:
+                    log.debug("closeEvent: ignored", exc_info=True)
+            worker.setParent(None)
+            _DETACHED_WORKERS.append(worker)
+            worker.finished.connect(lambda w=worker: _DETACHED_WORKERS.remove(w))
+        self._stat_worker = None
         # Close the shared point-series dataset (_shared_point_dataset), if one was
         # ever opened, so the file handle is released promptly.
         ds = getattr(self, "_point_ds", None)

@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QToolButton, QMessageBox
 
 from src.gui import __version__ as GUI_VERSION
-from src.gui.utils import account_config, account_runs, run_ledger
+from src.gui.utils import academy_progress, account_config, account_runs, run_ledger
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("account_ui")
@@ -37,6 +37,9 @@ _STATUS_OPS = {"restore", "login", "confirm_signup", "reset_password", "get_stat
                "update_profile", "register"}
 # ...of those, the ones that start a session: the offline queue is sent after them.
 _LOGIN_OPS = {"restore", "login", "confirm_signup", "reset_password", "register"}
+# Interactive logins: the one-time run-location question is asked after these (not
+# after the silent re-login at startup - a question out of nowhere).
+_ASK_LOCATION_OPS = {"login", "confirm_signup", "reset_password"}
 # award_run answers that settle a run for good (anything else = try again later).
 _AWARD_FINAL = {"awarded", "duplicate", "too_short", "daily_limit", "invalid_run_uid",
                 "same_settings"}
@@ -123,17 +126,38 @@ class AccountMixin:
         # answers strictly in order, and only this mixin submits award_run, so the
         # oldest entry is always the one an answer belongs to.
         self._award_fifo = []
-        self._update_account_button()
         if not account_config.is_configured():
+            self._update_account_button()
             self._account_button.setVisible(False)
+            wm = getattr(self, "_world_map_action", None)
+            if wm is not None:
+                wm.setVisible(False)        # no server - nothing to show
             return
         # Every recorded run (main / Windowed / Batch) reaches _on_run_recorded.
         run_ledger.add_listener(self._on_run_recorded)
-        if self.account_remember() and self._settings.value(
-                "account/remembered", False, type=bool):
+        # CWatM Academy keeps its progress in the profile while linked + logged in
+        academy_progress.set_remote(self)
+        if self._stored_login():
             self._account_state = "restoring"
-            self._update_account_button()
             QTimer.singleShot(_RESTORE_DELAY_MS, self._account_restore)
+        self._update_account_button()
+
+    def _stored_login(self):
+        return self.account_remember() and self._settings.value(
+            "account/remembered", False, type=bool)
+
+    def levels_unlocked(self):
+        """May the user pick Advanced / Expert? Only with a CWatM account login -
+        logged out, the GUI runs in Beginner. A stored login still being restored
+        (or unreachable offline) counts as logged in, so a network hiccup does not
+        take the level away. Without an account server (no key configured) nobody
+        could log in, so every level stays open."""
+        if not account_config.is_configured():
+            return True
+        state = getattr(self, "_account_state", None)
+        if state is None:                  # before _init_account: the restore to come
+            return self._stored_login()
+        return state != "logged_out"
 
     # ---- worker ------------------------------------------------------------------
     def account_worker(self):
@@ -149,6 +173,7 @@ class AccountMixin:
 
     def _stop_account_worker(self):
         run_ledger.remove_listener(self._on_run_recorded)
+        academy_progress.set_remote(None)
         worker = getattr(self, "_account_worker_obj", None)
         if worker is None:
             return
@@ -215,41 +240,165 @@ class AccountMixin:
     # ---- points for runs (S5) ------------------------------------------------------
     def _on_run_recorded(self, entry):
         """run_ledger listener: a run was recorded in the Journal of Runs."""
-        if not self.account_count_runs() or not account_runs.qualifies(entry):
+        if not account_runs.qualifies(entry):
+            return
+        if not self.account_count_runs():
             return
         meta = account_runs.run_meta(entry, GUI_VERSION)
+        # The gauge stays LOCAL with the request: it is reported (anonymously, on
+        # its own) only once the server has answered this run with "awarded" - so
+        # the run-location map holds only runs that earned a badge point.
+        gauge = account_runs.location_of(entry)
         state = self._account_state
         if state == "logged_in":
-            self._submit_award(entry["uid"], meta, self._account_username())
+            self._submit_award(entry["uid"], meta, self._account_username(), gauge)
         elif state in ("offline", "restoring"):
             # A login is stored but not (yet) reachable: keep the run for that user.
             user = self._settings.value("account/last_user", "")
             if user:
-                account_runs.add_pending(entry["uid"], meta, user)
+                account_runs.add_pending(entry["uid"], meta, user, gauge)
                 log.info("run kept for the CWatM account (offline)")
         # logged out: runs do not count
 
-    def _submit_award(self, uid, meta, user):
-        self._award_fifo.append((uid, meta, user))
+    def _shares_locations(self):
+        profile = (self.account_status() or {}).get("profile") or {}
+        return bool(profile.get("share_locations"))
+
+    def account_share_locations(self):
+        """For Preferences ▸ Account: the stored choice when logged in, else the
+        default (yes)."""
+        if self.account_status() is None:
+            return True
+        return self._shares_locations()
+
+    def _set_share_locations(self, value):
+        """Preferences ▸ Account ▸ Record the location of my runs - saved on the
+        server (the profile), so it needs a login."""
+        if self._account_state == "logged_in" and \
+                bool(value) != self._shares_locations():
+            self.account_worker().submit("update_profile", share_locations=bool(value))
+
+    def _report_location(self, gauge):
+        """An AWARDED run's first gauge -> the anonymous run-location count (consent
+        only). Sent as its own request, never inside award_run: the server stores it
+        without any user, and the two must not be joinable."""
+        if self._account_state != "logged_in" or not self._shares_locations():
+            return
+        loc = account_runs.location_of({"gauge": gauge}) if gauge else None
+        if loc is not None:
+            self.account_worker().submit("record_location", loc[0], loc[1])
+
+    def _ask_location_consent(self):
+        """Once per user and computer, at an interactive login: may the first gauge
+        of each run that earns a point be recorded (anonymously)? Accounts registered with
+        the tick already agreed; the answer can be changed in the account window."""
+        status = self.account_status()
+        if not status or self._shares_locations():
+            return
+        user = account_runs.user_key(self._account_username())
+        key = f"account/location_asked/{user}"
+        if not user or self._settings.value(key, False, type=bool):
+            return
+        self._settings.setValue(key, True)
+        answer = QMessageBox.question(
+            self, "CWatM run locations",
+            "May CWatM record where it is run?\n\n"
+            "For every run that earns a badge point, the location of the FIRST gauge (rounded to "
+            "about 100 m) is counted - anonymously: it is stored without your name "
+            "or account, only as 'a run at this place in this month'. This helps "
+            "IIASA see where CWatM is used.\n\n"
+            "You can change this at any time in your account window. Details: "
+            "Help ▸ CWatM account privacy.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)     # default: yes
+        if answer == QMessageBox.Yes:
+            self.account_worker().submit("update_profile", share_locations=True)
+
+    # ---- CWatM Academy progress in the profile ---------------------------------------
+    # academy_progress calls these while "Link CWatM Academy to your login" is on.
+    def academy_remote_active(self):
+        return self.account_status() is not None
+
+    def academy_remote_levels(self):
+        profile = (self.account_status() or {}).get("profile") or {}
+        return {int(x) for x in profile.get("academy_completed") or []
+                if str(x).isdigit()}
+
+    def academy_remote_complete(self, level):
+        # shown at once; the server's answer replaces it with the stored list
+        self._set_academy_levels(self.academy_remote_levels() | {int(level)})
+        self.account_worker().submit("academy_complete_level", int(level))
+
+    def academy_remote_reset(self):
+        self._set_academy_levels(set())
+        self.account_worker().submit("academy_reset")
+
+    def _set_academy_levels(self, levels):
+        profile = (self._account_status or {}).get("profile")
+        if profile is not None:
+            profile["academy_completed"] = sorted(int(x) for x in levels)
+
+    def _set_academy_link(self, value):
+        """Preferences ▸ CWatM Academy ▸ Link CWatM Academy to your login."""
+        academy_progress.set_linked(value)
+        self._refresh_academy_window()
+
+    def _refresh_academy_window(self):
+        """An open Academy window re-reads the progress (login, logout, link)."""
+        win = getattr(self, "_academy_window", None)
+        if win is None:
+            return
+        try:
+            if win.isVisible():
+                win.refresh_progress()
+        except RuntimeError:
+            log.debug("academy window already gone", exc_info=True)
+
+    def _on_academy_answer(self, op, result):
+        result = result or {}
+        if "academy_completed" in result:
+            self._set_academy_levels(result.get("academy_completed") or [])
+        if op != "academy_complete_level":
+            return
+        if "total_points" in result and self._account_status is not None:
+            self._account_status["total_points"] = result["total_points"]
+        status = result.get("status")
+        if status == "awarded":
+            pts = result.get("points_awarded", 0)
+            self._account_note(
+                f"CWatM Academy: +{pts} points for level {result.get('level')} "
+                f"(total {result.get('total_points', '?')}).")
+            for badge in result.get("new_badges") or []:
+                self._account_note(f"CWatM account: 🏅 new badge - {badge.get('name')}!")
+            # badges / next badge changed: refresh the button
+            self.account_worker().submit("get_status")
+        elif status == "email_not_confirmed":
+            self._account_note("CWatM Academy: progress saved - confirm your email "
+                               "address to earn points for it.")
+        self._update_account_button()
+
+    def _submit_award(self, uid, meta, user, gauge=None):
+        # the gauge is NOT sent - it waits here for the "awarded" answer
+        self._award_fifo.append((uid, meta, user, gauge))
         self.account_worker().submit("award_run", uid, meta)
 
     def _send_pending_awards(self):
         """After a login: send the runs this user finished while offline."""
         user = self._account_username()
-        queued = {u for u, _m, _n in self._award_fifo}
+        queued = {item[0] for item in self._award_fifo}
         for item in account_runs.pending_for(user):
             if item["uid"] not in queued:
-                self._submit_award(item["uid"], item.get("meta") or {}, user)
+                self._submit_award(item["uid"], item.get("meta") or {}, user,
+                                   item.get("gauge"))
 
     def _on_award_answer(self, result, code=None):
         """An award_run answer (result) or failure (code) for the oldest request."""
         if not self._award_fifo:
             return
-        uid, meta, user = self._award_fifo.pop(0)
+        uid, meta, user, gauge = self._award_fifo.pop(0)
         if code is not None:                       # failed - keep it for later
             if code in ("offline", "server_error", "session_expired",
                         "not_logged_in", "rate_limited"):
-                account_runs.add_pending(uid, meta, user)
+                account_runs.add_pending(uid, meta, user, gauge)
             return
         status = (result or {}).get("status")
         if status in _AWARD_FINAL:
@@ -259,12 +408,15 @@ class AccountMixin:
             if self._account_state == "logged_in":
                 self._send_pending_awards()
         else:                                      # e.g. email_not_confirmed
-            account_runs.add_pending(uid, meta, user)
+            account_runs.add_pending(uid, meta, user, gauge)
         for line in award_messages(result):
             self._account_note(line)
-        if status == "awarded" and self._account_state == "logged_in":
-            # points + badges changed: refresh the button (next badge included)
-            self.account_worker().submit("get_status")
+        if status == "awarded":
+            # only a run that earned a point goes on the run-location map
+            self._report_location(gauge)
+            if self._account_state == "logged_in":
+                # points + badges changed: refresh the button (next badge included)
+                self.account_worker().submit("get_status")
 
     def _account_note(self, text):
         try:
@@ -283,6 +435,15 @@ class AccountMixin:
         self._update_account_button()
 
     def _update_account_button(self):
+        # Advanced / Expert follow the login (every state change passes here)
+        refresh = getattr(self, "_refresh_experience_level", None)
+        if refresh is not None:
+            try:
+                refresh()
+            except RuntimeError:
+                log.debug("level refresh: widget already gone", exc_info=True)
+        # the Academy's progress follows the login too (while linked)
+        self._refresh_academy_window()
         # Info ▸ Leaderboard exists only for a logged-in user
         action = getattr(self, "_leaderboard_action", None)
         if action is not None:
@@ -312,10 +473,17 @@ class AccountMixin:
     def _on_account_succeeded(self, op, result):
         if op == "award_run":
             self._on_award_answer(result)
+        elif op in ("academy_complete_level", "academy_reset"):
+            self._on_academy_answer(op, result)
+        elif op == "record_location":
+            log.debug("run location: %s", (result or {}).get("status"))
         elif op in _STATUS_OPS and isinstance(result, dict) and "profile" in result:
             self._set_account_status(result)
             if op in _LOGIN_OPS:
                 self._send_pending_awards()
+            if op in _ASK_LOCATION_OPS:
+                # after the login dialog has closed
+                QTimer.singleShot(400, self._ask_location_consent)
         elif op == "restore" and result is None:
             self._clear_account()               # nothing stored after all
         elif op in ("logout", "delete_account"):
@@ -327,6 +495,15 @@ class AccountMixin:
                 log.debug("status bar message failed", exc_info=True)
 
     def _on_account_failed(self, op, code, message):
+        if op == "record_location":
+            log.info("run location not recorded: %s", code)   # best-effort, no retry
+            return
+        if op in ("academy_complete_level", "academy_reset"):
+            self._account_note(f"CWatM Academy: the progress could not be saved to "
+                               f"your account ({message or code}).")
+            if code in ("session_expired", "not_logged_in"):
+                self._clear_account()
+            return
         if op == "award_run":
             self._on_award_answer(None, code)
             if code in ("session_expired", "not_logged_in"):
@@ -348,6 +525,18 @@ class AccountMixin:
             self._clear_account()
 
     # ---- UI entry points -----------------------------------------------------------
+    def open_world_map(self):
+        """Info ▸ World Map - where users applied CWatM (public, no login needed)."""
+        if not account_config.is_configured():
+            return
+        try:
+            from src.gui.widgets.world_map_window import open_world_map
+            open_world_map(self)
+        except Exception as e:
+            log.warning("could not open the world map", exc_info=True)
+            QMessageBox.warning(self, "World Map",
+                                f"The world map could not be opened:\n{e}")
+
     def open_leaderboard(self):
         """Info ▸ Leaderboard (visible only while logged in)."""
         if self._account_state != "logged_in":

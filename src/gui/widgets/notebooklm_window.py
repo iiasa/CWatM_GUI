@@ -74,7 +74,8 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._settings = QSettings("IIASA", "CWatM_GUI")
-        self._notebook_id = self._settings.value("notebooklm/notebook_id", "", type=str)
+        from src.gui.utils.notebooklm_client import saved_notebook
+        self._notebook_id = saved_notebook(self._settings)
         self._worker = None
         self._login_proc = None
         # One-click auto-detect login state: walk a browser list, verify each
@@ -794,25 +795,30 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
     def _on_set_notebook(self):
         text, ok = QInputDialog.getText(
             self, "NotebookLM notebook",
-            "Notebook id or URL (leave empty to auto-pick a CWatM notebook):",
+            "Notebook id or URL (leave empty for the default CWatM notebook):",
             text=self._notebook_id or "")
         if not ok:
             return
+        from src.gui.utils.notebooklm_client import NOTEBOOK_SETTINGS_KEY
+        self._settings.setValue(NOTEBOOK_SETTINGS_KEY, (text or "").strip())
         self.set_notebook(text)
 
-    def set_notebook(self, value):
-        """Programmatic equivalent of _on_set_notebook, minus the prompt - used by
-        Preferences ▸ Editor & Dates ▸ NotebookLM to live-update an already-open
-        window instead of it only taking effect on the next one."""
-        self._notebook_id = (value or "").strip()
-        self._settings.setValue("notebooklm/notebook_id", self._notebook_id)
+    def set_notebook(self, text):
+        """Switch to another notebook (link or id; empty = the default) - also
+        called by Preferences > Editor & Dates > NotebookLM while this window is open."""
+        from src.gui.utils.notebooklm_client import DEFAULT_NOTEBOOK
+        new = (text or "").strip() or DEFAULT_NOTEBOOK
+        if new == self._notebook_id:
+            return
+        self._notebook_id = new
         self.sub_label.setText(self._notebook_subtitle())
         self._reset_worker()
         self._append_status("Notebook updated - the next question will reconnect.")
 
     def _notebook_subtitle(self):
         if self._notebook_id:
-            return f"Notebook: {self._notebook_id}"
+            from src.gui.utils.notebooklm_client import _extract_notebook_id
+            return f"Notebook: {_extract_notebook_id(self._notebook_id)}"
         return "Notebook: auto (a notebook whose title contains 'CWatM')"
 
     # --------------------------------------------------------------------- login

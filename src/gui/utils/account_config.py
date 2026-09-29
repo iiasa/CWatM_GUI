@@ -23,7 +23,7 @@ _DEFAULT_KEY = "sb_publishable_nN1YHaYvwk80HMo82aAS-Q_Q71ibQSl"
 # Sent with every sign-up and stored in the profile as the proof of consent - keep it
 # equal to the "Version ..." line of that file (tests/test_account_privacy.py checks),
 # and change both whenever the notice changes in a way that matters.
-PRIVACY_VERSION = "2026-09-28-draft"
+PRIVACY_VERSION = "2026-09-28-draft5"      # draft5: + own location on the map (opt-in)
 PRIVACY_DOC = "CWatM_Account_Privacy.md"
 
 

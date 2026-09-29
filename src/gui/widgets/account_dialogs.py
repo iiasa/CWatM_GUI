@@ -20,7 +20,7 @@ window).
 
 import json
 
-from PySide6.QtCore import Qt, QSize
+from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QLabel, QLineEdit, QPushButton, QCheckBox, QTabWidget,
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QForm
                                QTableWidgetItem, QHeaderView, QAbstractItemView,
                                QGridLayout)
 
-from src.gui.utils import theme, account_config, account_validation as V
+from src.gui.utils import theme, account_config, i18n, account_validation as V
 from src.gui.utils.gui_log import get_logger
 from src.gui.utils.window_geometry import scaled_default_size
 
@@ -43,16 +43,27 @@ PRIVACY_TEXT = (
     "No file paths, settings files or model data. You can export or delete all "
     "your data at any time in the account window.")
 
+LOCATION_TEXT = (
+    "For every run that earns a badge point, the location of its first gauge (rounded to about "
+    "100 m) is counted anonymously - stored without your name or account, only as "
+    "'a run at this place in this month'. It shows IIASA where CWatM is used. "
+    "Can be switched off later in the account window.")
 
-def badge_tile(parent, code, name, size, faded=False, caption=None):
-    """One badge: the round medal image (or a large 🏅 when there is no image), its
-    name below, and an optional caption (e.g. the points still needed)."""
+
+class _ClickableLabel(QLabel):
+    """A QLabel that reports a left click (the badge image)."""
+    clicked = Signal()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+
+def _medal_label(parent, code, size, faded=False, label_cls=QLabel):
+    """The round medal (or a large 🏅 without an image) in a size x size label."""
     from src.gui.utils.badge_images import badge_pixmap
-    tile = QWidget(parent)
-    lay = QVBoxLayout(tile)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(2)
-    img = QLabel()
+    img = label_cls()
     img.setAlignment(Qt.AlignCenter)
     img.setFixedSize(size, size)
     pix = badge_pixmap(code, size, faded=faded, dpr=parent.devicePixelRatioF())
@@ -67,7 +78,25 @@ def badge_tile(parent, code, name, size, faded=False, caption=None):
             effect = QGraphicsOpacityEffect(img)
             effect.setOpacity(0.3)
             img.setGraphicsEffect(effect)
-    img.setToolTip(name if not caption else f"{name} ({caption})")
+    return img
+
+
+def badge_tile(parent, code, name, size, faded=False, caption=None, on_click=None):
+    """One badge: the round medal image (or a large 🏅 when there is no image), its
+    name below, and an optional caption (e.g. the points still needed). With
+    ``on_click`` the medal is clickable (hand cursor) - used to enlarge it."""
+    tile = QWidget(parent)
+    lay = QVBoxLayout(tile)
+    lay.setContentsMargins(0, 0, 0, 0)
+    lay.setSpacing(2)
+    img = _medal_label(parent, code, size, faded,
+                       _ClickableLabel if on_click else QLabel)
+    tip = name if not caption else f"{name} ({caption})"
+    if on_click:
+        img.setCursor(Qt.PointingHandCursor)
+        img.clicked.connect(on_click)
+        tip += " - click to enlarge"
+    img.setToolTip(tip)
     lay.addWidget(img, 0, Qt.AlignHCenter)
     lbl = QLabel(name)
     lbl.setAlignment(Qt.AlignCenter)
@@ -81,6 +110,50 @@ def badge_tile(parent, code, name, size, faded=False, caption=None):
         lay.addWidget(cap)
     tile.setFixedWidth(max(size, 96))
     return tile
+
+
+class BadgeViewer(QDialog):
+    """An earned badge, large: the medal at BIG px, its name and when it was earned.
+    A click anywhere or Esc closes it."""
+
+    BIG = 320            # px - the source pictures are 350 px, so it stays sharp
+
+    def __init__(self, parent, code, name, awarded_at=None):
+        super().__init__(parent)
+        self.setWindowTitle(name)
+        self.setAttribute(Qt.WA_DeleteOnClose)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 18)
+        lay.setSpacing(8)
+        self.medal = _medal_label(self, code, self.BIG)
+        lay.addWidget(self.medal, 0, Qt.AlignHCenter)
+        title = QLabel(name)
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(f"color: {theme.c('accent')}; font-size: 22px; "
+                            "font-weight: 700;")
+        lay.addWidget(title)
+        when = _format_date(awarded_at)
+        if when:
+            note = QLabel(f"Earned on {when}")
+            note.setAlignment(Qt.AlignCenter)
+            note.setStyleSheet(f"color: {theme.c('text_gray')};")
+            lay.addWidget(note)
+        self.setToolTip("Click to close")
+
+    def mousePressEvent(self, event):
+        self.accept()
+
+
+def _format_date(value):
+    """'2026-09-28T11:03:12.5+00:00' -> '28 September 2026' ('' when missing)."""
+    if not value:
+        return ""
+    import datetime
+    try:
+        d = datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)[:10]
+    return f"{d.day} {d.strftime('%B %Y')}"
 
 
 class _AccountDialogBase(QDialog):
@@ -192,8 +265,10 @@ class _AccountDialogBase(QDialog):
 
     def _privacy_link(self):
         """'Read the full privacy notice' - opens it in the Help viewer."""
+        # rich text (a link) is not reached by the language filter - translate here;
+        # the window is built fresh on every open, so this follows a language switch
         lbl = QLabel(f'<a href="privacy" style="color: {theme.c("link_color")};">'
-                     "Read the full privacy notice</a>")
+                     f'{i18n.tr("Read the full privacy notice")}</a>')
         lbl.setTextInteractionFlags(Qt.LinksAccessibleByMouse
                                     | Qt.LinksAccessibleByKeyboard)
         lbl.linkActivated.connect(lambda _href: self._show_privacy())
@@ -229,9 +304,10 @@ class LoginDialog(_AccountDialogBase):
             "river badges - from the Breg to the Amazonas."))
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._tab_login(), "Log in")
-        self.tabs.addTab(self._tab_register(), "Register")
-        self.tabs.addTab(self._tab_forgot(), "Forgot password")
+        # tab titles are not reached by the language filter - translate here
+        self.tabs.addTab(self._tab_login(), i18n.tr("Log in"))
+        self.tabs.addTab(self._tab_register(), i18n.tr("Register"))
+        self.tabs.addTab(self._tab_forgot(), i18n.tr("Forgot password"))
         self.tabs.currentChanged.connect(lambda _i: self._say(""))
         outer.addWidget(self.tabs, 1)
         outer.addWidget(self.status)
@@ -297,9 +373,15 @@ class LoginDialog(_AccountDialogBase):
         self.reg_name = QLineEdit()
         self.reg_country = QLineEdit()
         self.reg_institute = QLineEdit()
+        self.reg_lat = QLineEdit()
+        self.reg_lat.setPlaceholderText("e.g. 48.067")
+        self.reg_lon = QLineEdit()
+        self.reg_lon.setPlaceholderText("e.g. 16.357")
         opt.addRow("Name:", self.reg_name)
         opt.addRow("Country:", self.reg_country)
         opt.addRow("Institute:", self.reg_institute)
+        opt.addRow("Your location - latitude:", self.reg_lat)
+        opt.addRow("Your location - longitude:", self.reg_lon)
         lay.addLayout(opt)
         lay.addWidget(self._line())
         lay.addWidget(self._note(PRIVACY_TEXT))
@@ -307,6 +389,23 @@ class LoginDialog(_AccountDialogBase):
         self.reg_agree = QCheckBox("I agree that these data are stored "
                                    "(privacy notice)")
         lay.addWidget(self.reg_agree)
+        self.reg_locations = QCheckBox(
+            "I agree that the location of my runs (first gauge, ~100 m) is "
+            "recorded anonymously")
+        self.reg_locations.setToolTip(LOCATION_TEXT)
+        self.reg_locations.setChecked(True)          # default: yes
+        lay.addWidget(self.reg_locations)
+        self.reg_leaderboard = QCheckBox(
+            "Show me on the leaderboard (username, country and points only)")
+        self.reg_leaderboard.setChecked(True)        # default: yes
+        lay.addWidget(self.reg_leaderboard)
+        self.reg_map = QCheckBox(
+            "Show my location on the world map (without my name, ~1 km)")
+        self.reg_map.setToolTip(
+            "Only if you enter your location above. Other users see a point on "
+            "Info ▸ World Map ▸ User location - no name, rounded to 0.01°.")
+        self.reg_map.setChecked(True)                # default: yes
+        lay.addWidget(self.reg_map)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(self._button("Register", self._do_register))
@@ -396,17 +495,27 @@ class LoginDialog(_AccountDialogBase):
         problem = (V.username_problem(self.reg_username.text())
                    or V.email_problem(email)
                    or V.password_problem(self.reg_password.text(),
-                                         self.reg_repeat.text()))
+                                         self.reg_repeat.text())
+                   or V.location_problem(self.reg_lat.text(), self.reg_lon.text()))
         if problem:
             return self._problem(problem)
         if not self.reg_agree.isChecked():
             return self._problem("Please agree to the storage of your data "
                                  "(tick the box above).")
+        if not self.reg_locations.isChecked():
+            return self._problem("Please confirm that the location of your runs is "
+                                 "recorded (anonymously) - tick the box above.")
         self._run("register", email, self.reg_password.text(),
                   self.reg_username.text().strip(),
                   full_name=self.reg_name.text(), country=self.reg_country.text(),
                   institute=self.reg_institute.text(),
-                  privacy_version=account_config.PRIVACY_VERSION)
+                  privacy_version=account_config.PRIVACY_VERSION,
+                  share_locations=True,
+                  show_on_leaderboard=self.reg_leaderboard.isChecked(),
+                  show_location_on_map=self.reg_map.isChecked(),
+                  **dict(zip(("location_lat", "location_lon"),
+                             V.parse_location(self.reg_lat.text(),
+                                              self.reg_lon.text()))))
 
     def _show_confirm_step(self, email, note=None):
         self._confirm_email = email
@@ -511,14 +620,31 @@ class AccountWindow(_AccountDialogBase):
         self.ed_full_name = QLineEdit()
         self.ed_country = QLineEdit()
         self.ed_institute = QLineEdit()
+        self.ed_lat = QLineEdit()
+        self.ed_lat.setPlaceholderText("e.g. 48.067")
+        self.ed_lon = QLineEdit()
+        self.ed_lon.setPlaceholderText("e.g. 16.357")
         form.addRow("Username:", self.ed_username)
         form.addRow("Name:", self.ed_full_name)
         form.addRow("Country:", self.ed_country)
         form.addRow("Institute:", self.ed_institute)
+        form.addRow("Your location - latitude:", self.ed_lat)
+        form.addRow("Your location - longitude:", self.ed_lon)
         outer.addLayout(form)
         self.cb_leaderboard = QCheckBox(
             "Show me on the leaderboard (username, country and points only)")
         outer.addWidget(self.cb_leaderboard)
+        self.cb_locations = QCheckBox(
+            "Record the location of my runs anonymously (first gauge, ~100 m)")
+        self.cb_locations.setToolTip(LOCATION_TEXT)
+        outer.addWidget(self.cb_locations)
+        self.cb_map = QCheckBox(
+            "Show my location on the world map (without name, ~1 km)")
+        self.cb_map.setToolTip(
+            "Info ▸ World Map ▸ User location shows the locations of the users who "
+            "ticked this - as points without names, rounded to about 1 km. Needs "
+            "your location (latitude/longitude) above.")
+        outer.addWidget(self.cb_map)
         save_row = QHBoxLayout()
         save_row.addStretch(1)
         save_row.addWidget(self._button("Save changes", self._do_save))
@@ -556,21 +682,27 @@ class AccountWindow(_AccountDialogBase):
             need = max(1, nxt.get("points_required", 1))
             self.progress.setRange(0, need)
             self.progress.setValue(min(points, need))
-            self.progress.setFormat(f"{points} / {need} points to the "
-                                    f"{nxt.get('name')} badge")
+            # a progress-bar text is not reached by the language filter
+            self.progress.setFormat(i18n.tr(f"{points} / {need} points to the "
+                                            f"{nxt.get('name')} badge"))
             self.progress.setVisible(True)
         else:
             self.progress.setVisible(False)
         badges = status.get("badges") or []
         self.lbl_badges.setText(
             "Badges" if badges
-            else "Badges: none yet - a full CWatM run earns the first one")
+            else "Badges: none yet - every run that earns a point brings you closer "
+                 "to the first one")
         self._fill_badges(badges, nxt, points)
         self.ed_username.setText(profile.get("username") or "")
         self.ed_full_name.setText(profile.get("full_name") or "")
         self.ed_country.setText(profile.get("country") or "")
         self.ed_institute.setText(profile.get("institute") or "")
         self.cb_leaderboard.setChecked(bool(profile.get("show_on_leaderboard")))
+        self.cb_locations.setChecked(bool(profile.get("share_locations")))
+        self.cb_map.setChecked(bool(profile.get("show_location_on_map")))
+        self.ed_lat.setText(V.format_coord(profile.get("location_lat")))
+        self.ed_lon.setText(V.format_coord(profile.get("location_lon")))
 
     BADGE_SIZE = 88          # px - the medal images (the old 🏅 emoji was ~14 px)
     BADGES_PER_ROW = 5
@@ -581,7 +713,8 @@ class AccountWindow(_AccountDialogBase):
             item = self.badge_grid.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
-        tiles = [badge_tile(self, b.get("code"), b.get("name", ""), self.BADGE_SIZE)
+        tiles = [badge_tile(self, b.get("code"), b.get("name", ""), self.BADGE_SIZE,
+                            on_click=lambda b=b: self._enlarge(b))
                  for b in badges]
         if nxt:
             need = max(0, nxt.get("points_required", 0) - points)
@@ -593,19 +726,40 @@ class AccountWindow(_AccountDialogBase):
                                       i % self.BADGES_PER_ROW)
         self.badge_host.setVisible(bool(tiles))
 
+    def _enlarge(self, badge):
+        """An earned badge was clicked: show it large."""
+        viewer = BadgeViewer(self, badge.get("code"), badge.get("name", ""),
+                             badge.get("awarded_at"))
+        self._badge_viewer = viewer
+        viewer.show()
+        return viewer
+
     def _changes(self):
         profile = (self._status or {}).get("profile") or {}
         new = {"username": self.ed_username.text().strip(),
                "full_name": self.ed_full_name.text().strip(),
                "country": self.ed_country.text().strip(),
                "institute": self.ed_institute.text().strip(),
-               "show_on_leaderboard": self.cb_leaderboard.isChecked()}
-        old = {k: (profile.get(k) if k == "show_on_leaderboard"
-                   else (profile.get(k) or "")) for k in new}
-        old["show_on_leaderboard"] = bool(old["show_on_leaderboard"])
-        return {k: v for k, v in new.items() if v != old[k]}
+               "show_on_leaderboard": self.cb_leaderboard.isChecked(),
+               "share_locations": self.cb_locations.isChecked(),
+               "show_location_on_map": self.cb_map.isChecked()}
+        flags = ("show_on_leaderboard", "share_locations", "show_location_on_map")
+        old = {k: (bool(profile.get(k)) if k in flags else (profile.get(k) or ""))
+               for k in new}
+        changes = {k: v for k, v in new.items() if v != old[k]}
+        # the own location: compared as the fields show it, sent as a pair
+        lat, lon = V.parse_location(self.ed_lat.text(), self.ed_lon.text())
+        shown = (V.format_coord(lat), V.format_coord(lon))
+        stored = (V.format_coord(profile.get("location_lat")),
+                  V.format_coord(profile.get("location_lon")))
+        if shown != stored:
+            changes["location_lat"], changes["location_lon"] = lat, lon
+        return changes
 
     def _do_save(self):
+        problem = V.location_problem(self.ed_lat.text(), self.ed_lon.text())
+        if problem:
+            return self._problem(problem)
         changes = self._changes()
         if not changes:
             return self._say("Nothing changed.", "text_gray")

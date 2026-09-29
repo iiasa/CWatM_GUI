@@ -109,7 +109,10 @@ _FUNCTION_CODES = {
 
 # Profile columns a user may change (= the column grants on public.profiles).
 PROFILE_FIELDS = ("username", "full_name", "country", "institute",
-                  "show_on_leaderboard")
+                  "show_on_leaderboard", "share_locations",
+                  "location_lat", "location_lon", "show_location_on_map")
+_COORD_FIELDS = ("location_lat", "location_lon")
+_BOOL_FIELDS = ("show_on_leaderboard", "share_locations", "show_location_on_map")
 
 _TIMEOUT_S = 20
 
@@ -332,12 +335,15 @@ class AccountClient:
         return bool(self._rpc("username_available", {"p_username": username.strip()}))
 
     def register(self, email, password, username,
-                 full_name=None, country=None, institute=None, privacy_version=None):
+                 full_name=None, country=None, institute=None, privacy_version=None,
+                 share_locations=False, location_lat=None, location_lon=None,
+                 show_on_leaderboard=False, show_location_on_map=False):
         """Create an account. Returns {"status": "confirm_email", "email": ...} - the
         user then enters the emailed code (``confirm_signup``).
 
         ``privacy_version`` = the privacy notice the user agreed to; required (the
-        server refuses a sign-up without it too)."""
+        server refuses a sign-up without it too). The three choices are stored in
+        the profile by the server's sign-up trigger (handle_new_user)."""
         email = (email or "").strip()
         username = (username or "").strip()
         if not privacy_version:
@@ -349,7 +355,13 @@ class AccountClient:
         if not self.username_available(username):
             raise AccountError("username_taken")
 
-        data = {"username": username, "privacy_version": str(privacy_version)[:40]}
+        data = {"username": username, "privacy_version": str(privacy_version)[:40],
+                "share_locations": bool(share_locations),
+                "show_on_leaderboard": bool(show_on_leaderboard),
+                "show_location_on_map": bool(show_location_on_map)}
+        if location_lat is not None and location_lon is not None:
+            data["location_lat"] = round(float(location_lat), 3)
+            data["location_lon"] = round(float(location_lon), 3)
         for field, value in (("full_name", full_name), ("country", country),
                              ("institute", institute)):
             value = V.clean_optional(field, value)
@@ -420,13 +432,19 @@ class AccountClient:
         if unknown:
             raise AccountError("invalid_input",
                                f"Unknown profile field(s): {', '.join(sorted(unknown))}")
+        if ("location_lat" in fields) != ("location_lon" in fields):
+            # the server keeps both or neither (profiles_location_both_or_none)
+            raise AccountError("invalid_input",
+                               "Latitude and longitude are changed together.")
         changes = {}
         for field, value in fields.items():
             if field == "username":
                 value = (value or "").strip()
                 _check(V.username_problem(value))
-            elif field == "show_on_leaderboard":
+            elif field in _BOOL_FIELDS:
                 value = bool(value)
+            elif field in _COORD_FIELDS:
+                value = None if value in (None, "") else round(float(value), 3)
             else:
                 value = V.clean_optional(field, value)
             changes[field] = value
@@ -445,6 +463,40 @@ class AccountClient:
         Returns the award_run() answer: {status, total_points, new_badges, ...}."""
         self._session()
         return self._rpc("award_run", {"p_run_uid": run_uid, "p_meta": meta or {}}) or {}
+
+    def record_location(self, lon, lat):
+        """Report one successful run's first gauge to the ANONYMOUS run-location
+        count (no user stored server-side). Needs the user's consent
+        (profile.share_locations) - the server checks it. {status}."""
+        self._session()
+        return self._rpc("record_run_location",
+                         {"p_lon": float(lon), "p_lat": float(lat)}) or {}
+
+    def academy_complete_level(self, level):
+        """A finished CWatM Academy level -> the profile's progress, and its points
+        (once per level). {status, level, points_awarded, total_points, new_badges,
+        academy_completed}."""
+        self._session()
+        return self._rpc("academy_complete_level", {"p_level": int(level)}) or {}
+
+    def academy_reset(self):
+        """Academy Start Over: clear the profile's progress (the points stay)."""
+        self._session()
+        return self._rpc("academy_reset") or {}
+
+    def get_run_locations(self):
+        """The anonymous run-location totals for Info ▸ World Map:
+        [{lon, lat, runs}] (public - no login needed)."""
+        rows = self._rpc("get_run_locations") or []
+        return [{"lon": float(r["lon"]), "lat": float(r["lat"]),
+                 "runs": int(r["runs"])} for r in rows]
+
+    def get_user_locations(self):
+        """Users' own locations for Info ▸ World Map ▸ User location - only users
+        who opted in, no names, 0.01 degree: [{lon, lat, users}] (public)."""
+        rows = self._rpc("get_user_locations") or []
+        return [{"lon": float(r["lon"]), "lat": float(r["lat"]),
+                 "users": int(r["users"])} for r in rows]
 
     def get_leaderboard(self, limit=50):
         return self._rpc("get_leaderboard", {"p_limit": int(limit)}) or []

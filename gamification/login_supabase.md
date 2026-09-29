@@ -98,7 +98,7 @@ Supabase. If a function deploy fails for lack of Docker, add `--use-api`.
 |------|---------|
 | `migrations/20260928120000_gamification_schema.sql` | tables `profiles`, `game_config`, `badges`, `point_events`, `user_badges`, `login_attempts`; row level security; sign-up trigger creating the profile |
 | `migrations/20260928120100_gamification_functions.sql` | `username_available`, `award_run`, `get_my_status`, `export_my_data`, `get_leaderboard`, login helpers |
-| `migrations/20260928120200_gamification_seed.sql` | rules (1 point/run, ≥ 30 timesteps, ≤ 20 awards/24 h, login throttle 10 failures/15 min) and 18 river badges Breg (1) … Amazonas (3000) |
+| `migrations/20260928120200_gamification_seed.sql` | rules (1 point/run, ≥ 30 timesteps, ≤ 20 awards/24 h, login throttle 10 failures/15 min) and the first badge ladder (18 rivers, Breg 1 … Amazonas 3000) - **replaced** by `20260928210000_badge_ladder_v2.sql` (11 badges, 5 … 10000, see *Badge ladder* below) |
 | `functions/login-with-username/index.ts` | username + password → session; same answer for unknown user and wrong password; per-username throttle |
 | `functions/delete-account/index.ts` | deletes the account and all its data after re-checking the password |
 | `templates/*.html` | the two code emails |
@@ -332,11 +332,143 @@ visibility, `open_leaderboard`), `account_dialogs.py` (`LeaderboardWindow`),
 `test_account_runs.py`, leaderboard window + menu visibility + message in
 `test_account_ui.py`; 165 account/journal tests pass.
 
+## Anonymous run locations (where CWatM is run, and how often)
+
+**What**: for every run that **earns a badge point** (main / Windowed / Batch; server answer `awarded`) of a user who agreed, the
+**first gauge** (first lon/lat pair of `Gauges =`) is reported. Nothing is sent when
+`Gauges` is a map file or not geographic lon/lat (e.g. a UTM x/y grid).
+
+**Anonymous by construction**:
+- stored in `run_locations`, which has **no user column** - only
+  `lon, lat, month, runs` (a **count**, not one row per run, so the time of a location
+  cannot be matched to the time of a points row);
+- rounded to **0.001° (~100 m)** on the server;
+- sent as its **own** request (`record_run_location`), never together with the points;
+- a per-user **daily quota** (default 50, `game_config.location_daily_cap`) stops
+  flooding - it stores user + day + a number, never a place.
+
+**Consent** (`profiles.share_locations` + time):
+- **Register**: a **required** tick *"I agree that the location of my runs (first gauge,
+  ~100 m) is recorded anonymously"* - **ticked by default**;
+- **older accounts** (e.g. `Blabla`): asked **once per user and computer** after an
+  interactive login (not at the silent re-login at startup); **Yes** preselected;
+- **account window** and **Preferences ▸ Account**: *Record the location of my runs
+  anonymously* - switch off/on at any time (Preferences: ticked by default, greyed out
+  while logged out, since the choice is stored in the account).
+
+Rounding: **0.001° (~100 m)** since migration `20260928170000_run_locations_precision.sql`
+(the first test entry from before keeps its 0.01° value).
+
+**Privacy notice** → version `2026-09-28-draft2`, new section *Anonymous run
+locations*: what is sent, why it cannot be traced back, and that anonymous counts
+cannot be exported or deleted per person (and stay after an account is deleted).
+
+**The dataset** (dashboard ▸ SQL Editor):
+```sql
+-- where, and how often, over all months
+select lon, lat, sum(runs) as runs
+from public.run_locations
+group by lon, lat
+order by runs desc;
+
+-- per month
+select month, count(*) as places, sum(runs) as runs
+from public.run_locations
+group by month order by month;
+```
+
+Files: `supabase/migrations/20260928160000_run_locations.sql`, `run_ledger.py`
+(`settings_gauge`, `gauge` in the journal entry), `account_runs.py` (`location_of`),
+`account_client.py` (`record_location`, `share_locations` in register/profile),
+`account_ui.py` (sending, the one-time question), `account_dialogs.py` (register tick,
+account-window tick), the privacy notice. Tests: 28 new (gauge parsing incl. map files
+and UTM, separate request, consent, question once, register tick, notice text).
+
+**Only runs that earn a badge point** (since 2026-09-28 evening): the location is sent
+only after the server answered the run's points request with `awarded` - long enough
+(≥ 30 timesteps), a new setup, within the daily limit, email confirmed. Until then the
+gauge stays local (with the request, or in the offline queue). *Same settings*, *too
+short*, *daily limit* and *duplicate* runs are never located; with *Count my full CWatM
+runs* off, no run is located. (The two map points recorded before this rule cannot be
+checked afterwards - nothing links them to runs.)
+
+## Own location (optional profile data)
+
+Latitude/longitude of the **user**, like name, country and institute: entered when
+registering (optional) or in the account window, stored to 0.001°, both or none
+(migration `20260928190000_user_location.sql`). Personal data - linked to the account,
+shown to the user only (not on the leaderboard or the world map), part of *Export my
+data*, deleted with the account; emptying both fields removes it. Example: `Blabla` →
+lat 48.067, lon 16.357. Privacy notice → `2026-09-28-draft4`.
+
+## World map - window layout and the two views (2026-09-28 evening)
+
+- **No Close / Refresh buttons**; the window has a **maximise** button (a real
+  top-level window).
+- Shows only **80°N - 60°S** (beyond covered grey - also hides the black polar bands
+  of the OSM WMS); pan and zoom stay inside it.
+- **First size**: the map area is 1024 × 427 px - exactly −180…180° × 90°N…60°S at
+  Leaflet EPSG:4326 zoom 1 (1024 px per 360°); afterwards freely resizable.
+- Two buttons below the map, **one active at a time**:
+  - **CWatM runs** - blue circles, the anonymous run-location totals (only runs that
+    earned a point);
+  - **User location** - orange circles, the own locations of users who ticked **Show
+    my location on the world map** in the account window (**off by default**; the own
+    location is personal data), **without names**, rounded to **0.01° (~1 km)**,
+    several users at one place counted as one bigger circle.
+  The heading and the explanation text change with the view.
+- Server: `get_user_locations()` (migration `20260928200000_user_locations_map.sql`),
+  public like `get_run_locations()`.
+- Privacy notice → `2026-09-28-draft5`.
+
+## World map (Info ▸ World Map)
+
+Tooltip *"Shows a world map with points where users applied CWatM"*. **Visible to
+everyone** - no login needed (the data is anonymous).
+
+- A zoomable world map (folium / Leaflet, EPSG:4326, like Show Basin) with the basemap
+  chosen in **Preferences ▸ Display ▸ Default openstreet map** (OSM, Topographic,
+  Terrain, Dark).
+- One **blue circle** per place from the anonymous run-location counts; the more runs
+  at the same place, the **bigger the circle**: radius `4 + 3·√runs` screen pixels
+  (1 run 7 px, 4 → 10, 25 → 19, 100 → 34, max 40) - the circle *area* grows with the
+  runs, so one busy place does not cover the map; the radius stays the same when
+  zooming. Biggest circles are drawn first, so small ones stay on top. Hover: number of
+  runs and lon/lat. **Refresh** reloads.
+- Data: new public server function `get_run_locations()` (migration
+  `20260928180000_world_map.sql`) - totals per place summed over all months; the table
+  itself stays closed.
+- Privacy notice → `2026-09-28-draft3`: the totals are **shown to every GUI user** on
+  this map.
+
+Files: `src/gui/widgets/world_map_window.py`, `menu_builder.py` (Info ▸ World Map),
+`account_ui.py` (`open_world_map`), `account_client.py` (`get_run_locations`),
+`tests/test_world_map.py`.
+
+## Badge ladder (since 2026-09-28, migration `20260928210000_badge_ladder_v2.sql`)
+
+| Points | Badge | Points | Badge |
+|-------:|-------|-------:|-------|
+| 5 | Breg | 500 | Rhine |
+| 10 | Thames | 1000 | Danube |
+| 25 | Morava | 2500 | Mekong |
+| 50 | Inn | 5000 | Nile |
+| 100 | Drava | 10000 | Amazonas |
+| 250 | Elbe | | |
+
+1 point per run that earns one (full run, new setup, ≥ 30 timesteps, ≤ 20 per day).
+Dropped from the first ladder: Ganges, Zambezi, Indus, Mississippi, Congo, Yellow River,
+Yangtze. Earned badges were re-evaluated when the ladder changed (a badge no longer
+reached is removed, a newly reached one awarded). The ladder is plain data in
+`public.badges` - rivers and thresholds can be changed with SQL, no GUI release.
+
 ## Badge images
 
 The badges are shown as **medal images**: 88 px in the account window (every earned
 badge, plus the next one faded with *next - N more points*) and 32 px in the
-leaderboard's *Highest badge* column. Files: `assets/badges/<code>.png` - so far
+leaderboard's *Highest badge* column. **Clicking an earned badge** in the account window
+opens it large (`BadgeViewer`, 320 px, with its name and *Earned on …*); a click or Esc
+closes it. The faded next badge is not clickable. Files: `assets/badges/<code>.png` - so far
 `breg`, `thames`, `morava`, `inn` (copied from `badges/badge1-4.png`). The code
 finds the round medal inside each square picture by itself and clips it round, so the
 white or dark background and the corner watermark never show, in any colour mode.

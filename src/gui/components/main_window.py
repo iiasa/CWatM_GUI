@@ -215,9 +215,14 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self._editor_font_family = (self._settings.value("editor/font_family", "")
                                     or "").strip()
         # Experience level (Beginner/Advanced/Expert) - restricts which settings
-        # sections can be unfolded; persisted across sessions (editor/level)
+        # sections can be unfolded; persisted across sessions (editor/level).
+        # _preferred_level = the user's choice; _experience_level = the level in
+        # effect, which is Beginner while nobody is logged in to the CWatM account
+        # (see _refresh_experience_level, re-run on every login-state change).
         lvl = self._settings.value("editor/level", "Expert")
-        self._experience_level = lvl if lvl in _EXPERIENCE_LEVELS else "Expert"
+        self._preferred_level = lvl if lvl in _EXPERIENCE_LEVELS else "Expert"
+        self._experience_level = (self._preferred_level if self.levels_unlocked()
+                                  else "Beginner")
         rf = self._settings.value("recent_files", [])
         if isinstance(rf, str):
             rf = [rf]
@@ -1253,7 +1258,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 log.debug("flopy pre-warm failed", exc_info=True)
 
     def _on_academy_toggled(self, checked):
-        """Preferences ▸ Startup & Model ▸ Enable CWatM Academy: persist the choice
+        """Preferences ▸ CWatM Academy ▸ Enable CWatM Academy: persist the choice
         and, when just turned on, open it right away (cwatm_gui.py handles opening
         it at the *next* startup - this is only for toggling it on mid-session)."""
         try:
@@ -2287,19 +2292,47 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
     # ---------------------------------------------------- experience level
     def cycle_experience_level(self):
         """Level button: Beginner -> Advanced -> Expert -> Beginner."""
+        if not self.levels_unlocked():
+            self._explain_level_lock()
+            return
         idx = _EXPERIENCE_LEVELS.index(self._experience_level)
         nxt = _EXPERIENCE_LEVELS[(idx + 1) % len(_EXPERIENCE_LEVELS)]
         self.set_experience_level(nxt)
 
+    def _explain_level_lock(self):
+        """Logged out, the level is fixed to Beginner - say why, offer the login."""
+        answer = QMessageBox.question(
+            self, "Skill of user",
+            "Without a login CWatM GUI runs in the Beginner level.\n\n"
+            "Log in to your CWatM account (or register - it is free) to choose "
+            "Advanced or Expert.\n\nLog in now?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if answer == QMessageBox.Yes:
+            self.open_account()
+
     def set_experience_level(self, level):
         """Set the experience level (from the level button or Preferences ▸ Editor &
-        Dates ▸ Skill of user) and apply it. Keeps a menu radio group in sync if one
-        exists."""
-        if level not in _EXPERIENCE_LEVELS or level == self._experience_level:
+        Dates ▸ Skill of user) and apply it. Advanced/Expert need a login (see
+        levels_unlocked); the choice is kept and takes effect at the next login."""
+        if level not in _EXPERIENCE_LEVELS:
+            return
+        if level != "Beginner" and not self.levels_unlocked():
+            self._explain_level_lock()
+            return
+        self._preferred_level = level
+        self._settings.setValue("editor/level", level)
+        self._refresh_experience_level()
+
+    def _refresh_experience_level(self):
+        """Put the level in effect: the preferred one when logged in, else Beginner.
+        Called on a level change and on every login-state change."""
+        level = self._preferred_level if self.levels_unlocked() else "Beginner"
+        if level == self._experience_level:
             self._sync_level_menu()
             return
         self._experience_level = level
-        self._settings.setValue("editor/level", self._experience_level)
+        if getattr(self, "level_button", None) is None:
+            return                    # still constructing - create_gui applies it
         self.level_button.setText(self._experience_level)
         self._apply_level_button_style()
         self._sync_level_menu()

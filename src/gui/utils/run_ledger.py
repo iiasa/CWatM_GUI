@@ -379,6 +379,37 @@ def settings_fingerprint(content):
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
 
+def settings_gauge(content):
+    """The FIRST gauge of a settings file as (lon, lat), or None.
+
+    ``Gauges =`` holds coordinate pairs ("17.25 48.60 18.1 49.2 ...", spaces or
+    commas) - or a map file, which gives None, as does a pair that is not a valid
+    geographic lon/lat (a projected x/y grid such as UTM). The last ``Gauges`` line
+    counts, like CWatM's flat binding. Pure - tested."""
+    if not content:
+        return None
+    value = None
+    for line in content.splitlines():
+        s = line.split("#", 1)[0].strip()
+        if "=" not in s or s.startswith((";", "[")):
+            continue
+        key, val = s.split("=", 1)
+        if key.strip().lower() == "gauges":
+            value = val.strip()
+    if not value:
+        return None
+    tokens = value.replace(",", " ").split()
+    if len(tokens) < 2:
+        return None
+    try:
+        lon, lat = float(tokens[0]), float(tokens[1])
+    except ValueError:                        # a map file / placeholder, not numbers
+        return None
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90) or (lon == 0 and lat == 0):
+        return None
+    return (lon, lat)
+
+
 def make_entry(settings_path, title, pathout, started_at, success, last_dis,
                kind="run", content=None, log_path=None, batch_id=None):
     """Build a ledger entry dict from the common run facts. When ``content`` (the
@@ -411,6 +442,10 @@ def make_entry(settings_path, title, pathout, started_at, success, last_dis,
     fingerprint = settings_fingerprint(content)
     if fingerprint:
         entry["settings_hash"] = fingerprint
+    # The run's first gauge (lon, lat) - the account's anonymous run-location count.
+    gauge = settings_gauge(content)
+    if gauge:
+        entry["gauge"] = list(gauge)
     # Where this run's output was written, so the journal can show *why* it failed
     # instead of only *that* it failed.
     if log_path:

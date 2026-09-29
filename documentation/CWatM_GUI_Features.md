@@ -431,19 +431,29 @@ file, **Save as csv** in the CWatM result format, or **Save HTML**. A **range sl
 below the plot shrinks the displayed period from either end. **Load observed** overlays
 an observed series and shows goodness-of-fit metrics — **KGE / NSE / PBIAS / RMSE** —
 computed over the period the slider selects. **Flow duration** and **Flow regime**
-(Action menu) open a dedicated window for the column currently on screen — see below.
+(Action menu) open a dedicated window for the column currently on screen, over the
+**displayed period** — move the slider and an open Flow duration / Flow regime window is
+recalculated for the new period. See below.
 
 ![Timeseries](figures/screenshot_timeseries.png)
 
 ### NetCDF (Analyse ▸ NetCDF)
 A result `.nc` as a raster overlay on an OSM map with a timestep slider + Play,
-colour-scale, **Log scale**, OSM-transparency slider, and click-to-read. Two ways to plot
-a clicked cell's series: **Fast Display Timeserie** (quick, the map's timesteps only, with
+colour-scale, **Log scale**, OSM-transparency slider, and click-to-read. **Left-click a cell
+(or a gauge pin) to select it** - it gets a numbered pin; click more cells to add more
+stations, and click a selected cell or its pin again to remove it. Two ways to plot
+the selected cells' series: **Fast Display Timeserie** (quick, the map's timesteps only, with
 gaps) or **Total Timeseries** (every timestep — can take a while, so a progress bar with
 elapsed time and a **Cancel** button shows while it reads). **Right-click anywhere on the
-map** for the same menu on the last point you clicked. **Compare A−B** loads a second
+map** for the same menu. **Compare A−B** loads a second
 `.nc` on the same grid and shows the **difference** (this − other) per timestep on a
 red/blue diverging scale — ideal for comparing two scenarios you just ran.
+**File ▸ Load netcdf** opens another `.nc` (starting in the current file's folder) in the
+same window. **Calculate mean** / **Calculate percentile** (Action menu) reduce the whole time axis to
+one map - the mean, or a percentile you choose (e.g. 50 = median) - and save it as a new
+NetCDF next to the original (`discharge_mean.nc` / `discharge_50_percentile.nc`, name
+changeable). The new file keeps all metadata of the original plus where it came from
+(file name, folder, creation time), and the map switches to it.
 
 **Flow duration / Flow regime** (Action menu, on the map, or from Timeseries above) plot
 the **last point you clicked** — never several at once. **Flow duration** ranks each
@@ -456,12 +466,14 @@ percentile bands, save the per-year table as csv, or save the plot as HTML.
 
 ### Watercycle (Analyse ▸ Watercycle)
 The water balance of a `WaterCycle_areasum_monthtot.csv` as a **sunburst**, over a
-month range slider.
+month range slider. **Save CSV** (lower left) stores the numbers behind the plot
+(suggested name `watercycle.csv`), **Save HTML** the plot itself.
 
 ![Watercycle](figures/screenshot_watercycle.png)
 
 ### Flow Diagram (Analyse ▸ Flow Diagram)
-The same water balance as a **Sankey** flow diagram.
+The same water balance as a **Sankey** flow diagram. **Save CSV** stores one row per
+flow in mm/year (suggested name `flowdiagram.csv`).
 
 ![Flow Diagram](figures/screenshot_flowdiagram.png)
 

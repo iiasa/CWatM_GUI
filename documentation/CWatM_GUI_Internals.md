@@ -1261,7 +1261,12 @@ QtWebEngine window (plotly.js inlined — no CDN).
   `_show_flow_regime`): open `analysis_flow_duration.FlowDurationWindow` /
   `analysis_flow_regime.FlowRegimeWindow` on the **currently displayed column**
   (`self.series[self.index]`, dates converted from the day-first csv format to ISO via
-  `_flow_duration_regime_dates`). See their shared description under **Analyse ▸
+  `_flow_duration_regime_dates`), **cut to the displayed period** (the range slider,
+  `_flow_input` via `_window_bounds`). An open window **follows the slider**: the
+  debounced `_range_timer` also fires `_refresh_flow_windows`, which recomputes it for
+  the series it was opened on (`_flowdur_index` / `_flowregime_index`) through
+  `FlowDurationWindow.set_series` / `FlowRegimeWindow.set_data` (a period too short for
+  a regime keeps the last diagram and says so in the header). See their shared description under **Analyse ▸
   NetCDF** below — both windows are the same code whether opened from here (a csv
   column) or from the NetCDF map (a clicked cell).
 - CWatM result CSV layout: series names in **row 4 from column 2**; **column 1 = date**
@@ -1414,33 +1419,41 @@ so this folium viewer is now simply **NetCDF**.)
   **`_update_map_markers`** as **numbered pin icons** (`L.divIcon`, `.nc-pin` CSS
   teardrop) whose fill is the point's **Timeseries line colour** (index-derived:
   `TimeseriesWindow._MAIN_COLOR` / `_COMPARE_COLORS`), so map marker N == legend line N.
+- **A left click toggles a point** (`_toggle_point`): the map click (and a click on a
+  gauge reference pin) fires `NC2 <lon>|<lat>|<nonce>`; the cell is snapped
+  (`_cell_of`) and **added** to `_displayed_points` as a new numbered pin, or **removed**
+  when it is already selected - so points are collected directly on the map, no
+  Timeseries run needed in between. An open Timeseries window follows every change
+  (`_open_or_refresh_timeseries(open_if_closed=False)`); the newest selection is
+  `self._clicked` (Flow duration/regime), falling back to the newest remaining point
+  when it is removed. There is no separate "pending" marker any more.
 - **Points persist & are removable**: `_displayed_points` holds the confirmed cell
   centres as `(lon, lat)`; closing the Timeseries window (`_on_ts_closed`) **keeps**
   the pins (reopening re-plots the same points). **Clicking a numbered pin removes it**
   everywhere — the pin's click fires `document.title='NC2DEL <n> <nonce>'` (nonce so a
-  repeat refires `titleChanged`; `L.DomEvent.stopPropagation` prevents a stray pending
-  marker) → `_on_web_title` → `_remove_point`, which drops it from the list, renumbers/
+  repeat refires `titleChanged`; `L.DomEvent.stopPropagation` keeps the map click from
+  re-selecting the cell) → `_on_web_title` → `_remove_point`, which drops it from the list, renumbers/
   recolours the remaining pins, and refreshes the Timeseries **only if it is open**
   (`open_if_closed=False`, so removing a pin never pops the plot open).
 - **Gauge reference pins**: the main-window **Gauges** stations (read from the parent's
   `gauges_field` via `_parse_coord_pairs`, `_gauge_stations`) are drawn as **smaller
   red numbered pins** (`.nc-gauge` / `gpin`, in their own `gaugeGroup`, `setGauges`) —
-  purely for reference, distinct from the click-to-add discharge points; applied on
+  clicking one selects its cell like a map click (its own click handler posts the
+  gauge's lon/lat); applied on
   load (`_refresh_gauges` in `_on_loaded`).
 - **Right-click menu on the map** (`_on_web_context_menu`/`_open_map_action_menu`):
   `self.web_view.setContextMenuPolicy(Qt.CustomContextMenu)` + `customContextMenuRequested`
   opens a plain Qt menu mirroring every **Action**-menu item (`_mirror(source_action,
-  slot)`), working off `self._clicked` — whatever the last left-click on the map set,
-  the ordinary red pending marker, not a gauge. It is a pure Qt signal with **no JS
+  slot)`), working off the selection — the Timeseries items plot every selected point, Flow
+  duration/regime `self._clicked` (the newest selection). It is a pure Qt signal with **no JS
   hit-testing dependency**: earlier attempts gated the menu on right-clicking a gauge pin
   specifically (JS `hitTestGauge`) and used `Qt.PreventContextMenu`, which suppressed
   Qt's native menu without reliably delivering the JS click; both the gauge dependency
   and the hit-testing JS were removed, so right-click now works **anywhere on the map**,
   gauges configured or not.
 - **Flow duration / Flow regime** (Action menu; `_show_flow_duration`/
-  `_show_flow_regime`, no arguments): operate purely on `self._clicked` — the last
-  left-clicked cell, the same data source as Total/Fast Timeserie, never accumulated
-  across clicks (unlike the numbered Timeseries points). With nothing clicked yet they
+  `_show_flow_regime`, no arguments): operate purely on `self._clicked` — the most recently
+  selected cell, never accumulated (unlike the numbered Timeseries points). With nothing clicked yet they
   show "Click a point on the map first, then press Flow duration/regime." A background
   `_PointSeriesWorker` (`_fdc_worker`/`_regime_worker`) reads the point's full series
   through the same shared-dataset/cache/progress/cancel plumbing as Total Timeseries;
@@ -1578,6 +1591,11 @@ result file as Watercycle and shows the overall water balance as a Plotly
   missing csv columns read as 0 so an incomplete watercycle csv still renders.
   Per-link **source→target SVG gradients** (`_GRADIENT_JS`) are injected into the
   exported HTML.
+- **Save CSV** button (bottom-left, both Watercycle and Flow Diagram): writes the
+  numbers behind the current plot (station + month window) - a few meta lines (Basin,
+  lon, lat, Period) then the table (Watercycle: Group, Component, Volume_km3,
+  mm_per_year, Percent, Discharge_m3s; Flow Diagram: Flow, From, To, mm_per_year).
+  Suggested name `watercycle.csv` / `flowdiagram.csv` in PathOut, changeable.
 - **Save HTML** button (same as Watercycle): saves the self-contained Plotly plot,
   suggesting the resolved PathOut directory. Window geometry remembered via
   QSettings key `flowdiagram`.

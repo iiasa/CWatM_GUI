@@ -15,6 +15,33 @@ supabase/
     20260928150000_leaderboard_badge_repeat_runs.sql
                                                get_leaderboard + top_badge; award_run:
                                                one point per settings_hash (same_settings)
+    20260928160000_run_locations.sql           consent profiles.share_locations; the
+                                               ANONYMOUS run_locations counts (no user);
+                                               record_run_location(); location_quota
+    20260928170000_run_locations_precision.sql locations rounded to 0.001° (~100 m)
+    20260928180000_world_map.sql               get_run_locations(): public totals per
+                                               place (lon, lat, runs) for Info ▸ World Map
+    20260928190000_user_location.sql           optional own location in profiles
+                                               (location_lat/lon, both or none)
+    20260928200000_user_locations_map.sql      show_location_on_map (opt-in, default
+                                               off); get_user_locations(): public, no
+                                               names, 0.01°, counted per place
+    20260928210000_badge_ladder_v2.sql         11 badges at 5 … 10000 points (Breg …
+                                               Amazonas); earned badges re-evaluated
+    20260929120000_signup_visibility_choices.sql
+                                               sign-up stores show_on_leaderboard +
+                                               show_location_on_map (Register ticks,
+                                               pre-ticked in the GUI)
+    20260929130000_academy_progress.sql        profiles.academy_completed (CWatM
+                                               Academy progress, rpc-only);
+                                               academy_complete_level() = 5 points
+                                               per level once (source 'training');
+                                               academy_reset(); get_my_status
+                                               carries academy_completed
+    20260929140000_badge_ladder_v3.sql         12 badges at 5, 15, 30, 50, 100,
+                                               200, 400, 800, 1500, 3000, 5000,
+                                               10000 points (Ganges back, between
+                                               Rhine and Danube); re-evaluated
   functions/
     login-with-username/index.ts   username + password -> session
     delete-account/index.ts        delete the caller's account (password re-check)
@@ -47,6 +74,7 @@ supabase/
 | `auth.reset_password_for_email(email)` → `verify_otp(type="recovery")` → `update_user(password)` | anon | password reset by code |
 | rpc `username_available(p_username)` | anon | bool |
 | rpc `award_run(p_run_uid, p_meta)` | user | `{status: awarded\|duplicate\|same_settings\|too_short\|daily_limit\|email_not_confirmed\|invalid_run_uid, total_points, new_badges, ...}` — `p_meta.settings_hash` (SHA-256 hex of the setup) makes it one point per distinct setup |
+| rpc `record_run_location(p_lon, p_lat)` | user | `{status: recorded\|no_consent\|invalid_location\|daily_limit}` — adds 1 to the anonymous count of (round(lon,2), round(lat,2), month); stores **no user** |
 | rpc `get_my_status()` | user | `{profile, total_points, badges, next_badge}` |
 | rpc `export_my_data()` | user | everything stored about the user (GDPR export) |
 | rpc `get_leaderboard(p_limit)` | anon | opt-in users only: rank, username, country, points, top_badge |
