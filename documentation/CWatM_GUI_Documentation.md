@@ -769,6 +769,9 @@ always starts off).
   Check Data · Restore settingsfile*, *RUN CWATM ▸ Journal of Runs · Windowed Run CWatM ·
   Batch Run…*, and *Analyse ▸ Watercycle · Flow Diagram*. Switch to **Advanced** or
   **Expert** to get them back; nothing is removed, only hidden.
+  **Advanced and Expert need a login** to your (free) CWatM account — without one the
+  GUI runs in Beginner and this choice is greyed out. Your chosen level is remembered
+  and comes back as soon as you log in.
 - **Web-style date picker** — the Start/Spin/End fields use a 📅 button + calendar
   popup (on) or the classic drop-down calendar (off).
 - **Date timeline** — show the three-handle Start/Spin/End timeline below the date

@@ -28,6 +28,10 @@ supabase/
                                                names, 0.01°, counted per place
     20260928210000_badge_ladder_v2.sql         11 badges at 5 … 10000 points (Breg …
                                                Amazonas); earned badges re-evaluated
+    20260929120000_signup_visibility_choices.sql
+                                               sign-up stores show_on_leaderboard +
+                                               show_location_on_map (Register ticks,
+                                               pre-ticked in the GUI)
   functions/
     login-with-username/index.ts   username + password -> session
     delete-account/index.ts        delete the caller's account (password re-check)

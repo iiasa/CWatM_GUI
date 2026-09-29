@@ -301,6 +301,12 @@ class PreferencesWindow(QDialog):
         self._row(lay, "Skill of user:", self.cmb_level,
                   "The skill of the user determines how much of the settingsfile "
                   "is presented")
+        if not getattr(self.mw, "levels_unlocked", lambda: True)():
+            # logged out = Beginner only; Advanced / Expert need a login
+            self.cmb_level.setEnabled(False)
+            self.cmb_level.setToolTip(
+                "Without a login CWatM GUI runs in the Beginner level - log in to "
+                "your CWatM account to choose Advanced or Expert")
         self.cb_web_picker = self._check(
             lay, "Web-style date picker",
             "Pick the Start/Spin/End dates with a modern frameless calendar popup "

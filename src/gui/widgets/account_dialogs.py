@@ -395,6 +395,17 @@ class LoginDialog(_AccountDialogBase):
         self.reg_locations.setToolTip(LOCATION_TEXT)
         self.reg_locations.setChecked(True)          # default: yes
         lay.addWidget(self.reg_locations)
+        self.reg_leaderboard = QCheckBox(
+            "Show me on the leaderboard (username, country and points only)")
+        self.reg_leaderboard.setChecked(True)        # default: yes
+        lay.addWidget(self.reg_leaderboard)
+        self.reg_map = QCheckBox(
+            "Show my location on the world map (without my name, ~1 km)")
+        self.reg_map.setToolTip(
+            "Only if you enter your location above. Other users see a point on "
+            "Info ▸ World Map ▸ User location - no name, rounded to 0.01°.")
+        self.reg_map.setChecked(True)                # default: yes
+        lay.addWidget(self.reg_map)
         row = QHBoxLayout()
         row.addStretch(1)
         row.addWidget(self._button("Register", self._do_register))
@@ -500,6 +511,8 @@ class LoginDialog(_AccountDialogBase):
                   institute=self.reg_institute.text(),
                   privacy_version=account_config.PRIVACY_VERSION,
                   share_locations=True,
+                  show_on_leaderboard=self.reg_leaderboard.isChecked(),
+                  show_location_on_map=self.reg_map.isChecked(),
                   **dict(zip(("location_lat", "location_lon"),
                              V.parse_location(self.reg_lat.text(),
                                               self.reg_lon.text()))))

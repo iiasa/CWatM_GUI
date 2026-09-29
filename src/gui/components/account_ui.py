@@ -126,8 +126,8 @@ class AccountMixin:
         # answers strictly in order, and only this mixin submits award_run, so the
         # oldest entry is always the one an answer belongs to.
         self._award_fifo = []
-        self._update_account_button()
         if not account_config.is_configured():
+            self._update_account_button()
             self._account_button.setVisible(False)
             wm = getattr(self, "_world_map_action", None)
             if wm is not None:
@@ -135,11 +135,27 @@ class AccountMixin:
             return
         # Every recorded run (main / Windowed / Batch) reaches _on_run_recorded.
         run_ledger.add_listener(self._on_run_recorded)
-        if self.account_remember() and self._settings.value(
-                "account/remembered", False, type=bool):
+        if self._stored_login():
             self._account_state = "restoring"
-            self._update_account_button()
             QTimer.singleShot(_RESTORE_DELAY_MS, self._account_restore)
+        self._update_account_button()
+
+    def _stored_login(self):
+        return self.account_remember() and self._settings.value(
+            "account/remembered", False, type=bool)
+
+    def levels_unlocked(self):
+        """May the user pick Advanced / Expert? Only with a CWatM account login -
+        logged out, the GUI runs in Beginner. A stored login still being restored
+        (or unreachable offline) counts as logged in, so a network hiccup does not
+        take the level away. Without an account server (no key configured) nobody
+        could log in, so every level stays open."""
+        if not account_config.is_configured():
+            return True
+        state = getattr(self, "_account_state", None)
+        if state is None:                  # before _init_account: the restore to come
+            return self._stored_login()
+        return state != "logged_out"
 
     # ---- worker ------------------------------------------------------------------
     def account_worker(self):
@@ -353,6 +369,13 @@ class AccountMixin:
         self._update_account_button()
 
     def _update_account_button(self):
+        # Advanced / Expert follow the login (every state change passes here)
+        refresh = getattr(self, "_refresh_experience_level", None)
+        if refresh is not None:
+            try:
+                refresh()
+            except RuntimeError:
+                log.debug("level refresh: widget already gone", exc_info=True)
         # Info ▸ Leaderboard exists only for a logged-in user
         action = getattr(self, "_leaderboard_action", None)
         if action is not None:

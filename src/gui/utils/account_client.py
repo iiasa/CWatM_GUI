@@ -336,12 +336,14 @@ class AccountClient:
 
     def register(self, email, password, username,
                  full_name=None, country=None, institute=None, privacy_version=None,
-                 share_locations=False, location_lat=None, location_lon=None):
+                 share_locations=False, location_lat=None, location_lon=None,
+                 show_on_leaderboard=False, show_location_on_map=False):
         """Create an account. Returns {"status": "confirm_email", "email": ...} - the
         user then enters the emailed code (``confirm_signup``).
 
         ``privacy_version`` = the privacy notice the user agreed to; required (the
-        server refuses a sign-up without it too)."""
+        server refuses a sign-up without it too). The three choices are stored in
+        the profile by the server's sign-up trigger (handle_new_user)."""
         email = (email or "").strip()
         username = (username or "").strip()
         if not privacy_version:
@@ -354,7 +356,9 @@ class AccountClient:
             raise AccountError("username_taken")
 
         data = {"username": username, "privacy_version": str(privacy_version)[:40],
-                "share_locations": bool(share_locations)}
+                "share_locations": bool(share_locations),
+                "show_on_leaderboard": bool(show_on_leaderboard),
+                "show_location_on_map": bool(show_location_on_map)}
         if location_lat is not None and location_lon is not None:
             data["location_lat"] = round(float(location_lat), 3)
             data["location_lon"] = round(float(location_lon), 3)

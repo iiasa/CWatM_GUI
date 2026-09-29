@@ -42,8 +42,8 @@ filled in by IIASA]*.
 | Username | log in, shown on the leaderboard if you choose so | account server |
 | Password | log in - stored only as a one-way hash, nobody can read it | account server |
 | Name, country, institute *(optional)* | shown in your account; country on the leaderboard if you choose so | account server |
-| Your location - latitude/longitude you enter, stored to 0.001° *(optional)* | shown in your account. **Only if you tick** *Show my location on the world map* (off by default): shown to every GUI user on the world map (Info ▸ World Map ▸ User location) as a point **without your name**, rounded to 0.01° (~1 km), counted together with other users at the same place | account server |
-| Leaderboard choice | whether your username, country and points are shown to other users (off by default) | account server |
+| Your location - latitude/longitude you enter, stored to 0.001° *(optional)* | shown in your account. **Only if you tick** *Show my location on the world map* (ticked in advance on the Register form - untick it there or later in the account window): shown to every GUI user on the world map (Info ▸ World Map ▸ User location) as a point **without your name**, rounded to 0.01° (~1 km), counted together with other users at the same place | account server |
+| Leaderboard choice | whether your username, country and points are shown to other users (ticked in advance on the Register form - untick it there or later in the account window) | account server |
 | Points and badges | the purpose of the account | account server |
 | Per counted run: date and time, GUI version, run kind (run / windowed / batch), number of timesteps, run time, a random run number | to award a point once per run, and to check the rules (e.g. a minimum run length) | account server |
 | Per counted run: a fingerprint of the model settings (SHA-256 one-way hash; Title, PathOut and output settings left out) | one point per distinct model setup - the same settings run again earn no further point | account server |

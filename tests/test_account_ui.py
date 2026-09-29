@@ -160,6 +160,22 @@ class TestLoginDialog:
         d._do_confirm()
         assert mw.worker.sent[-1] == ("confirm_signup", ("b@example.org", "221435"), {})
 
+    def test_register_visibility_choices_default_yes(self, mw):
+        d = self._dialog(mw)
+        assert d.reg_locations.isChecked()
+        assert d.reg_leaderboard.isChecked() and d.reg_map.isChecked()
+        d.reg_username.setText("Blabla")
+        d.reg_email.setText("b@example.org")
+        d.reg_password.setText("secret123")
+        d.reg_repeat.setText("secret123")
+        d.reg_agree.setChecked(True)
+        d.reg_map.setChecked(False)                       # the user may untick
+        d._do_register()
+        kwargs = mw.worker.sent[-1][2]
+        assert kwargs["share_locations"] is True
+        assert kwargs["show_on_leaderboard"] is True
+        assert kwargs["show_location_on_map"] is False
+
     def test_register_rejects_bad_input_locally(self, mw):
         d = self._dialog(mw)
         d.reg_agree.setChecked(True)
@@ -265,6 +281,24 @@ class TestLoginState:
         h._on_account_failed("get_status", "session_expired", "expired")
         assert h._account_button.text() == "Log in"
         assert not h._settings.value("account/remembered", type=bool)
+
+    def test_levels_need_a_login(self, host, monkeypatch):
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
+        h = host
+        assert not h.levels_unlocked()                  # before init, nothing stored
+        h._init_account()
+        assert not h.levels_unlocked()                  # logged out -> Beginner only
+        h._on_account_succeeded("login", STATUS)
+        assert h.levels_unlocked()
+        h._on_account_failed("restore", "offline", "no connection")
+        assert h.levels_unlocked()                      # stored login kept offline
+        h._on_account_succeeded("logout", None)
+        assert not h.levels_unlocked()
+
+    def test_levels_open_without_an_account_server(self, host, monkeypatch):
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: False)
+        host._init_account()
+        assert host.levels_unlocked()
 
     def test_forgetting_drops_the_stored_login(self, host):
         h = host
