@@ -1,24 +1,28 @@
-"""CWatM Academy - Level 1's Field Test: locate the Nile's outlet, unaided.
+"""CWatM Academy - Level 1's Field Test: locate the outlet of a big river basin,
+unaided.
 
 Where the Level 1 lesson (``academy_outlet_map.OutletMapWidget``) frames the
 whole Danube basin, points a pulsing suggestion marker at the answer, and
 *writes* the pick into MaskMap/Gauges, this is a Field Test - a graded
-check, not a second lesson. ``NileFieldTestWindow`` shows the same kind of
-upstream-area map over the Nile basin instead (the bundled
-``academy_ups_30min.nc`` grid is global, so the Nile is already in it - no
-second dataset needed), but deliberately has **no** suggestion marker (that
-would just hand over the answer) and never touches the main window's
-settings - it only grades a click against ``_NILE_TARGET_CELLS`` and reports
-pass/fail.
+check, not a second lesson. ``BasinFieldTestWindow`` shows the same kind of
+upstream-area map (the bundled ``academy_ups_30min.nc`` grid is global), but
+deliberately has **no** suggestion marker and never touches the main window's
+settings - it only grades a click and reports pass/fail.
 
-``_NILE_TARGET_CELLS`` was derived, not guessed: the five highest
-upstream-area cells inside a Nile bounding box of the same bundled grid form
-a single north-south run of consecutive cells (lon 31.25, lat 29.75 through
-31.75) with strictly decreasing accumulation heading south - exactly the
-river's last few cells before the Mediterranean, in accumulation-rank order.
-"One of the last 5 cells" is graded as landing on any of those five, snapped
-to the nearest grid cell the same way the Level 1 map reads a value under
-the cursor.
+**Which basin**: a random one of the 50 largest in
+``assets/academy_biggest_basins.csv`` (rank, basin_size_km2, name, lon, lat -
+the outlet cell centre on this same 30' grid), the Danube included.
+**Another basin** draws a new one. The
+view is framed *around* the outlet but deliberately off-centre
+(``view_bounds``), so the middle of the map is not the answer.
+
+**Graded against the 4 biggest upstream cells of that basin**
+(``target_cells``), computed from the grid at runtime rather than hard-coded:
+the outlet cell (the listed one - its upstream area equals the listed basin
+size for all 50) plus, best-first, the three largest cells draining into what
+is already selected (a neighbour with a smaller upstream area). Landing on any
+of those four - snapped to the nearest grid cell the same way the Level 1 map
+reads a value under the cursor - passes.
 
 Reuses academy_outlet_map's module-level helpers (``load_ups_grid``,
 ``_ups_rgba``/``_ocean_rgba``/``_image_overlay``/``_rgba_to_datauri``, the
@@ -31,14 +35,16 @@ lesson map's ``ACOUT`` one if both happened to be alive at once.
 
 Non-modal ``QDialog``, like the other secondary windows: a status line reads
 "Awaiting target ..." until a pick lands on a target cell, then "Target
-confirmed - that is the Nile's outlet" and the Confirm button enables; a
-miss reads "Not the outlet - look further downstream" and lets the learner
+confirmed - that is the outlet of the <basin>" and the Confirm button enables;
+a miss reads "Not the outlet - look further downstream" and lets the learner
 click again, no penalty. Confirm emits ``passed`` and closes the window;
 academy_outlet_map.OutletMapWidget._on_nile_field_test_passed picks up from
 there (the level's completion celebration).
 """
 
+import csv
 import os
+import random
 
 import numpy as np
 
@@ -69,41 +75,90 @@ from src.gui.widgets.academy_outlet_map import (
 
 _C = theme.theme_colors("mikhail")
 
-# The five highest-accumulation cells in the bundled ups.nc within a Nile
-# bounding box - see the module docstring for how these were derived. Order
-# doesn't matter for grading (any one of the five passes); listed
-# north-to-south (most downstream first) for readability.
-_NILE_TARGET_CELLS = [
-    (31.750, 31.250),
-    (31.250, 31.250),
-    (30.750, 31.250),
-    (30.250, 31.250),
-    (29.750, 31.250),
-]
-
-# Nile basin bounding box (south, west, north, east) - Lake Victoria/the
-# White Nile headwaters down to the Ethiopian highlands (Blue Nile) up to
-# the Mediterranean delta. Framing, like OutletMapWidget's _BASIN_BOUNDS -
-# never used for grading, only the initial map view.
-_BASIN_BOUNDS = [[-4.5, 24.0], [32.5, 40.0]]
-_DEFAULT_ZOOM = 4
+_BASINS_ASSET = "academy_biggest_basins.csv"
+_POOL_SIZE = 50                  # draw from the 50 largest basins
+_EXCLUDED = set()                # basins never drawn (none at the moment)
+TARGET_CELLS = 4                 # pass = one of the basin's 4 biggest cells
 
 
-def _nearest_cell(lats, lons, lat, lon):
-    row = int(np.abs(lats - float(lat)).argmin())
-    col = int(np.abs(lons - float(lon)).argmin())
-    return float(lats[row]), float(lons[col])
+# ------------------------------------------------------------ pure helpers
+
+def load_basins(path=None, pool=_POOL_SIZE, excluded=_EXCLUDED):
+    """The candidate basins: [{rank, size_km2, name, lon, lat}], the first
+    ``pool`` rows of the list minus ``excluded``."""
+    if path is None:
+        from src.gui.utils.assets import asset_path
+        path = asset_path(_BASINS_ASSET)
+    out = []
+    with open(path, newline="", encoding="utf-8") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                basin = dict(rank=int(row["rank"]), size_km2=float(row["basin_size_km2"]),
+                             name=row["name"].strip(), lon=float(row["lon"]),
+                             lat=float(row["lat"]))
+            except (KeyError, ValueError):
+                continue
+            if basin["rank"] <= pool and basin["name"] not in excluded:
+                out.append(basin)
+    return out
 
 
-def _is_target_cell(lats, lons, lat, lon):
-    snapped_lat, snapped_lon = _nearest_cell(lats, lons, lat, lon)
-    for t_lat, t_lon in _NILE_TARGET_CELLS:
-        if abs(snapped_lat - t_lat) < 1e-6 and abs(snapped_lon - t_lon) < 1e-6:
-            return True
-    return False
+def _nearest_index(lats, lons, lat, lon):
+    return (int(np.abs(np.asarray(lats) - float(lat)).argmin()),
+            int(np.abs(np.asarray(lons) - float(lon)).argmin()))
 
 
-class NileFieldTestWindow(QDialog):
+def target_cells(basin_data, lats, lons, lat, lon, n=TARGET_CELLS):
+    """The basin's ``n`` biggest upstream cells as [(lat, lon)], outlet first.
+
+    Best-first upstream from the outlet cell nearest (lat, lon): among the
+    8-neighbours of the cells already chosen, the next one is the largest whose
+    upstream area is smaller than the chosen cell it touches (it drains into
+    it). Longitude wraps around the date line."""
+    grid = np.asarray(basin_data, dtype=float)
+    lats, lons = np.asarray(lats), np.asarray(lons)
+    nrow, ncol = grid.shape
+    chosen = [_nearest_index(lats, lons, lat, lon)]
+    while len(chosen) < n:
+        best, best_val = None, -np.inf
+        for r, c in chosen:
+            here = grid[r, c]
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == dc == 0:
+                        continue
+                    rr, cc = r + dr, (c + dc) % ncol
+                    if not 0 <= rr < nrow or (rr, cc) in chosen:
+                        continue
+                    v = grid[rr, cc]
+                    if np.isfinite(v) and v < here and v > best_val:
+                        best, best_val = (rr, cc), v
+        if best is None:
+            break
+        chosen.append(best)
+    return [(float(lats[r]), float(lons[c])) for r, c in chosen]
+
+
+def is_target(lats, lons, lat, lon, targets):
+    """Does a click at (lat, lon), snapped to the nearest cell, hit a target?"""
+    r, c = _nearest_index(lats, lons, lat, lon)
+    snapped = (float(np.asarray(lats)[r]), float(np.asarray(lons)[c]))
+    return any(abs(snapped[0] - t[0]) < 1e-6 and abs(snapped[1] - t[1]) < 1e-6
+               for t in targets)
+
+
+def view_bounds(basin, rng=random):
+    """[[south, west], [north, east]] around the outlet, sized from the basin
+    area, shifted at random so the outlet is never the centre of the view (but
+    always well inside it)."""
+    half = min(25.0, max(4.0, (basin["size_km2"] ** 0.5) / 111.0 * 0.9))
+    clat = basin["lat"] + rng.uniform(-0.5, 0.5) * half
+    clon = basin["lon"] + rng.uniform(-0.5, 0.5) * half
+    south, north = max(-85.0, clat - half), min(85.0, clat + half)
+    return [[south, clon - half], [north, clon + half]]
+
+
+class BasinFieldTestWindow(QDialog):
     """Level 1's Field Test - see the module docstring. Emits ``passed``
     once Confirm is clicked after a correct pick."""
 
@@ -115,6 +170,13 @@ class NileFieldTestWindow(QDialog):
         self._picked_ok = False
         self._map_ready = False
         self._js_queue = []
+        self._basins = []
+        self._basin = None
+        self._targets = []
+        try:
+            self._basins = load_basins()
+        except Exception:
+            log.warning("academy basin list unreadable", exc_info=True)
         self.setWindowTitle("CWatM Academy - Field Test")
         self._build_ui()
         self._apply_style()
@@ -137,18 +199,14 @@ class NileFieldTestWindow(QDialog):
         tag.setObjectName("nftTag")
         outer.addWidget(tag)
 
-        title = QLabel("Locate the outlet of the Nile")
-        title.setObjectName("nftTitle")
-        outer.addWidget(title)
+        self.title_label = QLabel("Locate the outlet")
+        self.title_label.setObjectName("nftTitle")
+        outer.addWidget(self.title_label)
 
-        instructions = QLabel(
-            "Surface water flows downstream. Click the point where the "
-            "Nile reaches the sea - the same idea as Level 1's Danube "
-            "exercise, but this time nothing on the map points at the "
-            "answer for you.")
-        instructions.setObjectName("nftInstructions")
-        instructions.setWordWrap(True)
-        outer.addWidget(instructions)
+        self.instructions_label = QLabel("")
+        self.instructions_label.setObjectName("nftInstructions")
+        self.instructions_label.setWordWrap(True)
+        outer.addWidget(self.instructions_label)
 
         if _MAP_AVAILABLE:
             self.web_view = QWebEngineView()
@@ -164,6 +222,11 @@ class NileFieldTestWindow(QDialog):
         self.status_label = QLabel("Awaiting target …")
         self.status_label.setObjectName("nftStatus")
         status_lay.addWidget(self.status_label, 1)
+        self.another_button = QPushButton("Another basin")
+        self.another_button.setObjectName("nftConfirm")
+        self.another_button.setToolTip("Try the outlet of a different river basin")
+        self.another_button.clicked.connect(self._next_basin)
+        status_lay.addWidget(self.another_button)
         self.confirm_button = QPushButton("Confirm target")
         self.confirm_button.setObjectName("nftConfirm")
         self.confirm_button.setEnabled(False)
@@ -206,6 +269,10 @@ class NileFieldTestWindow(QDialog):
             self.status_label.setText("Could not load the upstream-area map.")
             return
         self._basin_data, self._lats, self._lons = basin_data, lats, lons
+        if not self._basins:
+            self.status_label.setText("Could not load the list of river basins.")
+            return
+        self._choose_basin()
         try:
             html = self._build_map_html()
         except Exception:
@@ -243,7 +310,8 @@ class NileFieldTestWindow(QDialog):
         west, east, south, north = self._grid_bounds()
         bounds = [[south, west], [north, east]]
 
-        m = folium.Map(location=[15.0, 32.0], zoom_start=_DEFAULT_ZOOM,
+        (s, w), (n, e) = self._view
+        m = folium.Map(location=[(s + n) / 2.0, (w + e) / 2.0], zoom_start=4,
                        crs="EPSG4326", tiles=None, control_scale=False, zoom_control=True)
         ocean = _image_overlay(
             _rgba_to_datauri(_ocean_rgba(self._basin_data, self._lats, self._lons)),
@@ -331,15 +399,20 @@ class NileFieldTestWindow(QDialog):
                    '</div></div>',
               iconSize:[22,22],iconAnchor:[11,11]});
             window.pickMarker=L.marker([lat,lon],{icon:icon}).addTo(MAP);};
+          window.clearPick=function(){
+            if(window.pickMarker){MAP.removeLayer(window.pickMarker);
+              window.pickMarker=null;}};
+          window.frame=function(b){MAP.invalidateSize();
+            MAP.fitBounds(b,{padding:[30,30]});};
+          // the stamp makes a repeated click on the same spot a new title
           MAP.on('click',function(e){
-            document.title='NILETEST '+e.latlng.lng+'|'+e.latlng.lat;});
-          setTimeout(function(){MAP.invalidateSize();
-            MAP.fitBounds(__BOUNDS__,{padding:[30,30]});},300);
+            document.title='NILETEST '+e.latlng.lng+'|'+e.latlng.lat+'|'+Date.now();});
+          setTimeout(function(){window.frame(__BOUNDS__);},300);
         })();
         """
         return (tpl.replace("__MAP__", map_var)
                    .replace("__LAYER__", repr(_BASEMAP_WMS_LAYER))
-                   .replace("__BOUNDS__", repr(_BASIN_BOUNDS)))
+                   .replace("__BOUNDS__", repr(self._view)))
 
     def _on_loaded(self, ok):
         if not ok:
@@ -361,19 +434,49 @@ class NileFieldTestWindow(QDialog):
 
     # ------------------------------------------------------------- grading
 
+    # --------------------------------------------------------------- basins
+
+    def _choose_basin(self):
+        """Draw a basin (never the one just shown), compute its target cells and
+        framing, and set the texts."""
+        pool = [b for b in self._basins if b is not self._basin] or self._basins
+        self._basin = random.choice(pool)
+        b = self._basin
+        self._targets = target_cells(self._basin_data, self._lats, self._lons,
+                                     b["lat"], b["lon"])
+        self._view = view_bounds(b)
+        self._picked_ok = False
+        self.confirm_button.setEnabled(False)
+        self.title_label.setText(f"Locate the outlet of the {b['name']}")
+        self.instructions_label.setText(
+            f"The {b['name']} basin covers about {b['size_km2']:,.0f} km². Surface "
+            "water flows downstream - click the point where the river ends: at the "
+            "sea, or, for an inland basin, in its lake or sink. Land on one of the "
+            f"{TARGET_CELLS} biggest cells of the basin to pass. The same idea as the "
+            "Danube exercise, but this time nothing on the map points at the answer.")
+        self.status_label.setText("Awaiting target …")
+
+    def _next_basin(self):
+        """Another basin: new question, new framing, the old pick removed."""
+        if not self._basins or getattr(self, "_basin_data", None) is None:
+            return
+        self._choose_basin()
+        self._js("if(window.clearPick) clearPick();")
+        self._js("if(window.frame) frame(%s);" % repr(self._view))
+
     def _on_web_title(self, title):
-        if not title.startswith("NILETEST "):
+        if not title.startswith("NILETEST ") or not self._targets:
             return
         try:
-            lon_s, lat_s = title[9:].split("|", 1)
+            lon_s, lat_s = title[9:].split("|")[:2]
             lon, lat = float(lon_s), float(lat_s)
         except Exception:
             return
         self._js("if(window.setPick) setPick(%f,%f);" % (lat, lon))
-        self._picked_ok = _is_target_cell(self._lats, self._lons, lat, lon)
+        self._picked_ok = is_target(self._lats, self._lons, lat, lon, self._targets)
         if self._picked_ok:
             self.status_label.setText(
-                "✓ Target confirmed - that is the Nile's outlet.")
+                f"✓ Target confirmed - that is the outlet of the {self._basin['name']}.")
             self.confirm_button.setEnabled(True)
         else:
             self.status_label.setText(
@@ -385,3 +488,7 @@ class NileFieldTestWindow(QDialog):
             return
         self.passed.emit()
         self.close()
+
+
+# the window's earlier name, kept for callers (academy_outlet_map)
+NileFieldTestWindow = BasinFieldTestWindow

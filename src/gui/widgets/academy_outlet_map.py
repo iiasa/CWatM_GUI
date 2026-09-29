@@ -29,9 +29,10 @@ Level 2's own settings-file targets; the key->line lookup is the same one
 Check Data's double-click-to-jump uses). Finishing the guide is the end of
 the *teaching* - Level 1 itself isn't done until the graded Field Test
 passes: ``_on_guide_finished`` shows a "will you accept this mission"
-briefing (``academy_guide.show_mission_briefing``) for locating the Nile's
-outlet unaided, then ``_start_nile_field_test`` opens
-``academy_field_test.NileFieldTestWindow`` for the actual graded pick; only
+briefing (``academy_guide.show_mission_briefing``) for locating the outlet of
+a big river basin (a random one of the 50 largest) unaided, then
+``_start_nile_field_test`` opens ``academy_field_test.BasinFieldTestWindow``
+for the actual graded pick; only
 once that passes (``_on_nile_field_test_passed``) does the centred
 celebration (``academy_guide.show_level_celebration``) show and Level 2
 begin. If nothing is open in the main editor yet, Confirm loads a bundled
@@ -736,8 +737,10 @@ class OutletMapWidget(QWidget):
         self._mission_prompt = show_mission_briefing(1, self._start_nile_field_test)
 
     def _start_nile_field_test(self):
-        from src.gui.widgets.academy_field_test import NileFieldTestWindow
-        self._field_test = NileFieldTestWindow(main_window=self.mw)
+        # (named after the Nile, its original single basin - now a random one of
+        # the 50 largest, see academy_field_test)
+        from src.gui.widgets.academy_field_test import BasinFieldTestWindow
+        self._field_test = BasinFieldTestWindow(main_window=self.mw)
         self._field_test.passed.connect(self._on_nile_field_test_passed)
         self._field_test.show()
         self._field_test.raise_()

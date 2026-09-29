@@ -256,9 +256,9 @@ FIELD_TESTS = {
         "title": "Field Test Available",
         "body": (
             "Before you graduate this level, prove it without help: "
-            "locate the outlet of the Nile on the map. Land within the "
-            "last few cells of the river and you pass - nothing on this "
-            "map points at the answer for you."
+            "locate the outlet of one of the world's big river basins, "
+            "picked at random. Land on one of its four biggest cells and "
+            "you pass - nothing on this map points at the answer for you."
         ),
     },
     2: {
