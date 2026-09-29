@@ -35,7 +35,11 @@ log = get_logger("preferences")
 
 # Category pages, in list order.
 CATEGORIES = ["Output", "Startup & Model", "Display", "Editor & Dates", "Run History",
-              "Account"]
+              "Account", "CWatM Academy"]
+
+# Points for each finished Academy level - the server's game_config
+# 'points_per_academy_level' (migration ..._academy_progress.sql) decides.
+ACADEMY_POINTS = 5
 
 # Default OpenStreetMap basemap for Show Basin - the EPSG:4326 WMS layers of
 # basin_viewer2 (kept in sync with its _B2_PROVIDERS).
@@ -112,6 +116,7 @@ class PreferencesWindow(QDialog):
         self.pages.addWidget(self._page_editor())
         self.pages.addWidget(self._page_history())
         self.pages.addWidget(self._page_account())
+        self.pages.addWidget(self._page_academy())
 
         self.cat_list.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.cat_list.setCurrentRow(0)
@@ -219,11 +224,6 @@ class PreferencesWindow(QDialog):
         self.cb_use_modflow = self._check(
             lay, "Use Modflow",
             "Load flopy for MODFLOW coupling. Off = flopy is not loaded (faster start).")
-        self.cb_academy = self._check(
-            lay, "Enable CWatM Academy",
-            "A guided, ten-level introduction to the CWatM GUI, styled like "
-            "Mikhail mode. Turning this on opens CWatM Academy now and each "
-            "time the GUI starts, until you finish or turn it off.")
         lay.addStretch(1)
         return page
 
@@ -400,6 +400,22 @@ class PreferencesWindow(QDialog):
         lay.addStretch(1)
         return page
 
+    def _page_academy(self):
+        page, lay = self._page(
+            "CWatM Academy",
+            "The guided, ten-level introduction to the CWatM GUI. Logged in, every "
+            f"finished level earns {ACADEMY_POINTS} points.")
+        self.cb_academy = self._check(
+            lay, "Enable CWatM Academy",
+            "A guided, ten-level introduction to the CWatM GUI, styled like "
+            "Mikhail mode. Turning this on opens CWatM Academy now and each "
+            "time the GUI starts, until you finish or turn it off.")
+        self.cb_academy_link = self._check(
+            lay, "Link CWatM Academy to your login",
+            "Links the progression of the Academy to your login")
+        lay.addStretch(1)
+        return page
+
     # -------------------------------------------------------------- browsing
 
     def _default_output_file_hint(self):
@@ -430,6 +446,7 @@ class PreferencesWindow(QDialog):
             "load_previous": s.value("startup/load_previous", False, type=bool),
             "use_modflow": s.value("modflow/enabled", False, type=bool),
             "academy_enabled": s.value("academy/enabled", False, type=bool),
+            "academy_link": s.value("academy/link_login", True, type=bool),
             "language": i18n.current_language(),
             "theme": theme.current_theme(),
             "show_header": s.value("display/show_header", True, type=bool),
@@ -464,6 +481,7 @@ class PreferencesWindow(QDialog):
         self.cb_load_previous.setChecked(st["load_previous"])
         self.cb_use_modflow.setChecked(st["use_modflow"])
         self.cb_academy.setChecked(st["academy_enabled"])
+        self.cb_academy_link.setChecked(st["academy_link"])
         self._select_data(self.cmb_language, st["language"])
         self._select_data(self.cmb_theme, st["theme"])
         self.cb_show_header.setChecked(st["show_header"])
@@ -494,6 +512,7 @@ class PreferencesWindow(QDialog):
             "load_previous": self.cb_load_previous.isChecked(),
             "use_modflow": self.cb_use_modflow.isChecked(),
             "academy_enabled": self.cb_academy.isChecked(),
+            "academy_link": self.cb_academy_link.isChecked(),
             "language": self.cmb_language.currentData(),
             "theme": self.cmb_theme.currentData(),
             "show_header": self.cb_show_header.isChecked(),
@@ -575,6 +594,8 @@ class PreferencesWindow(QDialog):
             mw._on_use_modflow_toggled(value)
         elif key == "academy_enabled":
             mw._on_academy_toggled(value)
+        elif key == "academy_link":
+            mw._set_academy_link(value)
         elif key == "language":
             i18n.set_language(value)
             for row in range(self.cat_list.count()):   # a list item is not a widget

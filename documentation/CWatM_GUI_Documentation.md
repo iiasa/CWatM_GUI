@@ -563,12 +563,21 @@ overlay on an OSM map (EPSG:4326). A **timestep slider + Play** scrubs through t
 the display. Click a cell to read its value. The left-window gauges appear as small
 numbered red pins.
 
-- Plot a clicked cell's series with **Fast Display Timeserie** (quick — the map's
+- **Left-click** a cell (or a gauge pin) to select it as a numbered point; click more
+  cells to add stations, and click a selected cell or its pin again to remove it.
+- Plot the selected cells' series with **Fast Display Timeserie** (quick — the map's
   timesteps only, with gaps) or **Total Timeseries** (every timestep — can take a while,
   so a progress bar shows next to the buttons).
 - **Compare A−B** loads a second `.nc` on the same grid and shows the **difference**
   (this − other) per timestep on a red/blue diverging scale — ideal for comparing two
   scenarios you just ran. **Clear compare** returns to the single-file view.
+- **File ▸ Load netcdf** opens another `.nc` - starting in the current file's folder - in
+  the same window.
+- **Calculate mean** / **Calculate percentile** (Action menu) turn the whole time axis
+  into one map - the mean, or a percentile you enter (e.g. 50 for the median) - saved as
+  a new NetCDF in the original's folder (suggested `discharge_mean.nc` /
+  `discharge_50_percentile.nc`). It keeps all metadata of the original and records its
+  name, folder and creation time; the map then shows the new file.
 
 ![NetCDF](figures/screenshot_netcdf.png)
 
@@ -577,6 +586,9 @@ numbered red pins.
 **Analyse ▸ Watercycle** reads a `WaterCycle_areasum_monthtot.csv` and shows the
 overall water balance as a **sunburst** (Inputs / Outputs / Storage /
 Evapotranspiration / Transpiration). A month **range slider** selects the period.
+**Save CSV** (lower left) saves the numbers behind the plot - every part's volume
+(km³), mm/year and percent - for the shown station and period; the suggested name is
+`watercycle.csv` and can be changed. **Save HTML** saves the plot itself.
 
 ![Watercycle](figures/screenshot_watercycle.png)
 
@@ -584,7 +596,8 @@ Evapotranspiration / Transpiration). A month **range slider** selects the period
 
 **Analyse ▸ Flow Diagram** shows the same water balance as a **Sankey** flow diagram
 (Precipitation → Rain/Snow → Soil/Groundwater/Runoff → Waterbodies → Discharge, plus
-withdrawal/consumption), over the slider-selected months.
+withdrawal/consumption), over the slider-selected months. **Save CSV** saves one row per
+flow (from, to, mm/year) as `flowdiagram.csv` (name changeable).
 
 ![Flow Diagram](figures/screenshot_flowdiagram.png)
 

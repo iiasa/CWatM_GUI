@@ -747,3 +747,93 @@ class TestBadgeEnlarge:
         from src.gui.widgets.account_dialogs import _format_date
         assert _format_date("2026-09-28T11:03:12.5+00:00") == "28 September 2026"
         assert _format_date(None) == ""
+
+
+# ---- CWatM Academy progress in the profile -------------------------------------------
+
+class TestAcademyProgress:
+    @pytest.fixture
+    def academy(self, host, tmp_path, monkeypatch):
+        """academy_progress on an ini file (never the real registry) with the host
+        as its remote; the remote is dropped again after the test."""
+        from src.gui.utils import academy_progress
+        path = str(tmp_path / "academy.ini")
+        monkeypatch.setattr(academy_progress, "_settings",
+                            lambda: QSettings(path, QSettings.IniFormat))
+        monkeypatch.setattr(academy_progress, "_remote", None)
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
+        host._init_account()
+        return academy_progress
+
+    def _login(self, host, levels=()):
+        status = dict(STATUS, profile=dict(STATUS["profile"],
+                                           academy_completed=list(levels)))
+        host._on_account_succeeded("login", status)
+
+    def test_logged_out_uses_the_local_list(self, host, academy):
+        assert academy.mark_complete(1)
+        assert academy.completed_levels() == {1}
+        assert host.fake.sent == []                     # nothing to the server
+
+    def test_linked_login_uses_the_profile(self, host, academy):
+        academy.mark_complete(1)                        # local, logged out
+        self._login(host, levels=[1, 2, 3])
+        assert academy.completed_levels() == {1, 2, 3}
+        assert academy.current_level() == 4
+        assert academy.mark_complete(4)
+        assert host.fake.sent[-1] == ("academy_complete_level", (4,), {})
+        assert academy.completed_levels() == {1, 2, 3, 4}   # shown at once
+        assert not academy.mark_complete(4)             # once only
+        # logged out again: the local list, never merged with the profile
+        host._on_account_succeeded("logout", None)
+        assert academy.completed_levels() == {1}
+
+    def test_unlinked_keeps_the_progress_local(self, host, academy):
+        host._set_academy_link(False)
+        self._login(host, levels=[1, 2])
+        assert academy.completed_levels() == set()
+        academy.mark_complete(1)
+        assert all(op != "academy_complete_level" for op, _a, _k in host.fake.sent)
+
+    def test_start_over_resets_the_profile(self, host, academy):
+        self._login(host, levels=[1, 2])
+        academy.reset()
+        assert host.fake.sent[-1] == ("academy_reset", (), {})
+        assert academy.completed_levels() == set()
+
+    def test_awarded_answer(self, host, academy):
+        self._login(host, levels=[1])
+        academy.mark_complete(2)
+        host._on_account_succeeded("academy_complete_level", {
+            "status": "awarded", "level": 2, "points_awarded": 5, "total_points": 6,
+            "new_badges": [{"name": "Thames"}], "academy_completed": [1, 2]})
+        assert "CWatM Academy: +5 points for level 2 (total 6)." in host.notes
+        assert "CWatM account: 🏅 new badge - Thames!" in host.notes
+        assert host._account_button.text() == "Blabla · 6 pt"
+        assert host.fake.sent[-1] == ("get_status", (), {})
+        assert academy.completed_levels() == {1, 2}
+
+    def test_failed_save_is_reported(self, host, academy):
+        self._login(host)
+        academy.mark_complete(1)
+        host._on_account_failed("academy_complete_level", "offline", "No connection.")
+        assert any("could not be saved" in n for n in host.notes)
+
+
+def test_every_submitted_op_is_a_real_worker_op():
+    """The fake worker accepts anything; the real one refuses an op missing from
+    OPS (that is how Academy level 1 crashed). Every op the GUI submits must be
+    in OPS and be an AccountClient method."""
+    import pathlib
+    import re
+    from src.gui.utils.account_client import AccountClient
+    from src.gui.utils.account_worker import OPS
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "gui"
+    submitted = set()
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        submitted |= set(re.findall(r'\.submit\(\s*"(\w+)"', text))
+        submitted |= set(re.findall(r'self\._run\(\s*"(\w+)"', text))
+    assert submitted, "no submit calls found - the pattern is stale"
+    assert submitted <= OPS, sorted(submitted - OPS)
+    assert all(callable(getattr(AccountClient, op, None)) for op in OPS)

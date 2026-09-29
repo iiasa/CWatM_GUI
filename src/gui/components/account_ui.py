@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QToolButton, QMessageBox
 
 from src.gui import __version__ as GUI_VERSION
-from src.gui.utils import account_config, account_runs, run_ledger
+from src.gui.utils import academy_progress, account_config, account_runs, run_ledger
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("account_ui")
@@ -135,6 +135,8 @@ class AccountMixin:
             return
         # Every recorded run (main / Windowed / Batch) reaches _on_run_recorded.
         run_ledger.add_listener(self._on_run_recorded)
+        # CWatM Academy keeps its progress in the profile while linked + logged in
+        academy_progress.set_remote(self)
         if self._stored_login():
             self._account_state = "restoring"
             QTimer.singleShot(_RESTORE_DELAY_MS, self._account_restore)
@@ -171,6 +173,7 @@ class AccountMixin:
 
     def _stop_account_worker(self):
         run_ledger.remove_listener(self._on_run_recorded)
+        academy_progress.set_remote(None)
         worker = getattr(self, "_account_worker_obj", None)
         if worker is None:
             return
@@ -310,6 +313,69 @@ class AccountMixin:
         if answer == QMessageBox.Yes:
             self.account_worker().submit("update_profile", share_locations=True)
 
+    # ---- CWatM Academy progress in the profile ---------------------------------------
+    # academy_progress calls these while "Link CWatM Academy to your login" is on.
+    def academy_remote_active(self):
+        return self.account_status() is not None
+
+    def academy_remote_levels(self):
+        profile = (self.account_status() or {}).get("profile") or {}
+        return {int(x) for x in profile.get("academy_completed") or []
+                if str(x).isdigit()}
+
+    def academy_remote_complete(self, level):
+        # shown at once; the server's answer replaces it with the stored list
+        self._set_academy_levels(self.academy_remote_levels() | {int(level)})
+        self.account_worker().submit("academy_complete_level", int(level))
+
+    def academy_remote_reset(self):
+        self._set_academy_levels(set())
+        self.account_worker().submit("academy_reset")
+
+    def _set_academy_levels(self, levels):
+        profile = (self._account_status or {}).get("profile")
+        if profile is not None:
+            profile["academy_completed"] = sorted(int(x) for x in levels)
+
+    def _set_academy_link(self, value):
+        """Preferences ▸ CWatM Academy ▸ Link CWatM Academy to your login."""
+        academy_progress.set_linked(value)
+        self._refresh_academy_window()
+
+    def _refresh_academy_window(self):
+        """An open Academy window re-reads the progress (login, logout, link)."""
+        win = getattr(self, "_academy_window", None)
+        if win is None:
+            return
+        try:
+            if win.isVisible():
+                win.refresh_progress()
+        except RuntimeError:
+            log.debug("academy window already gone", exc_info=True)
+
+    def _on_academy_answer(self, op, result):
+        result = result or {}
+        if "academy_completed" in result:
+            self._set_academy_levels(result.get("academy_completed") or [])
+        if op != "academy_complete_level":
+            return
+        if "total_points" in result and self._account_status is not None:
+            self._account_status["total_points"] = result["total_points"]
+        status = result.get("status")
+        if status == "awarded":
+            pts = result.get("points_awarded", 0)
+            self._account_note(
+                f"CWatM Academy: +{pts} points for level {result.get('level')} "
+                f"(total {result.get('total_points', '?')}).")
+            for badge in result.get("new_badges") or []:
+                self._account_note(f"CWatM account: 🏅 new badge - {badge.get('name')}!")
+            # badges / next badge changed: refresh the button
+            self.account_worker().submit("get_status")
+        elif status == "email_not_confirmed":
+            self._account_note("CWatM Academy: progress saved - confirm your email "
+                               "address to earn points for it.")
+        self._update_account_button()
+
     def _submit_award(self, uid, meta, user, gauge=None):
         # the gauge is NOT sent - it waits here for the "awarded" answer
         self._award_fifo.append((uid, meta, user, gauge))
@@ -376,6 +442,8 @@ class AccountMixin:
                 refresh()
             except RuntimeError:
                 log.debug("level refresh: widget already gone", exc_info=True)
+        # the Academy's progress follows the login too (while linked)
+        self._refresh_academy_window()
         # Info ▸ Leaderboard exists only for a logged-in user
         action = getattr(self, "_leaderboard_action", None)
         if action is not None:
@@ -405,6 +473,8 @@ class AccountMixin:
     def _on_account_succeeded(self, op, result):
         if op == "award_run":
             self._on_award_answer(result)
+        elif op in ("academy_complete_level", "academy_reset"):
+            self._on_academy_answer(op, result)
         elif op == "record_location":
             log.debug("run location: %s", (result or {}).get("status"))
         elif op in _STATUS_OPS and isinstance(result, dict) and "profile" in result:
@@ -427,6 +497,12 @@ class AccountMixin:
     def _on_account_failed(self, op, code, message):
         if op == "record_location":
             log.info("run location not recorded: %s", code)   # best-effort, no retry
+            return
+        if op in ("academy_complete_level", "academy_reset"):
+            self._account_note(f"CWatM Academy: the progress could not be saved to "
+                               f"your account ({message or code}).")
+            if code in ("session_expired", "not_logged_in"):
+                self._clear_account()
             return
         if op == "award_run":
             self._on_award_answer(None, code)

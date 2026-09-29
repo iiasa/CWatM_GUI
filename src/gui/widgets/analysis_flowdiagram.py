@@ -367,6 +367,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
     _select_station = WatercycleWindow._select_station
     _station_label = WatercycleWindow._station_label
     _goto_station = WatercycleWindow._goto_station
+    _csv_name = "flowdiagram.csv"
     _prev_station = WatercycleWindow._prev_station
     _next_station = WatercycleWindow._next_station
     _update_station_nav = WatercycleWindow._update_station_nav
@@ -485,6 +486,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
         self.next_button.setVisible(multi)
 
         btn_row = QHBoxLayout()
+        btn_row.addWidget(self._make_save_csv_button(btn_style))   # lower left
         btn_row.addStretch()
         btn_row.addWidget(self.prev_button)
         btn_row.addWidget(self.next_button)
@@ -497,7 +499,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
         """Station navigation rebuilds the Sankey (not the Watercycle sunburst)."""
         self._show_sankey()
 
-    # _save_html is inherited from PlotlyWindowBase.
+    # _save_html / _save_csv are inherited from PlotlyWindowBase.
 
     def _on_range_changed(self, low, high):
         """Slider moved: update the selected window + labels live, debounce a rebuild."""
@@ -555,6 +557,13 @@ class FlowDiagramWindow(PlotlyWindowBase):
         bal["avgdischarge_m3s-1"] *= 86400.0
 
         nodes, links = _build_balance_links(bal)
+        # Save CSV: one row per flow of the diagram, long-term mm/yr
+        name = self.settings_title or os.path.basename(str(self.csv_path))
+        self._csv_data = (
+            [("Basin", name), ("lon", self.lon), ("lat", self.lat),
+             ("Period", self._date_range_text()), ("Unit", "mm/year")],
+            ["Flow", "From", "To", "mm_per_year"],
+            [[lk[0], lk[1], lk[2], round(float(lk[3]), 3)] for lk in links])
         return build_sankey(
             nodes, links,
             valueformat=".1f",

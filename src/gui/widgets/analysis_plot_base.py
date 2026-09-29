@@ -4,7 +4,10 @@
 build a figure -> `theme.themed_plot_page(fig.to_html(...))` -> write it to a temp file
 (`TempPageMixin._load_temp_page`) -> point a `QWebEngineView` at it, and **Save HTML**
 copies that same self-contained file to wherever the user asks. Only the figure and the
-suggested file name differ, so everything else lives here.
+suggested file name differ, so everything else lives here. **Save CSV** (Watercycle and
+Flow Diagram, bottom-left) writes the numbers behind the plot: the window sets
+``_csv_data`` = (meta, header, rows) whenever it rebuilds the figure, and ``_csv_name``
+is the suggested file name.
 
 Subclasses set two class attributes and inherit the rest::
 
@@ -49,6 +52,21 @@ def resolved_pathout_dir(widget):
     return ""
 
 
+def write_table_csv(path, meta, header, rows):
+    """Write a Save-CSV file: ``meta`` (key, value) lines first - basin, station,
+    period, like the header rows of a CWatM csv - then a blank line, then the table
+    (``header`` + ``rows``). Pure, so it is tested without a window."""
+    import csv
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.writer(fh)
+        for key, value in meta:
+            writer.writerow([key, value])
+        if meta:
+            writer.writerow([])
+        writer.writerow(header)
+        writer.writerows(rows)
+
+
 class PlotlyWindowBase(TempPageMixin, GeometryMemoryMixin, QDialog):
     """Temp-page lifetime + Save HTML for the Plotly Analyse windows.
 
@@ -60,6 +78,41 @@ class PlotlyWindowBase(TempPageMixin, GeometryMemoryMixin, QDialog):
     _save_fallback = "plot"
     #: Appended to the stem (e.g. "_sankey" so a Sankey does not overwrite a sunburst).
     _save_suffix = ""
+    #: File name Save CSV suggests (in PathOut); the user can change it.
+    _csv_name = "plot.csv"
+    #: (meta, header, rows) behind the plot on screen - set by the window each time
+    #: it rebuilds the figure, so Save CSV always matches the current station and
+    #: month window.
+    _csv_data = None
+
+    def _make_save_csv_button(self, style):
+        """The Save CSV button - same look as Save HTML; the caller places it."""
+        from PySide6.QtWidgets import QPushButton
+        btn = QPushButton("Save CSV")
+        btn.setStyleSheet(style)
+        btn.setToolTip("Save the values of this plot as a CSV file "
+                       "(for the selected station and period)")
+        btn.clicked.connect(self._save_csv)
+        self.save_csv_button = btn
+        return btn
+
+    def _save_csv(self):
+        """Save the table behind the current plot to a user-chosen .csv file."""
+        if not self._csv_data:
+            QMessageBox.information(self, "Save CSV", "Nothing to save yet.")
+            return
+        default = os.path.join(resolved_pathout_dir(self), self._csv_name)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save as CSV", default, "CSV files (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        meta, header, rows = self._csv_data
+        try:
+            write_table_csv(path, meta, header, rows)
+        except Exception as e:
+            QMessageBox.warning(self, "Save CSV", f"Could not save the file:\n{e}")
 
     def _save_html(self):
         """Save the currently rendered plot HTML to a user-chosen file."""

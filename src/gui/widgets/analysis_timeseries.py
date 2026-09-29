@@ -365,6 +365,8 @@ class TimeseriesWindow(PlotlyWindowBase):
         self._range_timer.setSingleShot(True)
         self._range_timer.setInterval(200)
         self._range_timer.timeout.connect(self._show_current)
+        # open Flow duration / regime windows follow the displayed period too
+        self._range_timer.timeout.connect(self._refresh_flow_windows)
 
         # Description (from metaNetcdf.xml, without the trailing "[Array]" marker)
         self.desc_label = QLabel(self.description)
@@ -447,9 +449,10 @@ class TimeseriesWindow(PlotlyWindowBase):
             "Overlay an observed series (a CWatM result .csv or a simple date,value .csv) "
             "and show KGE / NSE / PBIAS / RMSE against the current series")
         act = action_menu.addAction("Flow duration", self._show_flow_duration)
-        act.setToolTip("Displays a flow duration curve")
+        act.setToolTip("Flow duration of the displayed period for the given timeserie")
         act = action_menu.addAction("Flow regime", self._show_flow_regime)
-        act.setToolTip("Displays a flow regime curve")
+        act.setToolTip("Flow regime (diagram of one year) of the displayed period for "
+                       "the given timeserie")
 
         self._menus = [file_menu, action_menu]  # GC guard
         layout.setMenuBar(mbar)
@@ -470,13 +473,43 @@ class TimeseriesWindow(PlotlyWindowBase):
                 out.append(str(d))
         return out
 
+    def _flow_input(self, index):
+        """(name, ISO dates, values) of series ``index``, cut to the displayed period
+        (the range slider) - what Flow duration / Flow regime analyse."""
+        name, values = self.series[index]
+        dates = self._flow_duration_regime_dates()
+        lo, hi = self._window_bounds()
+        return name, dates[lo:hi + 1], list(values)[lo:hi + 1]
+
+    def _refresh_flow_windows(self):
+        """The displayed period changed (slider, debounced): an open Flow duration /
+        Flow regime window is recomputed for the new period - for the series it was
+        opened on."""
+        for attr, index_attr in (("_flowdur_window", "_flowdur_index"),
+                                 ("_flowregime_window", "_flowregime_index")):
+            win = getattr(self, attr, None)
+            index = getattr(self, index_attr, None)
+            if win is None or index is None or index >= len(self.series):
+                continue
+            try:
+                if not win.isVisible():
+                    continue
+                name, dates, values = self._flow_input(index)
+                if attr == "_flowdur_window":
+                    win.set_series([(name, dates, values)])
+                else:
+                    win.set_data(dates, values)
+            except RuntimeError:                  # window already destroyed
+                setattr(self, attr, None)
+
     def _show_flow_duration(self):
         """Action ▸ Flow duration: the currently displayed series (Backward/Forward
-        picks which one), as a flow duration curve - one gauge only, like the NetCDF
-        viewer's Flow duration when it was raised from a single point."""
+        picks which one) over the displayed period (range slider), as a flow duration
+        curve - one gauge only, like the NetCDF viewer's Flow duration when it was
+        raised from a single point. Follows later slider changes
+        (_refresh_flow_windows)."""
         from src.gui.widgets.analysis_flow_duration import FlowDurationWindow
-        name, values = self.series[self.index]
-        dates = self._flow_duration_regime_dates()
+        name, dates, values = self._flow_input(self.index)
         try:
             win = FlowDurationWindow(
                 [(name, dates, values)], self.varname, self.unit, self.long_name,
@@ -488,16 +521,17 @@ class TimeseriesWindow(PlotlyWindowBase):
                                 f"Could not build the flow duration curve:\n{e}")
             return
         self._flowdur_window = win  # keep a reference so the non-modal window isn't GC'd
+        self._flowdur_index = self.index
         win.show()
         win.raise_()
         win.activateWindow()
 
     def _show_flow_regime(self):
-        """Action ▸ Flow regime: the currently displayed series, as a seasonal
-        regime curve (daily or monthly, detected from the series)."""
+        """Action ▸ Flow regime: the currently displayed series over the displayed
+        period (range slider), as a seasonal regime curve (daily or monthly,
+        detected from the series). Follows later slider changes."""
         from src.gui.widgets.analysis_flow_regime import FlowRegimeWindow
-        name, values = self.series[self.index]
-        dates = self._flow_duration_regime_dates()
+        name, dates, values = self._flow_input(self.index)
         try:
             win = FlowRegimeWindow(
                 dates, values, name, self.varname, self.unit, self.long_name,
@@ -512,6 +546,7 @@ class TimeseriesWindow(PlotlyWindowBase):
                                 f"Could not build the flow regime curve:\n{e}")
             return
         self._flowregime_window = win  # keep a reference so the non-modal window isn't GC'd
+        self._flowregime_index = self.index
         win.show()
         win.raise_()
         win.activateWindow()

@@ -210,6 +210,13 @@ class FlowDurationWindow(PlotlyWindowBase):
 
     # _save_html is inherited from PlotlyWindowBase.
 
+    def set_series(self, series):
+        """New data for the open window - the Timeseries window's displayed period
+        changed (its range slider). Same shape as the constructor's ``series``;
+        the years/bands toggles are kept."""
+        self._series = series
+        self._show_figure()
+
     def _toggle_years(self):
         self._show_years = not self._show_years
         self.years_button.setText(

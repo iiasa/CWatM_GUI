@@ -32,6 +32,16 @@ supabase/
                                                sign-up stores show_on_leaderboard +
                                                show_location_on_map (Register ticks,
                                                pre-ticked in the GUI)
+    20260929130000_academy_progress.sql        profiles.academy_completed (CWatM
+                                               Academy progress, rpc-only);
+                                               academy_complete_level() = 5 points
+                                               per level once (source 'training');
+                                               academy_reset(); get_my_status
+                                               carries academy_completed
+    20260929140000_badge_ladder_v3.sql         12 badges at 5, 15, 30, 50, 100,
+                                               200, 400, 800, 1500, 3000, 5000,
+                                               10000 points (Ganges back, between
+                                               Rhine and Danube); re-evaluated
   functions/
     login-with-username/index.ts   username + password -> session
     delete-account/index.ts        delete the caller's account (password re-check)

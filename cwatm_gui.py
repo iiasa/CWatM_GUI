@@ -610,8 +610,8 @@ def _load_initial_settings(window):
 
 
 def _maybe_open_academy(window):
-    """Queue opening CWatM Academy once the UI is up, if Preferences ▸ Startup &
-    Model ▸ Enable CWatM Academy is on - queued last (after the tasks in
+    """Queue opening CWatM Academy once the UI is up, if Preferences ▸ CWatM
+    Academy ▸ Enable CWatM Academy is on - queued last (after the tasks in
     _schedule_startup_tasks and any initial settings file) so it ends up on top,
     the "starts right away with an introduction" entry point."""
     try:

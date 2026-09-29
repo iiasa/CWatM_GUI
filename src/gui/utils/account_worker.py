@@ -29,6 +29,7 @@ OPS = frozenset({
     "get_status", "update_profile", "award_run", "get_leaderboard", "get_badges",
     "export_data", "delete_account", "set_remember", "record_location",
     "get_run_locations", "get_user_locations",
+    "academy_complete_level", "academy_reset",
 })
 
 

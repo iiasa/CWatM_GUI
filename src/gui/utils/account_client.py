@@ -472,6 +472,18 @@ class AccountClient:
         return self._rpc("record_run_location",
                          {"p_lon": float(lon), "p_lat": float(lat)}) or {}
 
+    def academy_complete_level(self, level):
+        """A finished CWatM Academy level -> the profile's progress, and its points
+        (once per level). {status, level, points_awarded, total_points, new_badges,
+        academy_completed}."""
+        self._session()
+        return self._rpc("academy_complete_level", {"p_level": int(level)}) or {}
+
+    def academy_reset(self):
+        """Academy Start Over: clear the profile's progress (the points stay)."""
+        self._session()
+        return self._rpc("academy_reset") or {}
+
     def get_run_locations(self):
         """The anonymous run-location totals for Info ▸ World Map:
         [{lon, lat, runs}] (public - no login needed)."""

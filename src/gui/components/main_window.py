@@ -1258,7 +1258,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 log.debug("flopy pre-warm failed", exc_info=True)
 
     def _on_academy_toggled(self, checked):
-        """Preferences ▸ Startup & Model ▸ Enable CWatM Academy: persist the choice
+        """Preferences ▸ CWatM Academy ▸ Enable CWatM Academy: persist the choice
         and, when just turned on, open it right away (cwatm_gui.py handles opening
         it at the *next* startup - this is only for toggling it on mid-session)."""
         try:
