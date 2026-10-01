@@ -6,8 +6,9 @@ name: CodeQL
 #
 # - cwatm/ is NOT scanned here: it is the model, which the GUI must not change. It
 #   gets its own report-only scan (codeql-cwatm.yml, step 12).
-# - Query suite "default" = CodeQL's high-precision security queries. Switch to
-#   "security-extended" once the alert backlog is empty (the "don't drown" lever).
+# - CodeQL's default query suite (high-precision security queries). Add
+#   "queries: security-extended" to init once the alert backlog is empty (the
+#   "don't drown" lever).
 # - Weekly as well as on push/PR, so new CodeQL queries also look at old code.
 # - Results: repo ▸ Security ▸ Code scanning. A ruleset (step 11) blocks merging a
 #   pull request that ADDS a high-severity alert; nothing else is blocked.
@@ -42,7 +43,8 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
-          queries: default
+          # no "queries:" = CodeQL's default (high-precision) suite; "default" is NOT
+          # a valid value there (it is read as a pack name and the run fails)
           config: |
             paths-ignore:
               - cwatm
