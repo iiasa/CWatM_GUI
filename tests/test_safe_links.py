@@ -71,3 +71,38 @@ def test_the_transcript_routes_links_through_open_link(qapp):
     src = open(N.__file__, encoding="utf-8").read()
     assert "make_links_safe(self.transcript)" in src
     assert "setOpenExternalLinks(True)" not in src
+
+
+class _Settings:
+    def __init__(self):
+        self.d = {}
+
+    def value(self, key, default=None, type=None):
+        return self.d.get(key, default)
+
+    def setValue(self, key, value):
+        self.d[key] = value
+
+
+def test_cookie_login_asks_once_and_explains(monkeypatch):
+    # security.md #5: reading browser cookies + storing a Google session needs a
+    # clear, informed yes first - asked once, "No" is the default and stops it
+    from types import SimpleNamespace
+    from PySide6.QtWidgets import QMessageBox
+    from src.gui.widgets.notebooklm_window import NotebookLMWindow as N
+    asked = []
+    answer = [QMessageBox.No]
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(
+        lambda parent, title, text, buttons, default:
+        asked.append((text, default)) or answer[0]))
+    host = SimpleNamespace(_settings=_Settings(),
+                           _COOKIE_CONSENT_KEY=N._COOKIE_CONSENT_KEY,
+                           cookie_login_text=N.cookie_login_text)
+    assert N._cookie_login_agreed(host) is False             # declined: no login
+    text, default = asked[-1]
+    assert "READS the Google login cookies" in text and "storage_state" in text
+    assert default == QMessageBox.No
+    answer[0] = QMessageBox.Yes
+    assert N._cookie_login_agreed(host) is True
+    asked.clear()
+    assert N._cookie_login_agreed(host) is True and asked == []   # asked only once

@@ -688,6 +688,14 @@ Trying Chrome…       ✓  Logged in via Chrome.
   only, with `playwright` installed) the interactive **Google login window**.
 - After a successful login the session is **stored and reused automatically** on later
   runs — you normally sign in only once, until Google expires it.
+- **What the login reads and stores.** Before the first login CWatM AI asks once, and
+  explains it: it **reads your Google login cookies** from your browsers, and it
+  **stores the Google session in a file on this computer** —
+  `%USERPROFILE%\.notebooklm\profiles\…\storage_state.json`. Anyone, or any program,
+  with access to your Windows account could use that file to act as your Google
+  account, so treat it like a password. **Delete the file (or the `.notebooklm`
+  folder) to remove the session.** It is used only to ask NotebookLM and is never sent
+  to the CWatM account server.
 
 ### 14.3 Using the chat
 

@@ -104,6 +104,13 @@ def test_purchases_and_points_are_written_only_by_definer_functions():
                                  rf"public\.{table}\b", t), (name, table)
 
 
+def test_the_public_run_map_is_coarse():
+    # stored at 0.001 degree, but everyone (anon too) sees places at 0.1 degree only
+    b = body("get_run_locations")
+    assert "round(r.lon, 1)" in b and "round(r.lat, 1)" in b
+    assert "run_map_min_runs" in b
+
+
 def test_a_run_is_identified_by_its_fingerprint_only():
     b = body("_award_run_core")
     assert "values (v_user, 'run', v_hash, v_points" in b

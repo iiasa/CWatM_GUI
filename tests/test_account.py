@@ -316,3 +316,43 @@ class TestShopClient:
     def test_worker_knows_the_shop_ops(self):
         from src.gui.utils.account_worker import OPS
         assert {"buy", "get_shop_items"} <= OPS
+
+class TestRegisterDoesNotRevealAccounts:
+    """security.md #7: a sign-up for an address that already has an account gets
+    the SAME answer as a new one - the form must not reveal who has an account."""
+
+    def _client(self, monkeypatch, sign_up):
+        c = _bare_client(auth=SimpleNamespace(sign_up=sign_up))
+        monkeypatch.setattr(c, "username_available", lambda name: True)
+        return c
+
+    def _register(self, c):
+        return c.register("someone@example.org", "secret123", "Blabla",
+                          privacy_version="v1")
+
+    def test_new_address(self, monkeypatch):
+        c = self._client(monkeypatch, lambda creds: SimpleNamespace(
+            user=SimpleNamespace(identities=[object()]), session=None))
+        assert self._register(c) == {"status": "confirm_email",
+                                     "email": "someone@example.org"}
+
+    def test_existing_address_looks_the_same(self, monkeypatch):
+        # email confirmation on: Supabase returns a user without identities
+        c = self._client(monkeypatch, lambda creds: SimpleNamespace(
+            user=SimpleNamespace(identities=[]), session=None))
+        assert self._register(c) == {"status": "confirm_email",
+                                     "email": "someone@example.org"}
+
+    def test_existing_address_as_an_error_looks_the_same(self, monkeypatch):
+        def sign_up(creds):
+            raise AC.AccountError("already_registered")
+        c = self._client(monkeypatch, sign_up)
+        assert self._register(c)["status"] == "confirm_email"
+
+    def test_other_errors_still_surface(self, monkeypatch):
+        def sign_up(creds):
+            raise AC.AccountError("weak_password")
+        c = self._client(monkeypatch, sign_up)
+        with pytest.raises(AC.AccountError) as info:
+            self._register(c)
+        assert info.value.code == "weak_password"

@@ -80,7 +80,8 @@ account window or in Preferences ▸ Account.
 - Each location is sent on its own, never together with the points of the run.
 - **Shown to everyone**: the totals per place - the number of runs, no users and no
   dates - are shown to every CWatM GUI user on a world map (**Info ▸ World Map**), one
-  circle per place, larger for more runs.
+  circle per place, larger for more runs. The map shows places only **rounded to 0.1°
+  (about 10 km)**, coarser than they are stored.
 - To prevent misuse, the server counts how many locations each account reported per
   day (a number, never a place). Counters older than yesterday are removed whenever a
   location is reported, and all of an account's counters go with the account.

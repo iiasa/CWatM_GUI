@@ -534,9 +534,13 @@ class LoginDialog(_AccountDialogBase):
 
     def _show_confirm_step(self, email, note=None):
         self._confirm_email = email
+        # Neutral on purpose (security.md #7): the same text whether the address is
+        # new or already has an account, so the form does not reveal which.
         self.reg_code_note.setText(note or (
-            f"We sent a code to {email}. Enter it here to confirm your email address "
-            "(check the spam folder too)."))
+            f"If {email} is not registered yet, we sent a code to it - enter it here "
+            "to confirm your email address (check the spam folder too). If you already "
+            "have a CWatM account with this address, no code comes: log in, or use "
+            "'Forgot password'."))
         self.reg_code.clear()
         self.tabs.setCurrentIndex(1)
         self.reg_stack.setCurrentIndex(1)

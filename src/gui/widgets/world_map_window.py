@@ -3,8 +3,8 @@
 Two views, one at a time, switched by the two buttons below the map:
 
 - **CWatM runs** (blue): the anonymous run-location counts of the CWatM account
-  (``get_run_locations``: lon, lat, number of runs that earned a point - no users,
-  no dates);
+  (``get_run_locations``: lon, lat rounded to 0.1° (~10 km), number of runs that
+  earned a point - no users, no dates);
 - **User location** (orange): the own locations of the users who ticked *Show my
   location on the world map* (``get_user_locations``: no names, rounded to 0.5°,
   counted per place).
@@ -47,7 +47,7 @@ MODES = {
     "runs": {
         "title": "Where CWatM has been run",
         "info": ("{places} place(s), {count} run(s). Each blue circle is a place where "
-                 "a CWatM run earned a badge point (its first gauge, ~100 m) - the "
+                 "a CWatM run earned a badge point (its first gauge, ~10 km) - the "
                  "bigger the circle, the more runs. Anonymous: no users, no dates."),
     },
     "users": {

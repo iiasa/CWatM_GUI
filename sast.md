@@ -276,8 +276,11 @@ add Bandit, 8 dependencies, 9–12 CodeQL; 13–15 keep it running.
         risk for the GUI (it uses none of those features directly).
       - **Dependabot rates them** anyio up to **critical**, urllib3 up to **high** (each
         listed twice: the same pins are in two requirements files).
-      - **To do:** bump both pins (urllib3 2.8.0, anyio 4.14.2) in all requirements
-        files, then release – soon rather than "next time", given the critical rating.
+      - **Done 2026-10-01:** pins bumped to urllib3 2.8.0 / anyio 4.14.2 in
+        `requirements.txt` and `requirements_linux.txt` (`requirements_build.txt`
+        includes the first) and installed in `venv`. `pip-audit`: no known
+        vulnerabilities left. The build venv in C:\work needs `-ForceVenv` once to
+        pick them up.
       - **Both alarms work on GitHub:** the first manual run of the audit workflow was
         red with exactly these 6 findings, as intended.
 - [ ] 9 CodeQL workflow

@@ -395,20 +395,27 @@ class AccountClient:
             value = V.clean_optional(field, value)
             if value:
                 data[field] = value
+        # The answer must not tell whether the address already has an account
+        # (security.md #7): new or existing, the user gets the same next step - "if
+        # it is new, a code was sent; if you already have an account, log in". An
+        # existing address shows up either as an error code or (email confirmation
+        # on) as a user without identities; both lead to the same answer.
+        neutral = {"status": "confirm_email", "email": email}
         try:
             resp = self._client.auth.sign_up(
                 {"email": email, "password": password, "options": {"data": data}})
         except Exception as e:
-            raise translate_error(e) from e
+            err = translate_error(e)
+            if err.code == "already_registered":
+                return neutral
+            raise err from e
 
         user = resp.user
-        # With email confirmation on, Supabase answers a sign-up for an address that
-        # already has an account with a user without identities instead of an error.
         if user is not None and user.identities is not None and not user.identities:
-            raise AccountError("already_registered")
+            return neutral
         if resp.session is not None:          # confirmation switched off on the server
             return dict(self._logged_in_status(), status="logged_in")
-        return {"status": "confirm_email", "email": email}
+        return neutral
 
     def confirm_signup(self, email, code):
         """Confirm the email with the 6-digit code; logs the user in."""

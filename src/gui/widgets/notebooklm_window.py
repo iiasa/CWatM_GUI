@@ -863,7 +863,48 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if resp != QMessageBox.Yes:
                 return
+        if not self._cookie_login_agreed():
+            return
         self._start_auto_login()
+
+    # ------------------------------------------------- what a login stores (once)
+    _COOKIE_CONSENT_KEY = "notebooklm/cookie_login_agreed"
+
+    @staticmethod
+    def session_file_text():
+        """Where the Google session is kept, for the user (security.md #5)."""
+        try:
+            from notebooklm.paths import get_storage_path
+            return str(get_storage_path())
+        except Exception:
+            return r"%USERPROFILE%\.notebooklm\profiles\…\storage_state.json"
+
+    @classmethod
+    def cookie_login_text(cls):
+        return ("CWatM AI logs in to NotebookLM with the Google session of a browser "
+                "you are signed in to:\n\n"
+                "• It READS the Google login cookies from your browsers (Firefox, "
+                "Chrome, Edge, Opera - first one that works).\n"
+                "• It STORES that Google session in a file on this computer:\n"
+                f"   {cls.session_file_text()}\n"
+                "  Anyone - or any program - with access to your Windows account could "
+                "use that file to act as your Google account. Delete the file (or the "
+                ".notebooklm folder) to remove it.\n"
+                "• The session is used only to ask NotebookLM; it is never sent to the "
+                "CWatM account server or anywhere else.")
+
+    def _cookie_login_agreed(self):
+        """Ask once, before the first cookie read; the answer is remembered."""
+        if self._settings.value(self._COOKIE_CONSENT_KEY, False, type=bool):
+            return True
+        resp = QMessageBox.question(
+            self, "Login to NotebookLM",
+            self.cookie_login_text() + "\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return False
+        self._settings.setValue(self._COOKIE_CONSENT_KEY, True)
+        return True
 
     # ------------------------------------------------------ auto-detect login
     def _start_auto_login(self):
@@ -993,7 +1034,10 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
                  "are already signed in to. Firefox works normally; on Windows the "
                  "Chromium browsers (Chrome / Edge / Opera) encrypt their cookie "
                  "store (app-bound encryption), so those can only be read when "
-                 "CWatM is run as Administrator.")
+                 "CWatM is run as Administrator.\n"
+                 "• Either way the Google session is stored on this computer in\n"
+                 f"   {self.session_file_text()}\n"
+                 "  - delete it to remove it. It is never sent anywhere but NotebookLM.")
         if not has_google:
             text += ("\n\nEasiest: sign in to Google in Firefox, then 'From "
                      "Firefox'. For Chrome / Edge / Opera, run CWatM as "
