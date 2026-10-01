@@ -96,7 +96,8 @@ button in the bar's **right corner** that opens the Preferences window.
 | RUN CWATM | Create batch | — | _(last item, separator above, **Expert only** — `_expert_only_actions`, hidden **and** disabled for Beginner/Advanced like Compare Tab)_ Tooltip "Creates a Windows batch file to run CWatM without the GUI". Writes a standalone `.bat` (`src/gui/utils/batch_file_creator.py`) that runs the **current settings file** with `-l` and a trailing `pause`, using the identical frozen/source launch mechanism a normal Run CWATM uses (`cwatm_process_worker.model_command` — `CWatM_model.exe` when frozen, the venv python running `cwatm_gui.py --run-cwatm` from source), `cd`'d into the working directory first so relative paths resolve the same way. Warns like Check Data if the editor has unsaved changes (the batch runs the file **on disk**); asks for the **destination filename** (`QFileDialog.getSaveFileName`, default: the working directory + the suggested `Run_<settings>.bat` name) and **opens the containing folder** afterwards |
 | Configure | Preferences… | Ctrl+, | **The only item in the menu.** Opens the **Preferences window** — every GUI setting, on five categorised pages, with OK / Cancel / Apply (see [Preferences window](#preferences-window-configure--preferences) below) |
 | _(menu bar)_ | ⋮ | — | A `QToolButton` in the menu bar's **right corner** (`menu_bar.setCornerWidget(…, Qt.TopRightCorner)`, `self._preferences_button`) — a second way into the same Preferences window. Styled from theme tokens inside `_menu_bar_stylesheet` (`QMenuBar QToolButton`), so a Mode switch re-themes it with the bar. The corner widget is a small container (`self._menu_corner`) holding the **account button** and ⋮ |
-| _(menu bar)_ | Account button | — | Left of ⋮ (`#accountButton`, `account_ui.py`): **"Log in"** / **"<user> · <n> pt"** (tooltip: badges + next badge) / "Logging in…" / "Account (offline)". Click → the **login dialog** (Log in · Register · Forgot password, with the emailed-code step; Register's *record run locations* (required), *show me on the leaderboard* and *show my location on the world map* are all **pre-ticked**, stored at sign-up by the `handle_new_user` trigger) or, logged in, the **account window** (points, badge progress, profile edit, leaderboard opt-in, Log out, Export my data, Delete account) — `account_dialogs.py`. Hidden when no Supabase key is configured |
+| _(menu bar)_ | Shop button | — | Left of the account button (`#shopButton`, `AccountMixin._create_shop_button`). **Visible only while logged in and holding the Breg badge** (`shop_visible`, re-checked on every status change). Opens the **Shop** (`shop_window.py`): spend the account's points on the **Advanced** (20) / **Expert** (40) skill levels and on **animals** for the live discharge sparkline — see *The Shop* in the Gamification section |
+| _(menu bar)_ | Account button | — | Right of the Shop button, left of ⋮ (`#accountButton`, `account_ui.py`): **"Log in"** / **"<user> · <n> pt"** (n = the **actual** points, i.e. after Shop purchases; tooltip: points, earned in total, badges + next badge) / "Logging in…" / "Account (offline)". Click → the **login dialog** (Log in · Register · Forgot password, with the emailed-code step; Register's *record run locations*, *show me on the leaderboard* and *show my location on the world map* are all **optional and unticked** — none is a condition of the account (`security.md` finding 4) — stored at sign-up by the `handle_new_user` trigger) or, logged in, the **account window** (points, badge progress, profile edit, leaderboard opt-in, Log out, Export my data, Delete account) — `account_dialogs.py`. Hidden when no Supabase key is configured |
 | Analyse | Open PathOut Folder | — | Open the resolved PathOut directory in the file explorer (first item, above a separator) |
 | Analyse | Output Explorer | — | Non-modal tree of the resolved PathOut; **double-click** a result opens the matching viewer — `*.nc`→NetCDF map, `*WaterCycle*.csv`→Watercycle sunburst, other `*.csv`→Timeseries, `*.html`/other→OS default — see `CWatM_GUI_Internals.md` |
 | Analyse | Timeseries | — | Open a CWatM result `.csv` and plot it (Plotly line chart); **File** (Save as csv, Save HTML), **Action** (Compare, Load observed, Flow duration, Flow regime), Backward/Forward stayed buttons — see `CWatM_GUI_Internals.md` |
@@ -110,8 +111,8 @@ button in the bar's **right corner** that opens the Preferences window.
 | Help | CWatM account privacy | — | Render `documentation/CWatM_Account_Privacy.md` (the CWatM account's privacy notice - **draft**, awaiting IIASA review) in the same viewer; also linked from the login dialog's Register tab and the account window (`show_account_privacy`) |
 | Help | CWatM Homepage | — | Open the CWatM website in the desktop browser |
 | Info | About CWatM | — | About dialog |
-| Info | World Map | — | Tooltip "Shows a world map with points where users applied CWatM". **Visible to everyone** (no login; hidden only without a Supabase key). `world_map_window.py`: a zoomable folium EPSG:4326 map, basemap = Preferences ▸ Display ▸ Default openstreet map (WMS through the shared `osmtile://` handler, page `osmtile://worldmap/`), limited to **80°N–60°S** (beyond covered grey), first map area **1024×427 px** = −180…180° × 90°N…60°S at Leaflet zoom 1, then freely resizable; **maximise** button, **no Close/Refresh**. Two exclusive buttons below switch the layer + heading + text (`window.setMode`): **CWatM runs** = blue circles of the anonymous run-location totals (rpc `get_run_locations`), **User location** = orange circles of users' own locations, **only users who ticked** *Show my location on the world map* (`profiles.show_location_on_map`, default off), no names, 0.01° (rpc `get_user_locations`). Radius px = `4 + 3·√count` (area ∝ count), max 40; biggest drawn first; hover = count + lon/lat |
-| Info | Leaderboard | — | **Only visible while logged in** to the CWatM account (`account_ui._update_account_button` toggles `self._leaderboard_action`). Opens `LeaderboardWindow` (`account_dialogs.py`): rank, user, country, **highest badge**, points of the users who opted in (`get_leaderboard`), the viewer's own row bold + highlighted, or a hint how to take part; Refresh |
+| Info | World Map | — | Tooltip "Shows a world map with points where users applied CWatM". **Visible to everyone** (no login; hidden only without a Supabase key). `world_map_window.py`: a zoomable folium EPSG:4326 map, basemap = Preferences ▸ Display ▸ Default openstreet map (WMS through the shared `osmtile://` handler, page `osmtile://worldmap/`), limited to **80°N–60°S** (beyond covered grey), first map area **1024×427 px** = −180…180° × 90°N…60°S at Leaflet zoom 1, then freely resizable; **maximise** button, **no Close/Refresh**. Two exclusive buttons below switch the layer + heading + text (`window.setMode`): **CWatM runs** = blue circles of the anonymous run-location totals (rpc `get_run_locations`), **User location** = orange circles of users' own locations, **only users who ticked** *Show my location on the world map* (`profiles.show_location_on_map`, default off), no names, 0.5° (rpc `get_user_locations`). Radius px = `4 + 3·√count` (area ∝ count), max 40; biggest drawn first; hover = count + lon/lat |
+| Info | Leaderboard | — | **Only visible while logged in** to the CWatM account (`account_ui._update_account_button` toggles `self._leaderboard_action`). Opens `LeaderboardWindow` (`account_dialogs.py`): rank, user, country, **highest badge**, points (the **actual** points, after Shop purchases — the server ranks by them) of the users who opted in (`get_leaderboard`), the viewer's own row bold + highlighted, or a hint how to take part; Refresh |
 
 - **Save locked while CWatM runs**: during a run all functionality stays available
   (so you can analyse, chat with CWatM AI, etc.) — only **Save** is greyed out (the
@@ -158,8 +159,8 @@ second implementation of it**. Adding a setting = one control + one `_read_state
 | Display | Show decimals | How many decimals numeric values show throughout all displays (default 3, range 0–12), persisted `display/decimals` |
 | Display | Initial map transparency | The **start** value (0–100 %) of the transparency slider the **NetCDF** and **Show Basin** viewers open with, default 100, persisted `display/transparency` |
 | Display | Default openstreet map | Default basemap for **Show Basin** — its EPSG:4326 WMS layers (OSM / Topographic / Terrain / Dark), persisted `basin/default_basemap`. The list is `preferences_window.BASEMAPS`, kept in sync with `basin_viewer2._B2_PROVIDERS`; an old XYZ key migrates to `OSM-WMS` (`_saved_basemap`) |
-| Display | Select animal | The cameo shown now and then on the live discharge sparkline: **Fish · Otter · Beaver · Sailboat**, persisted `display/animal` (default Fish); applied live via `discharge_sparkline.set_animal` (edit the `ANIMALS` registry to change the set) |
-| Editor & Dates | Skill of user | **Beginner / Advanced / Expert** — how much of the settings file **and of the menus** is shown (hides the sections, and for Beginner the advanced menu entries, the level may not see). In sync with the colour-coded level button right of the editor's `Font-` button; persisted `editor/level`, default Expert (see the Skill of User behavioral note). **Greyed out while logged out** — Advanced/Expert need a CWatM account login |
+| Display | Select animal | The cameo shown now and then on the live discharge sparkline: **Fish · Otter · Beaver · Sailboat · Octopus (for Carla)** — **only the animals bought in the Shop** are listed (`owned_animals`; all of them without a Supabase key); none bought → the box reads "None – buy one in the Shop" and the sparkline shows only the plain dot (`set_animal(None)`). Persisted `display/animal`; what is shown is `main_window.effective_animal()` — the chosen one if owned, else the first owned one, else none — re-applied on every status change (`_refresh_animal`), so the stored choice comes back once bought. Edit the `ANIMALS` registry **and** `account_shop.ANIMAL_CODES` (+ the server's `shop_items`) to change the set |
+| Editor & Dates | Skill of user | **Beginner / Advanced / Expert** — how much of the settings file **and of the menus** is shown (hides the sections, and for Beginner the advanced menu entries, the level may not see). In sync with the colour-coded level button right of the editor's `Font-` button; persisted `editor/level`, default Expert (see the Skill of User behavioral note). **Greyed out** unless a level beyond Beginner is owned (bought in the Shop) or the Cheat tick (Account page) is ticked |
 | Editor & Dates | Web-style date picker | Persisted `display/date_picker_web`, default ON: Start/Spin/End dates picked via a 📅 button + frameless shadowed calendar popup; unticked = classic `QDateEdit` drop-down calendar (see the Date calendar popups behavioral note) |
 | Editor & Dates | Date timeline | Persisted `display/date_timeline`, default ON: show the three-handle **Start/Spin/End timeline** below the date fields — drag a handle (or click the track to jump the nearest one) to set the date; the light band behind the track is the meteo-forcing coverage |
 | Editor & Dates | Use Tabs | Persisted `editor/use_tabs`, default ON: show the **settings-file tab bar**, so several settings files can be open at once. Only ever shown in the **Expert** level (`tabs_enabled` = the tick **and** Expert); unticking hides just the chrome, never the open tabs' content (`_on_use_tabs_toggled` → `update_tabs_visible`) — see the Settings-file tabs note |
@@ -169,7 +170,8 @@ second implementation of it**. Adding a setting = one control + one `_read_state
 | Run History | Run history retention | How many days of runs to keep in the Journal of Runs, `history/retention_days`, default 60; **0 shows as "keep forever"** (`setSpecialValueText`) |
 | Account | Stay logged in on this computer | Persisted `account/remember`, default ON: the CWatM account login is kept (refresh token in the OS keyring) and restored in the background at start. Unticked = the stored login is dropped at once (`_set_account_remember`, same setting as the login dialog's tick). The page also shows the login state |
 | Account | Count my full CWatM runs (earn points) | Persisted `account/count_runs`, default ON: while logged in, every successful main run / Windowed Run / Batch scenario is reported to the account (`AccountMixin._on_run_recorded`) — 1 point, badges as points add up; the result is noted in the output box + status bar |
-| CWatM Academy | Enable CWatM Academy | Persisted `academy/enabled`, default OFF: ticking opens **CWatM Academy** (the guided ten-level introduction, `academy_window.py`, also reached by the **CWatM Academy** menu-bar button left of CWatM AI) at once and at every start (`cwatm_gui._maybe_open_academy`) until turned off (`_on_academy_toggled`). The Academy sets the level to **Beginner** (the user can switch back afterwards). **From Level 4 on it needs a login** (`academy_window.LOGIN_LEVEL`, `_needs_login` = the same `levels_unlocked()` check as Advanced/Expert): selecting such a level shows a Yes/No window offering the login (`_explain_login_needed`) and its button reads *Log in to continue*; a login-state refresh re-shows the level quietly (`_refreshing`). **Level 1's Field Test** (`academy_field_test.BasinFieldTestWindow`) asks for the outlet of a random basin of the 50 largest in `assets/academy_biggest_basins.csv` (*Another basin* redraws), graded against the basin's **4 biggest upstream cells** computed from the 30' ups grid (`target_cells`, best-first upstream from the listed outlet), framed off-centre (`view_bounds`) |
+| Account | Cheat - and get the Expert level without buying it | **Session only — never persisted** (no QSettings key, `main_window._cheat_levels` starts False at every start): ticked, every skill level may be used without buying it (`level_allowed`); animals are not affected. **Works logged out** — the one control on this page that stays enabled then. Applied **before** a level chosen in the same Apply (`_apply` reorders), and its toggle enables the Skill-of-user combo live. Exists because the gamification must never stop a serious user (`shop.md`, guiding principle) |
+| CWatM Academy | Enable CWatM Academy | Persisted `academy/enabled`, default OFF: ticking opens **CWatM Academy** (the guided ten-level introduction, `academy_window.py`, also reached by the **CWatM Academy** menu-bar button left of CWatM AI) at once and at every start (`cwatm_gui._maybe_open_academy`) until turned off (`_on_academy_toggled`). The Academy sets the level to **Beginner** (the user can switch back afterwards). **From Level 4 on it needs a login** (`academy_window.LOGIN_LEVEL`, `_needs_login` = `levels_unlocked()`, the plain login check - not the bought levels): selecting such a level shows a Yes/No window offering the login (`_explain_login_needed`) and its button reads *Log in to continue*; a login-state refresh re-shows the level quietly (`_refreshing`). **Level 1's Field Test** (`academy_field_test.BasinFieldTestWindow`) asks for the outlet of a random basin of all 100 largest in `assets/academy_biggest_basins.csv` (*Another basin* redraws), graded against the basin's **4 biggest upstream cells** computed from the 30' ups grid (`target_cells`, best-first upstream from the listed outlet), framed off-centre (`view_bounds`) |
 | CWatM Academy | Link CWatM Academy to your login | Persisted `academy/link_login`, default ON (`_set_academy_link`). While ticked **and logged in**, the Academy's progress is the list in the user's profile (`profiles.academy_completed`), so it continues on any computer, and every finished level earns **5 points** (`academy_complete_level` rpc, `point_events` source `training`, ref `academy:<n>` — a level pays once, ever; Start Over → `academy_reset` clears the progress, not the points). `academy_progress` asks its registered remote (`AccountMixin.academy_remote_*`) and falls back to the local `academy/completed` list when logged out or unlinked — the two are **never merged**, so local progress cannot land in someone else's account. An open Academy window re-reads the progress on every login-state change (`refresh_progress`) |
 
 **Startup**: `menu_builder._init_configure_state()` (called while the menu bar is built)
@@ -254,16 +256,22 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   `set_experience_level`, so the two cannot drift. (`_sync_level_menu` /
   `_level_menu_actions` are the leftover menu-radio sync — now a guarded no-op,
   kept for a future menu.) The button's background is the level colour at **50%
-  opacity** (`_LEVEL_COLORS`, `_level_button_style`). **Advanced / Expert need a
-  CWatM account login**: `_preferred_level` is the persisted choice,
-  `_experience_level` the level **in effect** — `Beginner` while
-  `AccountMixin.levels_unlocked()` is false (state `logged_out`; `restoring`/`offline`
-  = a stored login and count as logged in; no Supabase key configured = everything
-  open). `_refresh_experience_level` re-derives it on every login-state change (called
-  from `_update_account_button`), so logging out drops to Beginner and logging in
-  restores the chosen level; logged out, the level button / a non-Beginner
-  `set_experience_level` explains the lock and offers the login
-  (`_explain_level_lock`) and the Preferences combo is disabled. Beginner light **green**,
+  opacity** (`_LEVEL_COLORS`, `_level_button_style`). **Advanced / Expert are bought
+  in the Shop** (see *The Shop* below): `_preferred_level` is the persisted choice,
+  `_experience_level` the level **in effect** = `_effective_level()` — the preferred
+  level if `AccountMixin.level_allowed(level)`, else the highest allowed level below it
+  (preferred Expert, only Advanced owned → Advanced). `level_allowed` = Beginner always;
+  Advanced/Expert when **owned** (`owned_items()`: logged in → the status' purchases;
+  `restoring`/`offline` → the cached copy; logged out → nothing), when the session's
+  **Cheat** tick is on, or without a Supabase key (everything open).
+  `_refresh_experience_level` re-derives it on every login-state, status and Cheat
+  change (called from `_update_account_button`). A level that is not owned — level
+  button or `set_experience_level` — is explained by `_explain_level_lock(level)`,
+  which always names **both** ways out (the Shop and the Cheat tick; logged out it
+  also offers the login); the level button then cycles on to Beginner. The
+  Preferences combo is enabled when a level beyond Beginner is allowed **or** the
+  Cheat tick is ticked (`_sync_level_box`, live). `levels_unlocked()` still means "a
+  login is in place" — only the CWatM Academy's Level-4 rule uses it. Beginner light **green**,
   Advanced light **blue**, Expert **gray** (kept out of `_nav_buttons` so a
   theme switch does not overwrite it; re-applied in `_retheme`). Each level
   decides which `[SECTION]`s are **shown**; every other section is **fully
@@ -704,7 +712,9 @@ each: `line N: key = value` (+ `-> resolved` inline when it differs), in dark re
     per-crop lists from `evaporation.py` (crop index, no upper bound). Flags a
     missing/extra/non-numeric/out-of-range index; an index on a variable *not* in
     these sets is never flagged (other modules allocate 2-D vars the GUI doesn't
-    track);
+    track). **Independently, any entry that is not a plain name with numeric indices**
+    (`discharge[<expression>]`, a `$(…)` placeholder, …) is flagged as code CWatM would
+    execute — `run_guard.output_problems`, the same rule that **blocks a run**;
   - the **run window inside the meteo-forcing time coverage** (`_forcing_time_range`) —
     resolves the first readable forcing entry (`PrecipitationMaps` → `TavgMaps` →
     `E0Maps` → `ETMaps`), globs its NetCDFs and reads the **first & last** (name-sorted)
@@ -761,7 +771,8 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/utils/badge_images.py`**: `badge_pixmap` — the round river-badge medals from `assets/badges/<code>.png` (medal found and cropped automatically)
 - **`src/gui/components/account_ui.py`**: `AccountMixin` — the CWatM account in the main window: the menu-bar account button, the one `AccountWorker`, the login state and the background re-login at start (see *Gamification backend*)
 - **`src/gui/widgets/account_dialogs.py`**: `LoginDialog` (Log in / Register / Forgot password + the emailed-code steps) and `AccountWindow` (points, badges, profile, Log out / Export my data / Delete account); both talk only through `mw.account_worker()`
-- **`src/gui/utils/account_*.py`**: the account client layer — `account_config` (URL + publishable key), `account_validation` (pure input rules), `account_store` (refresh token in the OS keyring), `account_client` (the only `supabase` importer), `account_worker` (`QThread`), `account_runs` (which runs count, the sent metadata, the per-user offline queue `account_pending.json`)
+- **`src/gui/utils/account_*.py`**: the account client layer — `account_config` (URL + publishable key), `account_validation` (pure input rules), `account_store` (refresh token in the OS keyring), `account_client` (the only `supabase` importer), `account_worker` (`QThread`), `account_runs` (which runs count, the sent metadata, the per-user offline queue `account_pending.json`), `account_shop` (the Shop's pure rules: earned / balance / owned, `item_state`, animals for sale, the animal-name ↔ item-code map)
+- **`src/gui/widgets/shop_window.py`**: `ShopWindow` / `open_shop` — the Shop (levels + sparkline animals), built on `account_dialogs._AccountDialogBase`; every purchase confirmed, decided by the server (`buy` → `shop_buy`)
 - **`src/gui/components/main_window_styles.py`**: `MainWindowStyleMixin` — the main window's stylesheet builders (left/right panel, field, output box, editor + font css, run button, modern/save-dirty buttons, level button, filename + gauges state colours). Pure presentation, every colour a `theme.c(token)`; owns `_LEVEL_COLORS`
 - **`src/gui/components/config_parser.py`**: Configuration file parsing and formatting logic
 - **`src/gui/managers/date_manager.py`**: Date input validation and management
@@ -805,7 +816,9 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/utils/i18n.py`**: GUI language (Preferences ▸ Display ▸ Language) — the pure `Catalog` (exact + `{…}` template lookup, reverse lookup) over `translations/ui_strings_languages.csv`, and the app-wide event filter that applies it (`install` at startup, `set_language` live)
 - **`src/gui/utils/theme.py`**: Colour themes (Preferences ▸ Display ▸ Mode: Normal / Dark / Mikhail) — token sets, app palette/QSS, persistence
 - **`src/gui/utils/assets.py`**: `asset_path()` — absolute asset resolution (source, `_internal/`, exe folder)
-- **`src/gui/utils/open_path.py`**: `open_path()` — show a file/folder in the desktop's handler, portably: `os.startfile` on Windows (unchanged behaviour), else `QDesktopServices`, else `xdg-open`/`open`/`gio`. **Use it instead of `os.startfile`**, which does not exist off Windows — it is what the three "open this" actions (Analyse ▸ Open PathOut Folder, Journal of Runs PathOut, Output Explorer's `.html`/`.txt` fallback) call; returns False instead of raising, so each caller shows its own message
+- **`src/gui/utils/run_guard.py`**: the guard against code hidden in model inputs (`security.md` #1). CWatM (read-only for us) runs `eval("self.var." + entry)` on every `OUT_*` entry after checking only the part before `[`, and `exec('longitude.<name>="<value>"')` on the coordinate-variable attributes of the first `PrecipitationMaps` file. **`output_problems(content)`** mirrors CWatM's parsing (configparser, case-sensitive keys, `OUT_` keys outside `[OPTIONS]`, `*_Dir` excluded, comma-split + strip, continuation lines) and accepts only `name` + numeric `[n]` indices (`None`/empty allowed) — anything else, including a `$(…)` placeholder, **blocks the run**. **`netcdf_problems(path)`** checks exactly the exec'd variables (`EXEC_VARIABLES`: x/y/X/Y/lon/lat/laea/lambert_azimuthal_equal_area) for non-identifier attribute names or values with `"`, `\`, line breaks → a **warning** (default No). **`confirm_safe_to_run(parent, content, base_dir, title, what)`** is the one Qt entry, called by `run_controller.run_cwatm` / `create_run_batch_file` (via `_run_guard_ok`, on the file on **disk**), `HiddenRunWindow._preflight` and `BatchRunnerWindow._preflight` (per scenario, so an override is checked too; `check()` there). Check settingsfile (F4) reports the same entries (`settings_check._semantic_settings_problems`). Never weaken the whitelist to "fix" a blocked file — make the entry a plain name instead
+- **`src/gui/utils/web_assets.py`**: what the map windows may load and run (`security.md` #2). **`PINNED`**: the remote files folium emits (Leaflet 1.9.3 js/css + 3 PNGs) → a file shipped in **`assets/web/`** + its SHA-256 (= Leaflet's published integrity). `basin_viewer2._inline_remote_assets` inlines **only** those (`pinned_bytes`); an unpinned `<script>`/stylesheet is **removed, never fetched** — no code from the network ever runs. A folium upgrade with new URLs fails `tests/test_web_assets.py` (add the files + hashes here). Also `user_cache_dir(name)` (per-user tile/WMS cache, not the shared temp dir) and **`sandbox_must_be_off()`**, used by `cwatm_gui._configure_qtwebengine`: Chromium's sandbox stays **on** unless QtWebEngineProcess runs from a network path (UNC / mapped drive — e.g. a source run from P:) or on a non-Windows system; `CWATM_GUI_WEBENGINE_SANDBOX=1/0` forces it
+- **`src/gui/utils/open_path.py`**: `open_path()` — show a file/folder in the desktop's handler, portably: `os.startfile` on Windows (unchanged behaviour), else `QDesktopServices`, else `xdg-open`/`open`/`gio`. **Use it instead of `os.startfile`**, which does not exist off Windows — it is what the three "open this" actions (Analyse ▸ Open PathOut Folder, Journal of Runs PathOut, Output Explorer's `.html`/`.txt` fallback) call; returns False instead of raising, so each caller shows its own message. **A program or script is never opened** (`RUNNABLE_EXTENSIONS`: .exe/.bat/.cmd/.vbs/.js/.ps1/.lnk/.hta/.msi/.sh/.desktop/…) — `os.startfile` would *run* it, and Output Explorer passes whatever sits in a (possibly shared) PathOut — its folder is shown instead (`security.md` #11). **Starting processes**: always an argument list (`QProcess.start(program, [args])`, `subprocess` with a list), never a shell — `tools/check_invariants.py` rejects `shell=`, `os.system`, `os.popen` and single-string `subprocess` commands; the one shell script the GUI writes (Create batch, `batch_file_creator._quote`) doubles `%` and refuses `"`/line breaks. **Links in rich-text views** go through **`open_link` / `make_links_safe(browser)`** (http/https/mailto, local non-program files, `#anchors`; never `setOpenExternalLinks(True)`). `check_invariants.py` also forbids pickle/marshal/shelve/unsafe yaml, `verify=False`, secret-key/JWT literals, and any `setHtml`/`insertHtml`/`setMarkdown`/`appendHtml` without a `# html-safe: <reason>` note (`sast.md` step 4; an `eval`/`exec` rule is deliberately left out)
 - **`src/gui/utils/gui_log.py`**: Diagnostic logging — swallowed exceptions go to a rotating `%LOCALAPPDATA%/CWatM_GUI/gui.log` (UI behaviour unchanged)
 - **`src/gui/utils/warning_filters.py`**: The third-party warnings the GUI silences — currently only rasterio 1.5.0 × numpy 2.5 ("Setting the shape on a NumPy array has been deprecated", raised inside `rasterio._io.read()` but **attributed to the caller**, i.e. `cwatm/management_modules/data_handling.py:317/654`, so it looks like a CWatM problem). Three nets, because a user's machine may enable DeprecationWarnings (`PYTHONWARNINGS`, IDE, older build): `apply()` installs the message-matched filter **and** exports `PYTHONWARNINGS` (called at the top of `cwatm_gui.py` and of `cwatm_model_runner.py`, before numpy/rasterio/cwatm are imported; `cwatm_process_worker.start()` also puts it in the child's `QProcessEnvironment`), and `LineSuppressor` drops the warning's lines on the way to the output box (`cwatm_process_worker._forward` for every child run — main/Hidden/Batch — and `print_redirector` for in-process prints). Delete the module + its call sites once a fixed rasterio ships
 - **`src/gui/utils/window_geometry.py`**: `GeometryMemoryMixin` — persists window size/position of the Analyse/Basin windows via QSettings
@@ -891,8 +904,11 @@ sent means changing the notice. Every sign-up carries `account_config.PRIVACY_VE
 stores version + time in `profiles` (migration `…140000_privacy_consent.sql`). Invariants: the GUI holds only the
 project URL + **anon/publishable** key (`account_config.py`), **never** the
 service-role key; points are written **only** by the server function `award_run` (no
-client write policy on `point_events`), keyed on the Journal-of-Runs `uid` so a run
-counts once; no paths or settings content are sent.
+client write policy on `point_events`), keyed on the **settings fingerprint** so a
+setup counts once; no paths or settings content are sent. **Data minimisation**
+(migration `…150000_minimal_point_data.sql`): a counted run is stored as fingerprint +
+the UTC **day** only, an Academy level as the level only (no date); the export masks the
+email address — the privacy test keeps the notice in step.
 Client layer (`src/gui/utils/account_*.py`): **`account_client.py` is the only
 importer of `supabase`**, and only `AccountWorker` (a `QThread`, `submit(op, …)` →
 `succeeded`/`failed`/`busy` signals) creates it, **on its own thread** — never call it
@@ -920,8 +936,9 @@ heap (0xc0000374).
 it in the journal, nothing else. `make_entry` also stores **`timesteps`**
 (`settings_timesteps(content)`: StepStart..StepEnd read the way CWatM's `Calendar`
 does — StepEnd a date **or** a count, `/ . -`, 2- or 4-digit year, last duplicate
-key wins). `account_runs.qualifies` = success + kind run/hidden/batch; `run_meta`
-whitelists gui_version/kind/timesteps/duration_s. Logged out → the run does not
+key wins). `account_runs.qualifies` = success + kind run/hidden/batch **+ a
+`settings_hash`**; `run_meta` sends only `settings_hash` + `timesteps` (the timesteps
+are checked against the minimum, not stored). Logged out → the run does not
 count; logged in → `award_run`; a login stored but unreachable (offline/restoring)
 or a failed send → **`account_pending.json`** (next to `run_ledger.json`), tagged
 with the user and sent at **that** user's next login (never someone else's), capped
@@ -935,10 +952,12 @@ simulation); `run_meta` sends it and `award_run` answers `same_settings` for a s
 that already earned a point (migration `…150000_leaderboard_badge_repeat_runs.sql`).
 Only the hash leaves the machine — the privacy notice says so, and its test checks.
 **Anonymous run locations**: with the user's consent (`profiles.share_locations` —
-required tick at Register, a one-time question after an *interactive* login for older
-accounts, a tick in the account window and in Preferences ▸ Account; **default yes**
-everywhere: tick pre-ticked, Yes preselected, Preferences ticked + greyed while logged
-out) every qualifying run reports its **first
+an **optional, unticked** tick at Register, a one-time question after an interactive
+`login`/`reset_password` for older accounts (**No** is the default button; not asked
+after `confirm_signup` — the new user just answered on the form), a tick in the account
+window and in Preferences ▸ Account (unticked + greyed while logged out); **default
+no everywhere** — consent must be freely given and a pre-ticked box is not consent,
+`security.md` finding 4) every qualifying run reports its **first
 gauge** (`run_ledger.settings_gauge`: first lon/lat pair of `Gauges`, None for a map
 file or a projected x/y pair; stored locally as `entry["gauge"]`) via its **own**
 request `record_location` → rpc `record_run_location`, **never inside `award_run`**
@@ -952,9 +971,49 @@ item / pending item, never in `run_meta`) and `record_location` is submitted onl
 when that request's answer is `awarded` (not `same_settings` / `too_short` /
 `daily_limit` / `duplicate`); with *Count my full CWatM runs* off there is no award,
 so no location. Separately, the user's **own location** (`profiles.location_lat/lon`,
-optional, 0.001°, both-or-none, migration `…190000_user_location.sql`) is ordinary
-personal profile data — account window / Register only, never on the map or
-leaderboard.
+optional, both-or-none, migration `…190000_user_location.sql`) is kept only to
+**0.5°** (~50 km) — rounded by the GUI (`account_validation.round_location`) **and**
+enforced by the `profiles_round_location` trigger (migration
+`20261001120000_user_location_half_degree.sql`); it is ordinary
+personal profile data — never on the leaderboard, on the World Map only with the
+*Show my location on the world map* opt-in (no names).
+**The Shop** (migration `20261001130000_shop.sql`, plan + decisions in `shop.md`):
+points split in two, both **computed, never stored** — **earned** =
+`sum(point_events)` (never goes down, decides the badges, `get_my_status.total_points`
+keeps this meaning for older GUIs) and **balance** = earned − `sum(purchases.price_paid)`
+(the "actual points": shown on the account button, ranked on the leaderboard, spent in
+the Shop). Spending **never removes a badge** and never moves a badge goal (the
+next-badge bar stays on earned points). Items + prices live on the server
+(`shop_items`: `advanced` 20, `expert` 40 *requires* `advanced`, `fish` 5, `otter` 10,
+`beaver` 20, `sailboat` 30, `octopus` 50); **`shop_buy` is the only writer** of
+`purchases` (per-user lock; checks the Breg badge `game_config.shop_required_badge`,
+not owned yet, the `requires` item, the balance) and answers with the full status, so
+the main window takes the purchase over in one round trip (`buy` ∈ `_STATUS_OPS`).
+Accounts that existed when the migration was pushed got Advanced + Expert **granted**
+(price 0, `granted = true`). `award_run` / `academy_complete_level` are thin wrappers
+adding `earned_points` + `balance`; their logic lives in `_award_run_core` /
+`_academy_complete_level_core` — change those, not the wrappers. GUI side: the pure
+rules are `account_shop.py`; `AccountMixin.owned_items()` / `level_allowed()` /
+`owned_animals()` drive the levels and the sparkline animal (see the Skill of User
+note and Preferences ▸ Display ▸ Select animal); the purchases are **cached** per user
+in QSettings `account/owned/<user>` for `offline`/`restoring` — and while **no cache
+exists yet** (the first start after the Shop arrived) nothing is locked, so a stored
+Expert never flashes to Beginner during the re-login.
+**Point decay** (migration `20261001140000_point_decay.sql`, rule in `shop.md`): the
+**actual points** shrink while CWatM GUI is not used — −3 % after the first week, then
+−5 % of what is left every further week, rounded, **never below 5** (a balance ≤ 5
+does not decay); earned points and badges never decay. "Used" = **a login**: after
+every `_LOGIN_OPS` answer the mixin submits **`touch_activity`** (∈ `_STATUS_OPS`, so
+its answer is a status), which records the decay due (`point_decay` row) and restarts
+the clock (`profiles.last_active_at`); a recorded decay is noted in the output box
+(`account_ui.decay_message`), and the account window states the rule
+(`account_ui.DECAY_RULE` — the privacy test ties it to the notice). Balance = earned −
+spent − recorded decay; status, leaderboard and Shop show the **current** balance,
+which already subtracts the decay due (`_current_balance`), and `shop_buy` records it
+before charging. Percentages / minimum are `game_config` `decay_*` keys.
+**Guiding principle**: the
+gamification must never stop a serious user — the session-only **Cheat** tick
+(Preferences ▸ Account) opens every level, logged out too.
 **Badge images**: `assets/badges/<badge code>.png` (bundled by its own spec line —
 the `assets/*` glob does not reach a subfolder), drawn by
 `src/gui/utils/badge_images.badge_pixmap(code, size, faded, dpr)`: it **finds the
@@ -1213,6 +1272,14 @@ Five steps, selectable with `-Steps`:
 | `installer` | `ISCC installer\CWatM_GUI.iss` in the working copy (probing the per-machine ISCC paths). Both the spec and the `.iss` resolve everything relative to their own location — including the version the `.iss` scrapes from `src\gui\__init__.py` — so the local copy builds exactly what the repo would. |
 | `copyback` | `dist\CWatM_GUI` → `P:\…\gui\dist\CWatM_GUI` (robocopy `/MIR`, so removed files disappear) and `installer\Output\CWatM_GUI_Setup.exe` → `P:\…\gui\installer\Output\`, overwriting the previous release. **This is the only P: write of the whole build**, and it is a straight sequential copy. |
 
+**Signing and checksums** (`security.md` #3): with a code-signing certificate's
+thumbprint in `CWATM_SIGN_THUMBPRINT` (or `-SignThumbprint`), `build_release.ps1` signs
+`CWatM_GUI.exe` + `CWatM_model.exe` right after the build (before Inno Setup packs them)
+and `CWatM_GUI_Setup.exe` after it (`Invoke-Sign`: Windows-SDK signtool, SHA-256,
+RFC 3161 timestamp); without one it prints "NOT signed" and continues. `/creategui`'s
+`publish_gui.ps1` checks each published file's SHA-256 against the build and writes
+**`SHA256SUMS.txt`** next to the setup and the zip in `P:\watmodel\CWatM_GUI`.
+
 Consequences to keep in mind: `C:\work\CWatM_GUI` is a **build artefact, never a second
 working copy** — edit here, and `sync` overwrites anything changed there; and the exe
 that is tested/shipped is the one *copied back*, so `copyback` is not optional. The
@@ -1289,13 +1356,23 @@ in `main_window.py` used to put every line-based tool one line out of step —
 `str.splitlines()` breaks on it, the tokenizer does not; it is written as an escape),
 no `os.startfile` outside `open_path.py`, and no heavy import on the startup path.
 `.github/workflows/ci.yml` runs all of it plus a Windows job that installs the pinned
-stack and imports every GUI module.
+stack and imports every GUI module, and a **`secrets`** job: gitleaks (version + SHA-256
+pinned in the workflow) over the whole git history with **`.gitleaks.toml`** — default
+rules plus Supabase secret key / service-role JWT / Google session cookie; the only
+allowlisted value is the publishable key (by value, so a real secret in
+`account_config.py` still fails). GitHub secret scanning + push protection are on for
+the repo as well. A **`bandit`** job runs Bandit (`.bandit.yaml`, version pinned in
+`requirements_dev.txt`) on `src cwatm_gui.py cwatm_model.py tools` - explicit targets,
+**never `exclude_dirs`** (Bandit matches them as path substrings: `cwatm` excluded the
+whole `cwatmpublic` repo) - listing every finding and **failing only on HIGH severity /
+MEDIUM+ confidence**. A Bandit suppression is written `# nosec B110` with
+`# B110 accepted: <why>` on the line above (`check_invariants.py` enforces both). The SAST roadmap is `sast.md`, the findings register `security.md`.
 
 ## Development Notes
 - Built with PySide6 for cross-platform compatibility
 - **Fast startup / lazy imports (report §4.1)**: at launch only PySide6 + the light
   GUI modules are imported — `basin_viewer` (numpy/xarray/rasterio/QtWebEngine) and
-  `check_data_window` (→ `cwatm.run_cwatm` → scipy/pandas/netCDF4) are imported
+  `check_data_window` (→ `cwatm.run_cwatm` → pandas/netCDF4) are imported
   lazily at their call sites, and `cwatm_gui.py` warms the heavy stack up in a
   background daemon thread ~0.5 s after the window shows. **Keep it that way**: do
   not add module-level imports of cwatm / xarray / rasterio / plotly to
@@ -1358,7 +1435,7 @@ stack and imports every GUI module.
 - **Global Exception Handling**: Comprehensive error handling prevents application crashes
 - **Thread Safety**: All CWatM operations run in separate threads with proper signal handling
 - **Resource Management**: Automatic cleanup of file handles and NetCDF datasets after an interrupted run; the process std streams, the `gui.log` stream and the run-log handle are protected from this cleanup (`_protected_file_objects`)
-- **Diagnostic log**: swallowed/guarded exceptions are recorded in `%LOCALAPPDATA%/CWatM_GUI/gui.log` (rotating, via `src/gui/utils/gui_log.py`) — check it when "nothing happened". **Qt's own messages land there too** (`cwatm_gui._install_qt_message_handler`, installed in `_create_app` before the `QApplication`): a warning/critical is logged **with the Python stack that triggered it**, plus Qt's own `QMessageLogContext` (category/file/line — usually only filled in a debug build) and a **widget line** (`focus=` / `under-mouse=` / `active-window=`, class + objectName). The stack names the call site when Python caused it; when the stack stops at `app.exec()` the message came from **inside Qt's C++ event loop** (`QFont::setPointSize: Point size <= 0 (-1)` is one of those — Qt's stylesheet font resolution meeting the editor's **pixel**-sized font; harmless, Qt keeps the current size) and the widget line is the only clue left. Chromium/QtWebEngine messages arrive from C++ callbacks the same way. **Three lines are filtered off the console** (`expected_messages`) because they are Chromium complaining about the configuration `_configure_qtwebengine` deliberately asks for — *"Sandboxing disabled by user"* (`--no-sandbox`, needed to launch `QtWebEngineProcess.exe` from a network share), *"--use-gl=angle is set with --disable-gpu. Expect troubles!"* and *"GPUInfo not initialized on GpuInfoUpdate"* (software WebGL with the GPU off). They are still recorded in `gui.log` at DEBUG, and **`CWATM_GUI_QT_VERBOSE=1`** puts them back on the console. Never silence a message here without that pairing: filtered means *logged elsewhere*, not lost. The message is still written to the **real** console (`sys.__stderr__`, `None`-guarded for `pythonw.exe`) and never to the redirected `sys.stderr`, so a run from a terminal looks unchanged and Qt chatter stays out of the CWatM output box
+- **Diagnostic log**: swallowed/guarded exceptions are recorded in `%LOCALAPPDATA%/CWatM_GUI/gui.log` (rotating, via `src/gui/utils/gui_log.py`) — check it when "nothing happened". **Qt's own messages land there too** (`cwatm_gui._install_qt_message_handler`, installed in `_create_app` before the `QApplication`): a warning/critical is logged **with the Python stack that triggered it**, plus Qt's own `QMessageLogContext` (category/file/line — usually only filled in a debug build) and a **widget line** (`focus=` / `under-mouse=` / `active-window=`, class + objectName). The stack names the call site when Python caused it; when the stack stops at `app.exec()` the message came from **inside Qt's C++ event loop** (`QFont::setPointSize: Point size <= 0 (-1)` is one of those — Qt's stylesheet font resolution meeting the editor's **pixel**-sized font; harmless, Qt keeps the current size) and the widget line is the only clue left. Chromium/QtWebEngine messages arrive from C++ callbacks the same way. **Three lines are filtered off the console** (`expected_messages`) because they are Chromium complaining about the configuration `_configure_qtwebengine` deliberately asks for — *"Sandboxing disabled by user"* (`--no-sandbox`, set only where it is needed (`web_assets.sandbox_must_be_off`), e.g. to launch `QtWebEngineProcess.exe` from a network share), *"--use-gl=angle is set with --disable-gpu. Expect troubles!"* and *"GPUInfo not initialized on GpuInfoUpdate"* (software WebGL with the GPU off). They are still recorded in `gui.log` at DEBUG, and **`CWATM_GUI_QT_VERBOSE=1`** puts them back on the console. Never silence a message here without that pairing: filtered means *logged elsewhere*, not lost. The message is still written to the **real** console (`sys.__stderr__`, `None`-guarded for `pythonw.exe`) and never to the redirected `sys.stderr`, so a run from a terminal looks unchanged and Qt chatter stays out of the CWatM output box
 - **Native Qt Graphics**: Custom drawing routines for high-performance data visualization
 
 ## Data Visualization internals → `documentation/CWatM_GUI_Internals.md`

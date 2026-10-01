@@ -40,7 +40,7 @@ from src.gui.utils.window_geometry import scaled_default_size
 
 log = get_logger("check_data_window")
 
-# cwatm.run_cwatm (-> scipy/pandas/netCDF4) and netCDF4 are imported lazily in
+# cwatm.run_cwatm (-> pandas/netCDF4) and netCDF4 are imported lazily in
 # the methods that use them (report §4.1) so importing this module stays cheap.
 
 # Columns of CWatM's check table whose "False" means trouble

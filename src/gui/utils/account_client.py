@@ -50,7 +50,35 @@ MESSAGES = {
                     "Please try again later.",
     "not_installed": "The CWatM account libraries (supabase, keyring) are not "
                      "installed for the Python running this GUI.",
+    # the Shop (shop_buy refusals)
+    "unknown_item": "This item is not sold in the Shop.",
+    "already_owned": "You already own this.",
+    "badge_required": "The Shop opens once you have earned the Breg badge.",
+    "requires_item": "Buy the previous item first.",
+    "not_enough_points": "You do not have enough points for this.",
 }
+
+# shop_buy() answers 'status'; everything but 'bought' is a refusal with these codes.
+_SHOP_REFUSALS = ("unknown_item", "already_owned", "badge_required",
+                  "requires_item", "not_enough_points")
+
+
+def shop_refusal(result):
+    """A shop_buy() answer that refused the purchase -> ``AccountError`` (else None).
+    The message names what is missing: the points still needed, or the item to buy
+    first (Expert needs Advanced)."""
+    status = (result or {}).get("status")
+    if status == "bought":
+        return None
+    if status not in _SHOP_REFUSALS:
+        return AccountError("server_error", detail=f"shop_buy status {status!r}")
+    message = MESSAGES[status]
+    if status == "not_enough_points" and result.get("missing") is not None:
+        n = int(result["missing"])
+        message = f"You need {n} more point{'s' if n != 1 else ''} for this."
+    elif status == "requires_item" and result.get("requires"):
+        message = f"Buy {str(result['requires']).capitalize()} first."
+    return AccountError(status, message)
 
 
 def _import_supabase():
@@ -360,8 +388,8 @@ class AccountClient:
                 "show_on_leaderboard": bool(show_on_leaderboard),
                 "show_location_on_map": bool(show_location_on_map)}
         if location_lat is not None and location_lon is not None:
-            data["location_lat"] = round(float(location_lat), 3)
-            data["location_lon"] = round(float(location_lon), 3)
+            data["location_lat"] = V.round_location(location_lat)
+            data["location_lon"] = V.round_location(location_lon)
         for field, value in (("full_name", full_name), ("country", country),
                              ("institute", institute)):
             value = V.clean_optional(field, value)
@@ -444,7 +472,7 @@ class AccountClient:
             elif field in _BOOL_FIELDS:
                 value = bool(value)
             elif field in _COORD_FIELDS:
-                value = None if value in (None, "") else round(float(value), 3)
+                value = None if value in (None, "") else V.round_location(value)
             else:
                 value = V.clean_optional(field, value)
             changes[field] = value
@@ -484,6 +512,38 @@ class AccountClient:
         self._session()
         return self._rpc("academy_reset") or {}
 
+    def touch_activity(self):
+        """A login = CWatM GUI was used: the server records the point decay due
+        since the last use, then restarts the clock. Returns the status (get_status
+        shape) plus decayed_points and inactive_weeks."""
+        session = self._session()
+        result = self._rpc("touch_activity") or {}
+        return dict(result, email=session.user.email)
+
+    # ---- the Shop --------------------------------------------------------------
+    def get_shop_items(self):
+        """The price list (public): [{code, kind, name, price, requires}], in shop
+        order. kind = 'level' | 'animal'; requires = an item code or None."""
+        rows = self._rpc("get_shop_items") or []
+        return [{"code": r["code"], "kind": r["kind"], "name": r["name"],
+                 "price": int(r["price"]), "requires": r.get("requires")}
+                for r in rows]
+
+    def buy(self, item_code):
+        """Buy one Shop item. Returns the new status (get_status() shape, plus
+        status='bought', item, price). A refusal - not enough points, already owned,
+        no Breg badge yet, Expert before Advanced - raises AccountError with that
+        code and a readable message; the server checked it, the GUI only explains."""
+        item_code = (item_code or "").strip().lower()
+        if not item_code:
+            raise AccountError("invalid_input", "No item chosen.")
+        session = self._session()
+        result = self._rpc("shop_buy", {"p_item": item_code}) or {}
+        refusal = shop_refusal(result)
+        if refusal is not None:
+            raise refusal
+        return dict(result, email=session.user.email)
+
     def get_run_locations(self):
         """The anonymous run-location totals for Info ▸ World Map:
         [{lon, lat, runs}] (public - no login needed)."""
@@ -493,7 +553,7 @@ class AccountClient:
 
     def get_user_locations(self):
         """Users' own locations for Info ▸ World Map ▸ User location - only users
-        who opted in, no names, 0.01 degree: [{lon, lat, users}] (public)."""
+        who opted in, no names, 0.5 degree: [{lon, lat, users}] (public)."""
         rows = self._rpc("get_user_locations") or []
         return [{"lon": float(r["lon"]), "lat": float(r["lat"]),
                  "users": int(r["users"])} for r in rows]

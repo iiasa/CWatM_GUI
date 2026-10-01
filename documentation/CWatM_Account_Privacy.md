@@ -16,8 +16,8 @@ and your optional own location (on the map only if you choose so)
   points earn river badges.
 - We store your **username, email address, password (encrypted)** and, only if you enter
   them, your **name, country, institute and location** (latitude/longitude).
-- For a counted run we store **only**: when it was counted, the GUI version, the kind of
-  run, the number of timesteps, the run time and a **fingerprint** of the model settings
+- For a counted run we store **only** the day it was counted and a **fingerprint** of
+  the model settings
   (a one-way hash - it tells whether two runs used the same setup, but the settings
   cannot be read back from it). **Never** file paths, settings files, model data or
   results.
@@ -42,12 +42,15 @@ filled in by IIASA]*.
 | Username | log in, shown on the leaderboard if you choose so | account server |
 | Password | log in - stored only as a one-way hash, nobody can read it | account server |
 | Name, country, institute *(optional)* | shown in your account; country on the leaderboard if you choose so | account server |
-| Your location - latitude/longitude you enter, stored to 0.001° *(optional)* | shown in your account. **Only if you tick** *Show my location on the world map* (ticked in advance on the Register form - untick it there or later in the account window): shown to every GUI user on the world map (Info ▸ World Map ▸ User location) as a point **without your name**, rounded to 0.01° (~1 km), counted together with other users at the same place | account server |
-| Leaderboard choice | whether your username, country and points are shown to other users (ticked in advance on the Register form - untick it there or later in the account window) | account server |
+| Your location - latitude/longitude you enter, rounded to 0.5° (about 50 km) before it is stored *(optional)* | shown in your account. **Only if you tick** *Show my location on the world map* (optional and unticked on the Register form - tick it there or later in the account window): shown to every GUI user on the world map (Info ▸ World Map ▸ User location) as a point **without your name**, at the same 0.5° (~50 km), counted together with other users at the same place | account server |
+| Leaderboard choice | whether your username, country and points are shown to other users (optional and unticked on the Register form - tick it there or later in the account window). The leaderboard shows your actual points (after Shop purchases) and your highest badge - never what you bought | account server |
 | Points and badges | the purpose of the account | account server |
+| When you last used CWatM GUI - the time of your last login - and every point decay (points taken, weeks without use, date) | your actual points shrink while CWatM GUI is not used (-3 % after one week, then -5 % a week, never below 5 points); earned points and badges never shrink | account server |
+| Shop purchases - what you bought (a skill level or an animal for the live discharge plot), when, and the points paid; levels given for free to accounts that existed when the Shop opened are marked as given | so you can use what you bought, on any computer; your actual points are your earned points minus the points paid | account server |
 | CWatM Academy progress - which Academy levels you finished | so you can continue the Academy on any computer; each finished level earns points. **Only while** *Link CWatM Academy to your login* is ticked (Preferences ▸ CWatM Academy, on by default); unticked, the progress stays on your computer only | account server |
-| Per counted run: date and time, GUI version, run kind (run / windowed / batch), number of timesteps, run time, a random run number | to award a point once per run, and to check the rules (e.g. a minimum run length) | account server |
-| Per counted run: a fingerprint of the model settings (SHA-256 one-way hash; Title, PathOut and output settings left out) | one point per distinct model setup - the same settings run again earn no further point | account server |
+| Per counted run: a fingerprint of the model settings (SHA-256 one-way hash; Title, PathOut and output settings left out) and the day it was counted - nothing else | one point per distinct model setup (the same settings run again earn no further point); the day for the daily limit of counted runs | account server |
+| Sent with a run but **not stored**: the number of timesteps | checked once against the minimum run length | - |
+| Per finished CWatM Academy level: which level it was - no date | its points are paid once per level | account server |
 | Version and time of your agreement to this notice | proof of your consent | account server |
 | Whether (and since when) you agreed to the anonymous run locations | proof of that consent; only then is a location sent | account server |
 | Per run that earns a point, *if you agreed*: the location of its first gauge, rounded to 0.001° (~100 m), counted per month - **without any link to you** | to know where CWatM is used and how often | account server, see below |
@@ -62,8 +65,8 @@ internet request carries (the IP address in the server logs).
 
 If you agreed, the GUI reports for every run that **earns a point** the **first coordinate pair of
 `Gauges`** in the settings the run used (see the rules below). You are asked with a tick box when you
-register (**ticked by default** - untick it to decline) or, for older accounts, with a
-one-time question at login (**Yes** preselected). You can change it at any time in the
+register (**optional, unticked** - registering does not depend on it) or, for older accounts, with a
+one-time question at login (no answer preselected). You can change it at any time in the
 account window or in Preferences ▸ Account.
 
 - **Only runs that earn a point** are counted - long enough, a new model setup, within
@@ -93,9 +96,13 @@ Account to stop further reports.
   Manager** (on Linux the desktop keyring) - never in a plain file.
 - The settings *Stay logged in* and *Count my full CWatM runs*, and the name of the
   last logged-in user (CWatM GUI settings).
+- A copy of the list of Shop items you own (CWatM GUI settings), so a missing
+  connection does not take a bought level away. It is only a copy - the account
+  server decides what you own.
 - Runs finished while the server could not be reached, waiting to be sent
-  (`account_pending.json` in the Run History folder): run number, GUI version, run kind,
-  timesteps, run time, settings fingerprint. Removed when sent, at the latest after 30
+  (`account_pending.json` in the Run History folder): a random run number (only on
+  your computer, to keep the list in order), the number of timesteps and the settings
+  fingerprint. Removed when sent, at the latest after 30
   days.
 
 ## Legal basis
@@ -120,7 +127,7 @@ The data are not sold, not used for advertising and not passed on to anyone else
 ## How long
 
 As long as your account exists. When you delete your account, your profile, points,
-badges and run records are deleted **immediately**. Server backups and logs of the
+badges, Shop purchases, point decays and run records are deleted **immediately**. Server backups and logs of the
 hosting provider may keep copies for a short period *[number of days - to be filled in
 from the Supabase plan]* before they are overwritten.
 
@@ -128,7 +135,7 @@ from the Supabase plan]* before they are overwritten.
 
 | You want to | How |
 |-------------|-----|
-| See everything stored about you | Account window ▸ **Export my data…** (a JSON file) |
+| See everything stored about you | Account window ▸ **Export my data…** (a JSON file; your email address appears masked in it, e.g. `p***@g***.com`, so the file is safer to keep or pass on - the full address is shown in the account window) |
 | Correct your data | Account window ▸ edit the fields ▸ **Save changes** (email address: contact us) |
 | Remove your location | Account window ▸ empty *latitude* and *longitude* ▸ **Save changes** |
 | Take your location off the world map | Account window ▸ untick *Show my location on the world map* ▸ **Save changes** (it disappears from the map at once) |

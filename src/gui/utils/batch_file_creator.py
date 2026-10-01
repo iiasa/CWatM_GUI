@@ -17,10 +17,19 @@ from src.gui.utils.cwatm_process_worker import model_command
 
 
 def _quote(token):
-    """Double-quote a command-line token unconditionally. Harmless for a bare
-    flag (cmd.exe's argv parser strips the surrounding quotes back off) and
-    required for any program/settings path that may contain spaces."""
-    return '"%s"' % token
+    """One token for a .bat line: double-quoted, with every ``%`` doubled.
+
+    Quoting keeps spaces and cmd's operators (``& | < > ^``) literal. It does NOT
+    stop ``%NAME%`` expansion: cmd expands variables even inside quotes, so a
+    folder or file name containing ``%`` (allowed on Windows) would be rewritten -
+    with an environment value that could itself carry operators. ``%%`` is cmd's
+    literal percent in a batch file. A ``"`` cannot occur (not allowed in Windows
+    paths); a token that has one anyway, or a line break, is refused rather than
+    written into a script."""
+    token = str(token)
+    if any(c in token for c in '"\r\n'):
+        raise ValueError(f"cannot put this into a batch file safely: {token!r}")
+    return '"%s"' % token.replace("%", "%%")
 
 
 def build_batch_script(file_path, workdir):

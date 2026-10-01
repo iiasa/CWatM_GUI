@@ -494,6 +494,36 @@ sets the answer length (Short = fastest).
 
 Full guide: `documentation/CWatM_AI_NotebookLM.md`.
 
+### CWatM account, points and the Shop
+
+The CWatM account is **optional** - CWatM and the GUI work fully without it. Logged
+in (the account button in the menu bar's right corner), every full CWatM run with a
+new model setup earns a point, finished CWatM Academy levels earn points too, and the
+points earn **river badges** (Breg, Thames, Morava, …).
+
+- **Your points** are the points you can spend. Next to them the account window shows
+  the points **earned in total** - those never go down and decide your badges.
+- **The Shop** (the **Shop** button left of your name; it appears once you have the
+  **Breg** badge) sells:
+  - the **Advanced** (20 points) and **Expert** (40 points) skill levels - Advanced
+    first, then Expert. Expert stays greyed out until you own Advanced;
+  - **animals** for the live discharge plot: Fish (5), Otter (10), Beaver (20),
+    Sailboat (30), Octopus (50). The selector offers the ones you can afford.
+- **Buying** asks first, takes the price from your points and is final (no refunds).
+  Your badges stay, and the next badge still needs its full earned points. A bought
+  animal appears on the discharge plot at once; a bought level can be switched to
+  right away.
+- **Example:** you earned 20 points and hold Breg and Thames; you buy Advanced for 20 -
+  you now have 0 points to spend, still 20 earned in total, and both badges.
+- **The leaderboard** (Info ▸ Leaderboard) ranks by your current points.
+- **Use it or lose it a little:** without a login for a week your points drop by 3 %,
+  every further week by another 5 % of what is left - never below 5 points. Logging in
+  (the automatic login at start counts) stops it. Earned points and badges never shrink.
+- **Not interested in the game?** Tick **Cheat - and get the Expert level without
+  buying it** in Preferences ▸ Account: every skill level is open for this session,
+  logged in or not. It switches itself off when the GUI is restarted.
+- Accounts that existed when the Shop opened got Advanced and Expert for free.
+
 ## Usage
 
 ### Basic Workflow
@@ -550,7 +580,10 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
     menus** is shown: *Beginner* hides the advanced entries, e.g. Batch Run, Windowed
     Run, Check Data, the Excel editor and the water-balance analyses), the
     date picker style, the date timeline, auto-bookmark on change, and **Use Tabs**
-    (the settings-file tabs, Expert level only).
+    (the settings-file tabs, Expert level only). Advanced and Expert are bought in
+    the **Shop** - or tick *Cheat* on the Account page.
+  - **Account** — stay logged in, count my runs, record run locations, and the
+    **Cheat** tick (all skill levels for this session, no purchase needed).
   - **Run History** — where the Journal of Runs is kept and for how long.
 
   Nothing changes while you are clicking around: **Apply** puts the current page's
@@ -574,7 +607,9 @@ Full guide: `documentation/CWatM_AI_NotebookLM.md`.
   (flopy) so MODFLOW-coupled runs and checks are ready; when off (default), flopy is not
   loaded, keeping startup fast. Persisted across sessions.
 - **Select animal** (Preferences ▸ Display): pick the little animal that
-  occasionally appears on the live discharge sparkline (Fish / Otter / Beaver / Sailboat).
+  occasionally appears on the live discharge sparkline. The list holds the animals you
+  bought in the **Shop** (Fish / Otter / Beaver / Sailboat / Octopus); without one, the
+  sparkline shows a plain dot.
 - **Font of the settings file** (Preferences ▸ Display): **Font of settingsfile** picks
   the family the settings editor is displayed with (the list shows the monospaced fonts
   installed on your machine; Consolas by default on Windows), and **Font size of

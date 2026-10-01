@@ -9,7 +9,7 @@ upstream-area map (the bundled ``academy_ups_30min.nc`` grid is global), but
 deliberately has **no** suggestion marker and never touches the main window's
 settings - it only grades a click and reports pass/fail.
 
-**Which basin**: a random one of the 50 largest in
+**Which basin**: a random one of all 100 basins in
 ``assets/academy_biggest_basins.csv`` (rank, basin_size_km2, name, lon, lat -
 the outlet cell centre on this same 30' grid), the Danube included.
 **Another basin** draws a new one. The
@@ -19,7 +19,7 @@ view is framed *around* the outlet but deliberately off-centre
 **Graded against the 4 biggest upstream cells of that basin**
 (``target_cells``), computed from the grid at runtime rather than hard-coded:
 the outlet cell (the listed one - its upstream area equals the listed basin
-size for all 50) plus, best-first, the three largest cells draining into what
+size for all 100) plus, best-first, the three largest cells draining into what
 is already selected (a neighbour with a smaller upstream area). Landing on any
 of those four - snapped to the nearest grid cell the same way the Level 1 map
 reads a value under the cursor - passes.
@@ -36,13 +36,15 @@ lesson map's ``ACOUT`` one if both happened to be alive at once.
 Non-modal ``QDialog``, like the other secondary windows: a status line reads
 "Awaiting target ..." until a pick lands on a target cell, then "Target
 confirmed - that is the outlet of the <basin>" and the Confirm button enables;
-a miss reads "Not the outlet - look further downstream" and lets the learner
+a miss reads "Not the outlet - you are N kilometers away" (great-circle
+distance from the click to the listed outlet, ``distance_km``) and lets the learner
 click again, no penalty. Confirm emits ``passed`` and closes the window;
 academy_outlet_map.OutletMapWidget._on_nile_field_test_passed picks up from
 there (the level's completion celebration).
 """
 
 import csv
+import math
 import os
 import random
 
@@ -76,7 +78,8 @@ from src.gui.widgets.academy_outlet_map import (
 _C = theme.theme_colors("mikhail")
 
 _BASINS_ASSET = "academy_biggest_basins.csv"
-_POOL_SIZE = 50                  # draw from the 50 largest basins
+_POOL_SIZE = 100                 # draw from all 100 basins of the list
+EARTH_RADIUS_KM = 6371.0
 _EXCLUDED = set()                # basins never drawn (none at the moment)
 TARGET_CELLS = 4                 # pass = one of the basin's 4 biggest cells
 
@@ -145,6 +148,15 @@ def is_target(lats, lons, lat, lon, targets):
     snapped = (float(np.asarray(lats)[r]), float(np.asarray(lons)[c]))
     return any(abs(snapped[0] - t[0]) < 1e-6 and abs(snapped[1] - t[1]) < 1e-6
                for t in targets)
+
+
+def distance_km(lat1, lon1, lat2, lon2):
+    """Great-circle (haversine) distance in km. A degree of longitude shrinks
+    with cos(latitude), and the date line wraps - both handled by the formula."""
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * EARTH_RADIUS_KM * math.asin(min(1.0, math.sqrt(a)))
 
 
 def view_bounds(basin, rng=random):
@@ -479,8 +491,9 @@ class BasinFieldTestWindow(QDialog):
                 f"✓ Target confirmed - that is the outlet of the {self._basin['name']}.")
             self.confirm_button.setEnabled(True)
         else:
+            km = distance_km(lat, lon, self._basin["lat"], self._basin["lon"])
             self.status_label.setText(
-                "✗ Not the outlet - look further downstream.")
+                f"✗ Not the outlet - you are {km:,.0f} kilometers away.")
             self.confirm_button.setEnabled(False)
 
     def _on_confirm_clicked(self):

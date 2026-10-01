@@ -475,7 +475,7 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         self.lesson_title.setText(f"Level {lvl['id']}: {lvl['title']}")
         self.lesson_badge.setText(f"Badge: {lvl['badge']}")
         bullets = "".join(f"<li>{t}</li>" for t in lvl["teaches"])
-        self.lesson_body.setHtml(
+        self.lesson_body.setHtml(  # html-safe: lesson texts are constants in this module
             f"<p>{lvl['summary']}</p>"
             f"<p><b>You'll use:</b></p><ul>{bullets}</ul>"
             f"<p><i>Try it: {lvl['menu_hint']}</i></p>"

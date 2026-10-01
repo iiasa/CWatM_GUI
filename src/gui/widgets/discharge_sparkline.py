@@ -30,104 +30,9 @@ ANIMALS = [
     ("Beaver",     "\U0001F9AB"),  #
     ("Sailboat",   "\U000026F5"),       #
     ("Octopus (for Carla)", "\U0001F419"),   # 🐙
-    ("Random",     "\U0001F3B2"),       # 🎲 - a different animal each appearance
 ]
 _ANIMAL_EMOJI = dict(ANIMALS)
-_DEFAULT_ANIMAL = "Fish"
-_RANDOM_ANIMAL = "Random"
-
-# Pool the "Random" cameo draws from - animals only (no sailboat, no dice, no
-# mythical creatures), so the marker is always a real animal. Water, land and air
-# alike. Emoji needing a variation selector (chipmunk, spider, dove) are left out:
-# without VS16 they can render as monochrome text glyphs.
-_RANDOM_POOL = [
-    # --- water ---
-    "\U0001F41F",  # fish
-    "\U0001F420",  # tropical fish
-    "\U0001F421",  # blowfish
-    "\U0001F42C",  # dolphin
-    "\U0001F433",  # spouting whale
-    "\U0001F40B",  # whale
-    "\U0001F988",  # shark
-    "\U0001F419",  # octopus
-    "\U0001F980",  # crab
-    "\U0001F990",  # shrimp
-    "\U0001F991",  # squid
-    "\U0001F99E",  # lobster
-    "\U0001F422",  # turtle
-    "\U0001F438",  # frog
-    "\U0001F9AB",  # beaver
-    "\U0001F9A6",  # otter
-    "\U0001F9AD",  # seal
-    "\U0001F40A",  # crocodile
-    "\U0001F98E",  # lizard
-    "\U0001F40D",  # snake
-    "\U0001F427",  # penguin
-    # --- land mammals ---
-    "\U0001F415",  # dog
-    "\U0001F408",  # cat
-    "\U0001F40E",  # horse
-    "\U0001F404",  # cow
-    "\U0001F402",  # ox
-    "\U0001F403",  # water buffalo
-    "\U0001F416",  # pig
-    "\U0001F417",  # boar
-    "\U0001F411",  # ewe
-    "\U0001F410",  # goat
-    "\U0001F42A",  # camel
-    "\U0001F42B",  # two-hump camel
-    "\U0001F999",  # llama
-    "\U0001F992",  # giraffe
-    "\U0001F418",  # elephant
-    "\U0001F98F",  # rhinoceros
-    "\U0001F99B",  # hippopotamus
-    "\U0001F993",  # zebra
-    "\U0001F98C",  # deer
-    "\U0001F401",  # mouse
-    "\U0001F400",  # rat
-    "\U0001F407",  # rabbit
-    "\U0001F994",  # hedgehog
-    "\U0001F987",  # bat
-    "\U0001F412",  # monkey
-    "\U0001F98D",  # gorilla
-    "\U0001F9A7",  # orangutan
-    "\U0001F9A5",  # sloth
-    "\U0001F998",  # kangaroo
-    "\U0001F9A1",  # badger
-    "\U0001F9A8",  # skunk
-    "\U0001F405",  # tiger
-    "\U0001F406",  # leopard
-    "\U0001F43B",  # bear
-    "\U0001F43C",  # panda
-    "\U0001F428",  # koala
-    "\U0001F98A",  # fox
-    "\U0001F43A",  # wolf
-    # --- birds ---
-    "\U0001F426",  # bird
-    "\U0001F986",  # duck
-    "\U0001F9A2",  # swan
-    "\U0001F989",  # owl
-    "\U0001F985",  # eagle
-    "\U0001F99C",  # parrot
-    "\U0001F9A9",  # flamingo
-    "\U0001F99A",  # peacock
-    "\U0001F413",  # rooster
-    "\U0001F414",  # chicken
-    "\U0001F983",  # turkey
-    "\U0001F9A4",  # dodo
-    # --- small crawlers & fliers ---
-    "\U0001F98B",  # butterfly
-    "\U0001F41D",  # honeybee
-    "\U0001F41E",  # ladybug
-    "\U0001F41C",  # ant
-    "\U0001F997",  # cricket
-    "\U0001F982",  # scorpion
-    "\U0001F40C",  # snail
-    "\U0001F99F",  # mosquito
-    # --- long extinct, still animals ---
-    "\U0001F995",  # sauropod
-    "\U0001F996",  # T-rex
-]
+_DEFAULT_ANIMAL = "Fish"     # also the fallback for a stored, no longer offered one
 
 
 def current_animal():
@@ -187,27 +92,30 @@ class DischargeSparkline(QWidget):
         # timer coalescing / idle power states for no visible effect. It starts on the
         # first sample and stops when the plot is cleared.
         self._show_animal = False
-        self._random_emoji = random.choice(_RANDOM_POOL)  # current "Random" pick
         self._animal_timer = QTimer(self)
         self._animal_timer.setInterval(600)
         self._animal_timer.timeout.connect(self._tick_animal)
 
     def set_animal(self, name):
-        """Set the cameo animal (Configure ▸ Select animal) and repaint."""
-        self._animal = name if name in _ANIMAL_EMOJI else _DEFAULT_ANIMAL
+        """Set the cameo animal (Preferences ▸ Display ▸ Select animal) and repaint.
+        None = no animal (none bought in the Shop): only the plain dot."""
+        if name is None:
+            self._animal = None
+            self._show_animal = False
+        else:
+            self._animal = name if name in _ANIMAL_EMOJI else _DEFAULT_ANIMAL
         self.update()
 
     def _tick_animal(self):
         """Occasionally toggle the newest-point marker between a dot and the animal."""
+        if self._animal is None:
+            return                          # no animal owned - always the dot
         if self._show_animal:
             if random.random() < 0.20:      # the animal lingers a while (~5 ticks ≈ 3 s)
                 self._show_animal = False
                 self.update()
         elif random.random() < 0.08:        # ...and rare (~8% chance per 0.6 s)
             self._show_animal = True
-            # Re-roll "Random" once per appearance, not per repaint - otherwise the
-            # creature would flicker through the pool on every frame.
-            self._random_emoji = random.choice(_RANDOM_POOL)
             self.update()
 
     # -------------------------------------------------------------- data feed
@@ -303,7 +211,7 @@ class DischargeSparkline(QWidget):
             painter.drawLine(pts_xy[i - 1], pts_xy[i])
 
         # Latest point marker at full opacity — a dot, or the occasional animal cameo.
-        if self._show_animal:
+        if self._show_animal and self._animal is not None:
             self._draw_animal(painter, pts_xy)
         else:
             painter.setBrush(base)
@@ -329,10 +237,7 @@ class DischargeSparkline(QWidget):
         f = QFont()
         f.setPixelSize(size)
         painter.setFont(f)
-        if self._animal == _RANDOM_ANIMAL:
-            emoji = self._random_emoji or random.choice(_RANDOM_POOL)
-        else:
-            emoji = _ANIMAL_EMOJI.get(self._animal, _ANIMAL_EMOJI[_DEFAULT_ANIMAL])
+        emoji = _ANIMAL_EMOJI.get(self._animal, _ANIMAL_EMOJI[_DEFAULT_ANIMAL])
         # Centred in a symmetric rect, so the horizontal flip keeps it centred.
         painter.drawText(QRectF(-size, -size, 2 * size, 2 * size),
                          Qt.AlignCenter, emoji)

@@ -44,12 +44,16 @@ def test_offline_queue_facts(notice):
 def test_every_field_a_run_sends_is_named(notice):
     meta = account_runs.run_meta({"kind": "run", "timesteps": 1, "duration_s": 1.0,
                                   "settings_hash": "0" * 64}, "1.07")
-    words = {"gui_version": "GUI version", "kind": "kind of run",
-             "timesteps": "number of timesteps", "duration_s": "run time",
-             "settings_hash": "fingerprint"}
+    words = {"timesteps": "number of timesteps", "settings_hash": "fingerprint"}
     assert set(meta) == set(words), "run_meta changed - update the notice"
     for phrase in words.values():
         assert phrase in notice
+    # what is no longer collected must not be claimed either
+    for gone in ("GUI version", "run time", "run kind"):
+        assert gone not in notice, gone
+    assert "**not stored**: the number of timesteps" in notice
+    assert "which level it was - no date" in notice
+    assert "masked" in notice
 
 
 def test_bundled_into_the_exe():
@@ -98,6 +102,25 @@ def test_register_sends_the_consent_version(monkeypatch):
     assert result["status"] == "confirm_email"
     assert auth.signed_up["options"]["data"]["privacy_version"] == \
         account_config.PRIVACY_VERSION
+
+
+def test_notice_describes_the_shop(notice):
+    # the purchases table and the local copy of what is owned (account_ui caches it
+    # under account/owned/<user>), and that deleting the account removes purchases
+    from src.gui.components import account_ui
+    assert "account/owned/" in account_ui.AccountMixin._owned_cache_key(None, "x")
+    for phrase in ("Shop purchases", "the points paid", "marked as given",
+                   "list of Shop items you own", "actual points",
+                   "badges, Shop purchases, point decays and run records are deleted"):
+        assert phrase in notice, phrase
+
+
+def test_notice_describes_the_point_decay(notice):
+    # the rule the notice states = the rule the GUI explains (account_ui.DECAY_RULE)
+    from src.gui.components.account_ui import DECAY_RULE
+    for number in ("-3 %", "-5 %", "5 points"):
+        assert number in DECAY_RULE and number in notice, number
+    assert "time of your last login" in notice
 
 
 def test_notice_describes_the_run_locations(notice):

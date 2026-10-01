@@ -231,9 +231,16 @@ class TestOwnLocation:
     def test_location_problem(self, lat, lon, ok):
         assert (V.location_problem(lat, lon) is None) is ok
 
-    def test_parse_rounds_to_a_thousandth(self):
-        assert V.parse_location(" 48.06749 ", "16,35712") == (48.067, 16.357)
+    def test_parse_rounds_to_half_a_degree(self):
+        assert V.parse_location(" 48.06749 ", "16,35712") == (48.0, 16.5)
         assert V.parse_location("", "") == (None, None)
+
+    @pytest.mark.parametrize("value,rounded", [
+        (48.067, 48.0), (16.357, 16.5), (48.25, 48.5), (48.24, 48.0),
+        (-48.25, -48.5), (-0.2, 0.0), (179.9, 180.0), (-90, -90.0)])
+    def test_round_location_like_the_server(self, value, rounded):
+        # halves away from zero = Postgres numeric round() in the profiles trigger
+        assert V.round_location(value) == rounded
 
     def test_format(self):
         assert V.format_coord(48.067) == "48.067"
@@ -245,3 +252,65 @@ class TestOwnLocation:
         with pytest.raises(AC.AccountError) as info:
             c.update_profile(location_lat=48.0)
         assert info.value.code == "invalid_input"
+
+
+class TestShopClient:
+    """buy() / get_shop_items(): the server decides, the client only explains."""
+
+    def _client(self, monkeypatch, answer):
+        c = _bare_client()
+        sent = []
+        monkeypatch.setattr(c, "_session",
+                            lambda: SimpleNamespace(user=SimpleNamespace(email="p@x.org")))
+
+        def rpc(fn, params=None):
+            sent.append((fn, params))
+            return answer
+        monkeypatch.setattr(c, "_rpc", rpc)
+        return c, sent
+
+    def test_bought_returns_the_new_status(self, monkeypatch):
+        c, sent = self._client(monkeypatch, {"status": "bought", "item": "otter",
+                                             "price": 10, "balance": 2})
+        result = c.buy(" Otter ")
+        assert sent == [("shop_buy", {"p_item": "otter"})]
+        assert result["balance"] == 2 and result["email"] == "p@x.org"
+
+    @pytest.mark.parametrize("answer,code,text", [
+        ({"status": "not_enough_points", "missing": 7}, "not_enough_points",
+         "You need 7 more points for this."),
+        ({"status": "not_enough_points", "missing": 1}, "not_enough_points",
+         "You need 1 more point for this."),
+        ({"status": "requires_item", "requires": "advanced"}, "requires_item",
+         "Buy Advanced first."),
+        ({"status": "already_owned"}, "already_owned", "You already own this."),
+        ({"status": "badge_required", "badge": "breg"}, "badge_required", "Breg"),
+        ({"status": "unknown_item"}, "unknown_item", "not sold"),
+        ({"status": "surprise"}, "server_error", "server"),
+    ])
+    def test_refusals_become_account_errors(self, monkeypatch, answer, code, text):
+        c, _sent = self._client(monkeypatch, answer)
+        with pytest.raises(AC.AccountError) as info:
+            c.buy("expert")
+        assert info.value.code == code and text in info.value.message
+
+    def test_empty_item_sends_nothing(self, monkeypatch):
+        c, sent = self._client(monkeypatch, {"status": "bought"})
+        with pytest.raises(AC.AccountError) as info:
+            c.buy("  ")
+        assert info.value.code == "invalid_input" and sent == []
+
+    def test_price_list(self, monkeypatch):
+        c, sent = self._client(monkeypatch, [
+            {"code": "advanced", "kind": "level", "name": "Advanced", "price": 20,
+             "requires": None},
+            {"code": "expert", "kind": "level", "name": "Expert", "price": "40",
+             "requires": "advanced"}])
+        items = c.get_shop_items()
+        assert sent == [("get_shop_items", None)]
+        assert items[1] == {"code": "expert", "kind": "level", "name": "Expert",
+                            "price": 40, "requires": "advanced"}
+
+    def test_worker_knows_the_shop_ops(self):
+        from src.gui.utils.account_worker import OPS
+        assert {"buy", "get_shop_items"} <= OPS

@@ -9,6 +9,7 @@ Each ``*_problem`` function returns ``None`` when the value is fine, else a shor
 English message.
 """
 
+import math
 import re
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,29}$")
@@ -93,17 +94,30 @@ def location_problem(lat_text, lon_text):
     return None
 
 
+# The own location is kept only to the nearest half degree (~50 km) - in the GUI
+# and on the server (profiles trigger, migration ..._user_location_half_degree.sql).
+LOCATION_STEP = 0.5
+
+
+def round_location(value):
+    """A coordinate rounded to the nearest LOCATION_STEP degree: 48.067 -> 48.0.
+    Halves round away from zero, like the server's numeric round() (48.25 -> 48.5),
+    so the GUI and the stored value always agree."""
+    steps = abs(float(value)) / LOCATION_STEP
+    return math.copysign(math.floor(steps + 0.5) * LOCATION_STEP, float(value)) + 0.0
+
+
 def parse_location(lat_text, lon_text):
-    """(lat, lon) rounded to 0.001 degree, or (None, None) - call after
+    """(lat, lon) rounded to 0.5 degree, or (None, None) - call after
     location_problem() returned None."""
     lat, lon = _coord(lat_text), _coord(lon_text)
     if lat is None or lon is None or "bad" in (lat, lon):
         return None, None
-    return round(lat, 3), round(lon, 3)
+    return round_location(lat), round_location(lon)
 
 
 def format_coord(value):
-    """A stored coordinate for a text field ('' when unset): 48.067, 16.357."""
+    """A stored coordinate for a text field ('' when unset): 48.5, 16."""
     if value is None or value == "":
         return ""
     return f"{float(value):.3f}".rstrip("0").rstrip(".")

@@ -43,7 +43,7 @@ from src.gui.components.main_window_styles import MainWindowStyleMixin
 from src.gui.components.account_ui import AccountMixin
 
 # Startup-cost note (report §4.1): basin_viewer (numpy/xarray/rasterio +
-# QtWebEngine) and check_data_window (cwatm.run_cwatm -> scipy/pandas/netCDF4)
+# QtWebEngine) and check_data_window (cwatm.run_cwatm -> pandas/netCDF4)
 # are imported LAZILY inside the methods that need them, so the window appears
 # after only the PySide6 + stdlib imports. cwatm_gui.py warms the heavy modules
 # up in a background thread once the window is shown.
@@ -217,12 +217,12 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         # Experience level (Beginner/Advanced/Expert) - restricts which settings
         # sections can be unfolded; persisted across sessions (editor/level).
         # _preferred_level = the user's choice; _experience_level = the level in
-        # effect, which is Beginner while nobody is logged in to the CWatM account
-        # (see _refresh_experience_level, re-run on every login-state change).
+        # effect: Advanced / Expert are bought in the Shop (or the session's Cheat
+        # tick), see _effective_level, re-run on every login-state/status change.
         lvl = self._settings.value("editor/level", "Expert")
         self._preferred_level = lvl if lvl in _EXPERIENCE_LEVELS else "Expert"
-        self._experience_level = (self._preferred_level if self.levels_unlocked()
-                                  else "Beginner")
+        self._cheat_levels = False          # session only - never persisted
+        self._experience_level = self._effective_level()
         rf = self._settings.value("recent_files", [])
         if isinstance(rf, str):
             rf = [rf]
@@ -1431,16 +1431,33 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.status_bar.showMessage(f"Default OpenStreetMap basemap: {key}")
 
     def _set_animal(self, name):
-        """Configure > Select animal: persist the chosen cameo animal and apply it to
-        the live discharge sparkline."""
+        """Preferences > Display > Select animal: persist the chosen cameo animal and
+        apply it to the live discharge sparkline (only an owned one is offered)."""
+        if not name:
+            return
         self._settings.setValue("display/animal", name)
-        spark = getattr(self, "discharge_sparkline", None)
-        if spark is not None:
-            try:
-                spark.set_animal(name)
-            except RuntimeError:
-                log.debug("_set_animal: ignored", exc_info=True)
+        self._refresh_animal()
         self.status_bar.showMessage(f"Sparkline animal: {name}")
+
+    def effective_animal(self):
+        """The animal the sparkline shows: the chosen one if owned, else the first
+        owned one, else None (no animal bought - the plain dot)."""
+        owned = self.owned_animals()
+        chosen = self._settings.value("display/animal", "Fish")
+        if chosen in owned:
+            return chosen
+        return owned[0] if owned else None
+
+    def _refresh_animal(self):
+        """Apply effective_animal() to the sparkline - on every status change, so a
+        purchase, a login or a logout shows at once. The stored choice is kept."""
+        spark = getattr(self, "discharge_sparkline", None)
+        if spark is None:
+            return
+        try:
+            spark.set_animal(self.effective_animal())
+        except RuntimeError:
+            log.debug("_refresh_animal: ignored", exc_info=True)
 
     def open_pathout_folder(self):
         """Tools > Open PathOut Folder: show the resolved PathOut directory in the
@@ -1700,9 +1717,10 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         dlg.resize(*scaled_default_size(dlg, 920, 720))
         layout = QVBoxLayout(dlg)
         browser = _MarkdownBrowser()
-        browser.setOpenExternalLinks(True)
+        from src.gui.utils.open_path import make_links_safe
+        make_links_safe(browser)        # #anchors scroll, web links open, no programs
         browser.document().setBaseUrl(QUrl.fromLocalFile(os.path.dirname(doc_path) + os.sep))
-        browser.setMarkdown(md)
+        browser.setMarkdown(md)  # html-safe: our own bundled documentation files
         layout.addWidget(browser)
         dlg.exec()
 
@@ -2291,42 +2309,67 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
 
     # ---------------------------------------------------- experience level
     def cycle_experience_level(self):
-        """Level button: Beginner -> Advanced -> Expert -> Beginner."""
-        if not self.levels_unlocked():
-            self._explain_level_lock()
-            return
+        """Level button: Beginner -> Advanced -> Expert -> Beginner. A level that is
+        not bought is explained (once per click) and skipped."""
         idx = _EXPERIENCE_LEVELS.index(self._experience_level)
         nxt = _EXPERIENCE_LEVELS[(idx + 1) % len(_EXPERIENCE_LEVELS)]
+        if not self.level_allowed(nxt):
+            self._explain_level_lock(nxt)
+            nxt = "Beginner"              # the cycle goes on past the locked level(s)
+            if nxt == self._experience_level:
+                return
         self.set_experience_level(nxt)
 
-    def _explain_level_lock(self):
-        """Logged out, the level is fixed to Beginner - say why, offer the login."""
-        answer = QMessageBox.question(
+    def _effective_level(self):
+        """The preferred level if it may be used, else the highest allowed below it
+        (preferred Expert, only Advanced bought -> Advanced)."""
+        idx = _EXPERIENCE_LEVELS.index(self._preferred_level)
+        for level in reversed(_EXPERIENCE_LEVELS[:idx + 1]):
+            if self.level_allowed(level):
+                return level
+        return "Beginner"
+
+    def _explain_level_lock(self, level="Advanced"):
+        """A level that is not owned was chosen - say how to get it. Logged out:
+        offer the login. Always names the Cheat tick, so a serious user is never
+        stuck (shop.md guiding principle)."""
+        cheat = ("Or tick 'Cheat - and get the Expert level without buying it' in "
+                 "Preferences ▸ Account (for this session).")
+        if not self.levels_unlocked():
+            answer = QMessageBox.question(
+                self, "Skill of user",
+                f"The {level} level is bought with the points of your CWatM account "
+                "(full CWatM runs earn points).\n\n"
+                f"{cheat}\n\nLog in now?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if answer == QMessageBox.Yes:
+                self.open_account()
+            return
+        how = ("Buy Advanced first, then Expert, in the Shop."
+               if level == "Expert" and not self.level_allowed("Advanced")
+               else "Buy it in the Shop.")
+        QMessageBox.information(
             self, "Skill of user",
-            "Without a login CWatM GUI runs in the Beginner level.\n\n"
-            "Log in to your CWatM account (or register - it is free) to choose "
-            "Advanced or Expert.\n\nLog in now?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        if answer == QMessageBox.Yes:
-            self.open_account()
+            f"You do not own the {level} level yet. {how}\n\n{cheat}")
 
     def set_experience_level(self, level):
         """Set the experience level (from the level button or Preferences ▸ Editor &
-        Dates ▸ Skill of user) and apply it. Advanced/Expert need a login (see
-        levels_unlocked); the choice is kept and takes effect at the next login."""
+        Dates ▸ Skill of user) and apply it. Advanced/Expert must be owned (bought
+        in the Shop) or the session's Cheat tick on - see level_allowed."""
         if level not in _EXPERIENCE_LEVELS:
             return
-        if level != "Beginner" and not self.levels_unlocked():
-            self._explain_level_lock()
+        if not self.level_allowed(level):
+            self._explain_level_lock(level)
             return
         self._preferred_level = level
         self._settings.setValue("editor/level", level)
         self._refresh_experience_level()
 
     def _refresh_experience_level(self):
-        """Put the level in effect: the preferred one when logged in, else Beginner.
-        Called on a level change and on every login-state change."""
-        level = self._preferred_level if self.levels_unlocked() else "Beginner"
+        """Put the level in effect: the preferred one if owned, else the highest
+        owned below it. Called on a level change and on every login-state, status
+        and Cheat change."""
+        level = self._effective_level()
         if level == self._experience_level:
             self._sync_level_menu()
             return

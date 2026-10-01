@@ -25,7 +25,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QToolButton, QMessageBox
 
 from src.gui import __version__ as GUI_VERSION
-from src.gui.utils import academy_progress, account_config, account_runs, run_ledger
+from src.gui.utils import (academy_progress, account_config, account_runs,
+                           account_shop, run_ledger)
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("account_ui")
@@ -34,15 +35,16 @@ _RESTORE_DELAY_MS = 2500
 
 # Worker operations whose result is the full status dict of the logged-in user.
 _STATUS_OPS = {"restore", "login", "confirm_signup", "reset_password", "get_status",
-               "update_profile", "register"}
+               "update_profile", "register", "buy", "touch_activity"}
 # ...of those, the ones that start a session: the offline queue is sent after them.
 _LOGIN_OPS = {"restore", "login", "confirm_signup", "reset_password", "register"}
 # Interactive logins: the one-time run-location question is asked after these (not
-# after the silent re-login at startup - a question out of nowhere).
-_ASK_LOCATION_OPS = {"login", "confirm_signup", "reset_password"}
+# after the silent re-login at startup - a question out of nowhere - and not after
+# confirm_signup: a new account has just answered it on the Register form).
+_ASK_LOCATION_OPS = {"login", "reset_password"}
 # award_run answers that settle a run for good (anything else = try again later).
 _AWARD_FINAL = {"awarded", "duplicate", "too_short", "daily_limit", "invalid_run_uid",
-                "same_settings"}
+                "same_settings", "no_settings_hash"}
 
 
 def award_messages(result):
@@ -50,8 +52,9 @@ def award_messages(result):
     status = (result or {}).get("status")
     if status == "awarded":
         pts = result.get("points_awarded", 1)
+        total = result.get("balance", result.get("total_points", "?"))
         lines = [f"CWatM account: +{pts} point{'s' if pts != 1 else ''} for this run "
-                 f"(total {result.get('total_points', '?')})."]
+                 f"(total {total})."]
         for badge in result.get("new_badges") or []:
             lines.append(f"CWatM account: 🏅 new badge - {badge.get('name')}!")
         return lines
@@ -61,17 +64,37 @@ def award_messages(result):
     if status == "same_settings":
         return ["CWatM account: these settings already earned a point - change the "
                 "model setup (not only Title, PathOut or the outputs) to earn another."]
+    if status == "no_settings_hash":
+        return ["CWatM account: the settings of this run could not be read - it earns "
+                "no point."]
     if status == "daily_limit":
         return [f"CWatM account: daily limit reached ({result.get('daily_run_cap', '?')}"
-                " counted runs in 24 h) - this run earns no point."]
+                " counted runs per day) - this run earns no point."]
     return []
+
+
+DECAY_RULE = ("Your points shrink while CWatM GUI is not used: -3 % after one week, "
+              "then -5 % of what is left every further week - never below 5 points. "
+              "Logging in keeps them; earned points and badges never shrink.")
+
+
+def decay_message(result):
+    """Output-box line after a login whose touch_activity recorded a decay (pure -
+    tested). Empty = nothing decayed."""
+    pts = int((result or {}).get("decayed_points") or 0)
+    if pts <= 0:
+        return ""
+    weeks = int(result.get("inactive_weeks") or 0)
+    return (f"CWatM account: -{pts} point{'s' if pts != 1 else ''} - CWatM GUI was not "
+            f"used for {weeks} week{'s' if weeks != 1 else ''}. Log in at least once a "
+            "week to keep your points.")
 
 
 def account_button_text(state, status):
     """Label of the menu-bar account button (pure - tested)."""
     if state == "logged_in" and status:
         name = (status.get("profile") or {}).get("username") or "Account"
-        return f"{name} · {status.get('total_points', 0)} pt"
+        return f"{name} · {account_shop.balance(status)} pt"      # the actual points
     if state == "restoring":
         return "Logging in…"
     if state == "offline":
@@ -83,12 +106,17 @@ def account_button_tooltip(state, status):
     """Tooltip of the account button: badges and the next goal (pure - tested)."""
     if state == "logged_in" and status:
         badges = [b.get("name", "") for b in status.get("badges") or []]
+        earned = account_shop.earned(status)
+        points = f"Points: {account_shop.balance(status)}"
+        if account_shop.balance(status) != earned:
+            points += f" (earned in total: {earned})"
         lines = [f"Logged in as {(status.get('profile') or {}).get('username', '')}",
-                 f"Points: {status.get('total_points', 0)}"]
+                 points]
         lines.append("Badges: " + (", ".join(badges) if badges else "none yet"))
         nxt = status.get("next_badge")
         if nxt:
-            missing = max(0, nxt.get("points_required", 0) - status.get("total_points", 0))
+            # badges follow the EARNED points - spending never moves the goal
+            missing = max(0, nxt.get("points_required", 0) - earned)
             lines.append(f"Next badge: {nxt.get('name')} "
                          f"({missing} more point{'s' if missing != 1 else ''})")
         lines.append("Click to open your account")
@@ -115,6 +143,36 @@ class AccountMixin:
         btn.clicked.connect(lambda: self.open_account())
         self._account_button = btn
         return btn
+
+    def _create_shop_button(self):
+        """The Shop button, left of the account button (menu_builder places it).
+        Hidden until a logged-in user holds the Breg badge (shop_visible)."""
+        btn = QToolButton()
+        btn.setObjectName("shopButton")
+        btn.setText("Shop")
+        btn.setToolTip("Spend the points of your CWatM account - skill levels and "
+                       "animals for the live discharge plot")
+        btn.setAutoRaise(True)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.clicked.connect(lambda: self.open_shop())
+        btn.setVisible(False)
+        self._shop_button = btn
+        return btn
+
+    def shop_visible(self):
+        """The Shop is there only while logged in AND holding the Breg badge."""
+        return (account_config.is_configured()
+                and getattr(self, "_account_state", None) == "logged_in"
+                and account_shop.has_shop_badge(self._account_status))
+
+    def open_shop(self):
+        if not self.shop_visible():
+            return
+        try:
+            from src.gui.widgets import shop_window
+            shop_window.open_shop(self)
+        except Exception:
+            log.warning("could not open the shop", exc_info=True)
 
     def _init_account(self):
         """Called once at the end of __init__: set the initial state and, when the
@@ -147,17 +205,90 @@ class AccountMixin:
             "account/remembered", False, type=bool)
 
     def levels_unlocked(self):
-        """May the user pick Advanced / Expert? Only with a CWatM account login -
-        logged out, the GUI runs in Beginner. A stored login still being restored
-        (or unreachable offline) counts as logged in, so a network hiccup does not
-        take the level away. Without an account server (no key configured) nobody
-        could log in, so every level stays open."""
+        """Is a CWatM account login in place (the CWatM Academy's rule from Level 4
+        on)? A stored login still being restored (or unreachable offline) counts as
+        logged in, so a network hiccup does not lock anything. Without an account
+        server (no key configured) nobody could log in, so it is always true.
+        Which skill LEVELS may be used is ``level_allowed`` - they are bought."""
         if not account_config.is_configured():
             return True
         state = getattr(self, "_account_state", None)
         if state is None:                  # before _init_account: the restore to come
             return self._stored_login()
         return state != "logged_out"
+
+    # ---- Shop entitlements (what the user owns) -------------------------------------
+    def owned_items(self):
+        """The Shop item codes this user may use, or None = everything (no account
+        server configured). Logged in: from the status. A stored login being
+        restored / offline: the copy cached at the last successful status, so a
+        network hiccup does not demote anyone. Logged out: nothing."""
+        if not account_config.is_configured():
+            return None
+        state = getattr(self, "_account_state", None)
+        if state == "logged_in" and self._account_status is not None:
+            if "purchases" not in self._account_status:
+                return None                # a server without the Shop: as before
+            return account_shop.owned(self._account_status)
+        if state in ("offline", "restoring") or (state is None and self._stored_login()):
+            return self._cached_owned()
+        return set()
+
+    def _owned_cache_key(self, user):
+        return f"account/owned/{account_runs.user_key(user)}"
+
+    def _cached_owned(self):
+        """The purchases cached for the stored login - None (= unknown, nothing
+        locked) when no status has been cached yet, e.g. the first start after the
+        Shop arrived: a logged-in Expert must not flash to Beginner while the
+        re-login runs. The cache is a convenience; the server decides purchases."""
+        user = self._settings.value("account/last_user", "")
+        if not user:
+            return set()
+        key = self._owned_cache_key(user)
+        if not self._settings.contains(key):
+            return None
+        cached = self._settings.value(key, [])
+        if isinstance(cached, str):
+            cached = [cached] if cached else []
+        return {str(c) for c in cached or []}
+
+    def _cache_owned(self, status):
+        name = (status.get("profile") or {}).get("username")
+        if name and "purchases" in status:
+            self._settings.setValue(self._owned_cache_key(name),
+                                    sorted(account_shop.owned(status)))
+
+    def cheat_levels(self):
+        """Preferences ▸ Account ▸ Cheat: every level open for THIS session only."""
+        return bool(getattr(self, "_cheat_levels", False))
+
+    def _set_cheat_levels(self, value):
+        """Session-only by design: kept in memory, never written to QSettings, so
+        every start of the GUI begins with it off (shop.md decision 10)."""
+        self._cheat_levels = bool(value)
+        refresh = getattr(self, "_refresh_experience_level", None)
+        if refresh is not None:
+            refresh()
+
+    def level_allowed(self, level):
+        """May this skill level be used? Beginner always; Advanced / Expert when
+        bought (or granted), when the Cheat tick is on, or without an account
+        server."""
+        if level == "Beginner" or self.cheat_levels():
+            return True
+        owned = self.owned_items()
+        if owned is None:
+            return True
+        return account_shop.LEVEL_CODES.get(level) in owned
+
+    def owned_animals(self):
+        """The sparkline animals (discharge_sparkline.ANIMALS names) this user may
+        show - all of them without an account server; none logged out."""
+        from src.gui.widgets.discharge_sparkline import ANIMALS
+        owned = self.owned_items()
+        return [name for name, _emoji in ANIMALS
+                if owned is None or account_shop.ANIMAL_CODES.get(name) in owned]
 
     # ---- worker ------------------------------------------------------------------
     def account_worker(self):
@@ -232,6 +363,7 @@ class AccountMixin:
         name = (status.get("profile") or {}).get("username")
         if name:
             self._settings.setValue("account/last_user", name)
+        self._cache_owned(status)          # used while offline / restoring
         self._update_account_button()
 
     def _account_username(self):
@@ -266,9 +398,9 @@ class AccountMixin:
 
     def account_share_locations(self):
         """For Preferences ▸ Account: the stored choice when logged in, else the
-        default (yes)."""
+        default (no - consent is opt-in)."""
         if self.account_status() is None:
-            return True
+            return False
         return self._shares_locations()
 
     def _set_share_locations(self, value):
@@ -309,7 +441,8 @@ class AccountMixin:
             "IIASA see where CWatM is used.\n\n"
             "You can change this at any time in your account window. Details: "
             "Help ▸ CWatM account privacy.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)     # default: yes
+            # no preselected Yes: consent must be an active choice (security.md #4)
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer == QMessageBox.Yes:
             self.account_worker().submit("update_profile", share_locations=True)
 
@@ -359,14 +492,17 @@ class AccountMixin:
             self._set_academy_levels(result.get("academy_completed") or [])
         if op != "academy_complete_level":
             return
-        if "total_points" in result and self._account_status is not None:
-            self._account_status["total_points"] = result["total_points"]
+        if self._account_status is not None:
+            for key in ("total_points", "earned_points", "balance"):
+                if key in result:
+                    self._account_status[key] = result[key]
         status = result.get("status")
         if status == "awarded":
             pts = result.get("points_awarded", 0)
+            total = result.get("balance", result.get("total_points", "?"))
             self._account_note(
                 f"CWatM Academy: +{pts} points for level {result.get('level')} "
-                f"(total {result.get('total_points', '?')}).")
+                f"(total {total}).")
             for badge in result.get("new_badges") or []:
                 self._account_note(f"CWatM account: 🏅 new badge - {badge.get('name')}!")
             # badges / next badge changed: refresh the button
@@ -435,13 +571,15 @@ class AccountMixin:
         self._update_account_button()
 
     def _update_account_button(self):
-        # Advanced / Expert follow the login (every state change passes here)
-        refresh = getattr(self, "_refresh_experience_level", None)
-        if refresh is not None:
-            try:
-                refresh()
-            except RuntimeError:
-                log.debug("level refresh: widget already gone", exc_info=True)
+        # Advanced / Expert and the sparkline animal follow what is owned (every
+        # login-state and status change passes here)
+        for name in ("_refresh_experience_level", "_refresh_animal"):
+            refresh = getattr(self, name, None)
+            if refresh is not None:
+                try:
+                    refresh()
+                except RuntimeError:
+                    log.debug("%s: widget already gone", name, exc_info=True)
         # the Academy's progress follows the login too (while linked)
         self._refresh_academy_window()
         # Info ▸ Leaderboard exists only for a logged-in user
@@ -451,6 +589,12 @@ class AccountMixin:
                 action.setVisible(self._account_state == "logged_in")
             except RuntimeError:
                 log.debug("leaderboard action already gone", exc_info=True)
+        shop = getattr(self, "_shop_button", None)
+        if shop is not None:
+            try:
+                shop.setVisible(self.shop_visible())
+            except RuntimeError:
+                log.debug("shop button already gone", exc_info=True)
         btn = getattr(self, "_account_button", None)
         if btn is None:
             return
@@ -481,6 +625,13 @@ class AccountMixin:
             self._set_account_status(result)
             if op in _LOGIN_OPS:
                 self._send_pending_awards()
+                # a login = CWatM GUI is used: record the point decay due, restart
+                # the clock (the answer is a status - handled just above)
+                self.account_worker().submit("touch_activity")
+            if op == "touch_activity":
+                note = decay_message(result)
+                if note:
+                    self._account_note(note)
             if op in _ASK_LOCATION_OPS:
                 # after the login dialog has closed
                 QTimer.singleShot(400, self._ask_location_consent)

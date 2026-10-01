@@ -215,6 +215,8 @@ def _dir_index(dirs, cap=300000):
                     if len(index) >= cap:
                         return index
         except Exception:
+            # an unreadable / vanished folder: skip it, keep indexing the others
+            log.debug("input-file index: folder %s skipped", folder, exc_info=True)
             continue
     return index
 

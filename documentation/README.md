@@ -37,7 +37,7 @@ python cwatm_gui.py
 ```
 
 Installing the pinned `requirements.txt` matters: beyond the scientific stack
-(NumPy/pandas/SciPy/xarray/netCDF4/rasterio) the GUI needs **PySide6 Addons**
+(NumPy/pandas/xarray/netCDF4/rasterio) the GUI needs **PySide6 Addons**
 (QtWebEngine), **folium** and **plotly** for the map and plot windows, **requests** for
 OSM tiles and **openpyxl** for the Excel settings sheets. A partial install leaves those
 windows blank rather than failing loudly.
@@ -169,7 +169,7 @@ src/gui/utils/                          theme, assets, geometry, logging, metric
 ## Requirements
 
 Python **3.12** (the reference venv; 3.10+ is required for the CWatM AI window),
-PySide6 + PySide6-Addons, NumPy, pandas, SciPy, xarray, netCDF4, rasterio, folium,
+PySide6 + PySide6-Addons, NumPy, pandas, xarray, netCDF4, rasterio, folium,
 plotly, requests, openpyxl. Exact pins are in **`requirements.txt`** at the repo root.
 
 Running on **Linux** from source is supported — see **`cwatm_gui_linux.md`** at the repo

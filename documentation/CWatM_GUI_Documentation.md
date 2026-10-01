@@ -1,6 +1,6 @@
 # CWatM GUI — Documentation and User Manual
 
-## Version 1.07
+## Version 1.10
 
 A graphical user interface for the **Community Water Model (CWatM)** developed by
 IIASA. The application lets you load, edit, validate and run CWatM settings files,
@@ -769,8 +769,10 @@ always starts off).
 - **Initial map transparency** — the transparency (0–100 %) that Show Basin and NetCDF
   open with.
 - **Default openstreet map** — the default basemap for the map windows.
-- **Select animal** — the little animal (Fish / Otter / Beaver / Sailboat / …) that
-  occasionally appears on the live discharge sparkline during a run.
+- **Select animal** — the little animal that occasionally appears on the live discharge
+  sparkline during a run. Only the animals you bought in the **Shop** are listed (Fish /
+  Otter / Beaver / Sailboat / Octopus); with none bought the box reads *None – buy one
+  in the Shop* and the sparkline shows a plain dot.
 
 **Editor & Dates**
 
@@ -782,9 +784,11 @@ always starts off).
   Check Data · Restore settingsfile*, *RUN CWATM ▸ Journal of Runs · Windowed Run CWatM ·
   Batch Run…*, and *Analyse ▸ Watercycle · Flow Diagram*. Switch to **Advanced** or
   **Expert** to get them back; nothing is removed, only hidden.
-  **Advanced and Expert need a login** to your (free) CWatM account — without one the
-  GUI runs in Beginner and this choice is greyed out. Your chosen level is remembered
-  and comes back as soon as you log in.
+  **Advanced and Expert are bought in the Shop** with the points of your (free) CWatM
+  account — or opened for the session with the **Cheat** tick on the Account page.
+  Without either, the GUI runs in Beginner and this choice is greyed out. Your chosen
+  level is remembered: if you own only Advanced, an Expert choice runs as Advanced, and
+  it comes back as soon as you own Expert.
 - **Web-style date picker** — the Start/Spin/End fields use a 📅 button + calendar
   popup (on) or the classic drop-down calendar (off).
 - **Date timeline** — show the three-handle Start/Spin/End timeline below the date
@@ -801,6 +805,44 @@ always starts off).
   (default `%LOCALAPPDATA%\CWatM_GUI`).
 - **Run history retention** — how many days of runs to keep; **0** shows as
   *keep forever*.
+
+**Account**
+
+- **Stay logged in on this computer**, **Count my full CWatM runs (earn points)** and
+  **Record the location of my runs anonymously** — see the account window.
+- **Cheat - and get the Expert level without buying it** — every skill level is open,
+  without buying it in the Shop. Works without a login, too. It is **for this session
+  only**: it is never saved, so it is off again the next time CWatM GUI starts.
+
+### The Shop
+
+Logged in to your CWatM account, full CWatM runs with a new model setup and finished
+CWatM Academy levels earn points, and points earn river badges. Once you hold the
+**Breg** badge, a **Shop** button appears in the menu bar, left of your name.
+
+| Item | Price | Note |
+|------|-------|------|
+| Advanced skill level | 20 points | |
+| Expert skill level | 40 points | needs Advanced first - greyed out until then |
+| Fish · Otter · Beaver · Sailboat · Octopus | 5 · 10 · 20 · 30 · 50 points | animals for the live discharge plot; only the ones you can afford are offered |
+
+- **Two numbers.** *Your points* are what you can spend (shown on the account button
+  and the leaderboard). *Earned in total* never goes down and decides your badges.
+- **Buying** asks for confirmation, takes the price from your points and is final.
+  Your badges stay, and the next badge still needs its full earned points - e.g. 20
+  earned with Breg and Thames, buy something for 18: 2 points left, both badges kept.
+- A bought **animal** appears on the discharge plot at once; after buying a **level**
+  you are asked whether to switch to it now.
+- If you cannot afford anything yet, the Shop says how many points the cheapest item
+  still needs.
+- Accounts that existed when the Shop opened got Advanced and Expert for free.
+- **Points shrink when you do not use CWatM GUI.** If you do not log in for a week,
+  your points drop by 3 %; every further week by another 5 % of what is left - never
+  below 5 points. With 100 points: 97 after one week, 92 after two, 88 after three.
+  Logging in (also the automatic login at start) stops it; you are told in the output
+  box when points were lost. Earned points and badges never shrink.
+- What you bought is stored in your account (see Help ▸ CWatM account privacy) and
+  works on any computer; a copy kept on your computer covers a missing connection.
 
 ---
 
@@ -866,9 +908,9 @@ current user's locations. Reference: `installer/CWatM_GUI.iss`.
 ## 18. Versioning
 
 The **CWatM GUI** carries its own version number, independent of the CWatM model
-version it drives. The current release is **Version 1.07**.
+version it drives. The current release is **Version 1.10**.
 
-You can see it in-app under **Info ▸ About CWatM**, where **CWatM GUI version 1.07**
+You can see it in-app under **Info ▸ About CWatM**, where **CWatM GUI version 1.10**
 is shown above the **CWatM Version** block (the latter reports the model's Git
 branch, hash and build time).
 
@@ -880,6 +922,7 @@ disagree. Only this manual — the header above and the table below — needs it
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.10 | 30/09/2026 | **CWatM Academy**: a guided ten-level introduction to CWatM (menu-bar button left of CWatM AI, or *Preferences ▸ CWatM Academy ▸ Enable CWatM Academy*); Level 1 is a small game — find the outlet of one of the world's 100 largest basins on the map — progress follows your login to any computer, every finished level earns 5 points, and from Level 4 on a login is needed. **CWatM account** (optional): log in / register from the menu bar, 1 point per successful full run of a distinct setup, river **badges**, a **Leaderboard**, *Export my data* / *Delete account*, and a privacy notice under *Help ▸ CWatM account privacy*. **Advanced / Expert** skill levels now need a login. **Info ▸ World Map**: where CWatM was run (anonymous counts) and where users are (opt-in). **Analyse ▸ NetCDF**: *Load netcdf* in the same window, *Calculate mean* and *Calculate percentile* saved as a new `.nc`. Two more GUI languages — **Français** and **Español** (13 in all). A Gemini notebook choice for CWatM AI, dark/Mikhail-mode colour corrections (incl. Watercycle), a fixed taskbar icon and a refined logo. **SciPy is no longer needed** (CWatM replaced it with its own methods) — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.07 | 18/09/2026 | **GUI language**: *Preferences ▸ Display ▸ Language* switches menus, menu items, buttons, labels and tooltips live between English, Deutsch, Italiano, Magyar, Română, Srpski, Hrvatski, Slovenčina, Български, Čeština and Українська (remembered for the next start; messages, window titles and the settings file stay English). New **RUN CWATM ▸ Create batch** (Expert) writes a Windows `.bat` that runs the current settings file without the GUI. "Run Ledger" is now called **Journal of Runs** throughout. The build bundles CWatM's new **t6** routing libraries (replacing t5), and a Watercycle sunburst calculation was corrected — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.06 | 22/08/2026 | Frozen-build startup dropped from ~6.2 s to ~0.5 s (lazy `xarray`/`rasterio`/CWatM-model imports, the first settings-file load's checks deferred until after the window is shown, a trimmed `dask`) — plus a startup window-flash fix that came with it. **Show Basin**, **Analyse ▸ NetCDF**, **Restore settingsfile**, **Analyse ▸ Timeseries**, **Journal of Runs**, **Excel Crops/Reservoirs** and **Batch Run** lost their button rows for File/Action/… menus (Mask/Gauge, Backward/Forward and Run all/Stop all stayed **also** as buttons, each window's most-used action), and the NetCDF map gained a right-click Action menu. New: **Flow duration** and **Flow regime** plots (Analyse ▸ NetCDF/Timeseries, one point at a time, per-year lines + average + percentile bands), **Load JSON/Load shape** map overlays (Show Basin and NetCDF), faster NetCDF reads on large files (parallel chunked reads, caching, Cancel), subwindows now sized to the screen they open on, and a fixed month-slider minimum gap at the very start of the Watercycle/Flow Diagram range — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.05 | 11/08/2026 | **Tabs**: several settings files open at once, one per tab — the active tab is what every window works on, each keeps its own undo/bookmarks/folds/marks, one file can only be open once, with *Copy Tab*, *Run CWatM* (in a Windowed Run window), *Link scrolling* and *Compare Tab* (F8). **Hidden Run CWatM** renamed **Windowed Run CWatM**. Plus the four settings/validation windows reworked — see [CHANGELOG.md](CHANGELOG.md). **Change Options**: grouped by topic, ⓘ explanation per switch, filter, *Changed only*, change marks, *Revert all*, *Add option…*, and a trailing comment is no longer lost (nor the whole option hidden). **Add output variables**: grouped, searches unit/description, ✓ on what the file already writes, and an array variable's index picked **by name**. **Restore settingsfile**: summary card, preview, compare with the current file, load unsaved, and an input-file check (still there? still the same version?), plus *Show in Journal* and CSV export. **Check Data**: runs in the background with its output in the window, warns about unsaved edits, sortable/filterable table with problem rows tinted and counted, and a double-click jumps to that key in the settings file. |

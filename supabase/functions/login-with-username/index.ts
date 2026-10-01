@@ -72,13 +72,11 @@ Deno.serve(async (req) => {
     return json(INVALID, 400);
   }
 
-  // Pass the caller's address on, so Auth's per-IP rate limit sees the real client
-  // and not this function (verify on the project that Auth honours it).
-  const forwarded = req.headers.get("x-forwarded-for");
-  const anon = createClient(SUPABASE_URL, ANON_KEY, {
-    ...NO_SESSION,
-    global: { headers: forwarded ? { "X-Forwarded-For": forwarded } : {} },
-  });
+  // No X-Forwarded-For is passed on: the client can write anything into that header,
+  // so forwarding it would let a caller pick a fresh "IP" for every attempt and slip
+  // past Auth's per-IP rate limit (security.md #6). Password guessing is limited by
+  // the per-username throttle above (_login_throttled) instead.
+  const anon = createClient(SUPABASE_URL, ANON_KEY, NO_SESSION);
 
   const { data, error } = await anon.auth.signInWithPassword({ email, password });
   if (error || !data.session) {

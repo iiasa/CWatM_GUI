@@ -199,6 +199,8 @@ class SettingsCheckMixin:
                     for k, v in config.items(sec):
                         opts[k.lower()] = v
                 except Exception:
+                    # best effort: one unreadable section must not stop the check
+                    log.debug("gating lookup: section %s skipped", sec, exc_info=True)
                     continue
 
         def _explicitly_off(opt_name):
@@ -682,6 +684,16 @@ class SettingsCheckMixin:
             elif not key.lower().endswith('_dir'):
                 for vmsg in _out_value_problems(s[eq + 1:].strip()):
                     problems.append((i, f"{key}: {vmsg}"))
+
+        # Output entries CWatM would evaluate as code (security.md #1) - the same
+        # rule run_guard uses to BLOCK a run, so F4 shows the lines a run refuses.
+        from src.gui.utils.run_guard import output_problems as _code_problems
+        for row, key, entry, reason in _code_problems(content):
+            if row is not None:
+                problems.append(
+                    (row, f"{key}: '{entry}' - {reason}. CWatM runs output names as "
+                          "Python code, so this could run a program - a run is "
+                          "refused until it is a plain name (numeric index only)."))
 
         # Forcing coverage: is [StepStart..StepEnd] inside the meteo forcing time axis?
         # Only when StepStart is a real date; StepEnd checked only if it is a date too.

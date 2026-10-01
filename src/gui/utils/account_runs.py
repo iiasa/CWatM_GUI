@@ -8,10 +8,12 @@ is worth sending and remembers what could not be sent.
 **A full run** = the Journal-of-Runs entry says ``success`` and it is a main run,
 a Windowed Run or a Batch scenario (a stopped run is ``success=False``).
 
-**Only non-identifying facts leave the machine** (``run_meta``): GUI version, run
-kind, number of timesteps, duration, and a one-way fingerprint of the setup
-(``run_ledger.settings_fingerprint``) so the server awards one point per distinct
-setup. Never paths, titles or the settings themselves.
+**Only what the points rules need leaves the machine** (``run_meta``): the one-way
+fingerprint of the setup (``run_ledger.settings_fingerprint`` - the server awards one
+point per distinct setup and stores only this fingerprint and the day) and the
+number of timesteps (checked against the minimum run length, not stored). A run
+whose settings could not be fingerprinted is not sent at all. Never paths, titles
+or the settings themselves.
 
 **Offline queue** (``account_pending.json`` next to ``run_ledger.json``): a full run
 finished while the account could not be reached is kept, **tagged with the user it
@@ -37,21 +39,23 @@ COUNTED_KINDS = ("run", "hidden", "batch")
 
 
 def qualifies(entry):
-    """True when a Journal-of-Runs entry is a full run worth sending."""
+    """True when a Journal-of-Runs entry is a full run worth sending - it needs its
+    settings fingerprint, which is the run's identity on the server."""
     return (bool(entry.get("success"))
             and entry.get("kind") in COUNTED_KINDS
-            and bool(entry.get("uid")))
+            and bool(entry.get("uid"))
+            and bool(entry.get("settings_hash")))
 
 
-def run_meta(entry, gui_version):
-    """The facts sent with a run - the whitelist the server also enforces."""
-    meta = {"gui_version": str(gui_version)[:20], "kind": entry.get("kind")}
+def run_meta(entry, gui_version=None):
+    """What is sent with a run - only what the points rules need: the one-way
+    fingerprint of the setup (stored: one point per setup) and the number of
+    timesteps (checked against the minimum, not stored). ``gui_version`` is no
+    longer sent; the argument is kept for the callers."""
+    meta = {}
     if entry.get("timesteps"):
         meta["timesteps"] = int(entry["timesteps"])
-    if entry.get("duration_s") is not None:
-        meta["duration_s"] = round(float(entry["duration_s"]), 1)
     if entry.get("settings_hash"):
-        # one-way fingerprint of the setup: the server awards one point per setup
         meta["settings_hash"] = entry["settings_hash"]
     return meta
 

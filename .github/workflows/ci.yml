@@ -41,6 +41,59 @@ jobs:
       - name: Unit tests (dependency-free subset)
         run: pytest -m "not qt"
 
+  # Secrets (sast.md step 3): gitleaks over the WHOLE git history on every push -
+  # 28 commits take ~20 s. Default rules + .gitleaks.toml (Supabase secret key,
+  # service_role JWT, Google session cookies; only the publishable key is allowed).
+  # The binary is pinned to one release and its SHA-256 is written HERE, not taken
+  # from a checksum file downloaded next to it. (gitleaks-action needs a paid
+  # licence for organisation repos, hence the plain binary.)
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # every commit, not just the last one
+
+      - name: Install gitleaks (pinned + checksum-verified)
+        run: |
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$tarball" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${tarball}"
+          echo "${GITLEAKS_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "$tarball" gitleaks
+
+      - name: Scan the whole history for secrets
+        run: ./gitleaks git . --config .gitleaks.toml --log-opts="--all" --redact --no-banner
+
+  # Python SAST (sast.md step 7). The backlog was triaged to zero (step 6), so no
+  # baseline file is needed: the job FAILS only on a HIGH-severity finding with at
+  # least MEDIUM confidence; every other finding is listed in the log but does not
+  # fail the build. Scope = explicit targets (see .bandit.yaml: no exclude_dirs).
+  # The version comes from requirements_dev.txt, so local and CI runs match.
+  bandit:
+    name: Python SAST (Bandit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Bandit (version pinned in requirements_dev.txt)
+        run: pip install "$(grep -E '^bandit==' requirements_dev.txt)"
+
+      - name: All findings (report only)
+        run: bandit -c .bandit.yaml -r src cwatm_gui.py cwatm_model.py tools || true
+
+      - name: Blocking - HIGH severity, MEDIUM+ confidence
+        run: >-
+          bandit -c .bandit.yaml -r src cwatm_gui.py cwatm_model.py tools
+          --severity-level high --confidence-level medium
+
   # The real thing: install the pinned stack on Windows and import every GUI
   # module. An import error in a rarely opened window is invisible until a user
   # clicks the menu item; this surfaces it on every push.

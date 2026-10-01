@@ -45,7 +45,8 @@ def _profile(label):
             from src.gui.utils.gui_log import get_logger
             _profile_log = get_logger("app")
         _profile_log.debug("startup profile: %-28s %7.3fs", label, time.monotonic() - _T0)
-    except Exception:
+    # B110 accepted: the optional profiler cannot log its own failure
+    except Exception:  # nosec B110
         pass
 
 
@@ -86,7 +87,8 @@ def _splash(action, text=None):
             pyi_splash.update_text(text)
         elif action == "close":
             pyi_splash.close()
-    except Exception:
+    # B110 accepted: cosmetic splash; runs before logging exists (also in the model child)
+    except Exception:  # nosec B110
         pass
     return True
 
@@ -145,15 +147,21 @@ def _configure_qtwebengine():
       stays empty ("Failed to initialize WebGL"). SwiftShader is pure software, so
       the VM/RDP robustness of --disable-gpu is kept. Leaflet/Plotly 2-D views are
       unaffected.
-    - --no-sandbox + QTWEBENGINE_DISABLE_SANDBOX: Chromium's sandbox refuses to launch
+    - --no-sandbox + QTWEBENGINE_DISABLE_SANDBOX: ONLY when the sandbox cannot work
+      (web_assets.sandbox_must_be_off): Chromium refuses to launch
       QtWebEngineProcess.exe from a network path ("Can not launch QtWebEngineProcess
-      from network path if sandbox is enabled") - this app lives on a mapped network
-      share (P: -> \\\\pdrive\\...), so the sandbox must be disabled.
+      from network path if sandbox is enabled") - e.g. a source run from the P:
+      share. An installed exe (local disk) keeps the sandbox on: the map pages run
+      JavaScript, and the sandbox is what contains a browser-engine exploit
+      (security.md #2).
     """
+    from src.gui.utils.web_assets import sandbox_must_be_off   # src is importable (l. 57)
+    no_sandbox = sandbox_must_be_off()
     os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS",
-                          "--disable-gpu --no-sandbox "
-                          "--use-gl=angle --use-angle=swiftshader")
-    os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
+                          "--disable-gpu " + ("--no-sandbox " if no_sandbox else "")
+                          + "--use-gl=angle --use-angle=swiftshader")
+    if no_sandbox:
+        os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
 
 # Splash progress (frozen build only; §4.5). Since the §4.1 lazy imports the
@@ -280,7 +288,7 @@ def _close_splash():
 
 def _warm_up_heavy_modules():
     """Import the heavy scientific stack in a background thread AFTER the window
-    is shown (report §4.1): cwatm.run_cwatm (scipy/pandas/netCDF4 - first Run in
+    is shown (report §4.1): cwatm.run_cwatm (pandas/netCDF4 - first Run in
     the in-process fallback and Tools > Check Data), xarray + rasterio (Show
     Basin / Analyse > NetCDF). The user can already read/edit the settings file
     while these load; a feature used before its warm-up finishes simply blocks
@@ -343,7 +351,7 @@ def _prewarm_webengine(window):
         anchor.setAttribute(Qt.WA_DontShowOnScreen, True)
         view = QWebEngineView(anchor)
         view.resize(0, 0)
-        view.setHtml("<!doctype html><html><body></body></html>")
+        view.setHtml("<!doctype html><html><body></body></html>")  # html-safe: constant
         # Keep references alive so the WebEngine process is not torn down again.
         window._prewarm_webview = view
         window._prewarm_anchor = anchor
@@ -408,8 +416,8 @@ def _install_qt_message_handler():
     # Console lines that are the KNOWN, deliberate consequence of the QtWebEngine
     # flags this app sets in _configure_qtwebengine - Chromium complaining about
     # the very configuration we asked for:
-    #   "Sandboxing disabled by user"        <- --no-sandbox (QtWebEngineProcess.exe
-    #                                           cannot start from a network share)
+    #   "Sandboxing disabled by user"        <- --no-sandbox (only when QtWebEngineProcess
+    #                                           runs from a network share / non-Windows)
     #   "--use-gl=angle is set with          <- --disable-gpu + --use-angle=swiftshader,
     #    --disable-gpu. Expect troubles!"       i.e. software WebGL with the GPU off
     #   "GPUInfo not initialized ..."        <- no GPU process to report info, ditto
@@ -494,7 +502,8 @@ def _install_qt_message_handler():
             if stream is not None:
                 stream.write(message + "\n")
                 stream.flush()
-        except Exception:
+        # B110 accepted: a Qt message handler must never raise (Qt aborts), and logging may be what failed
+        except Exception:  # nosec B110
             pass
 
     qInstallMessageHandler(_handler)

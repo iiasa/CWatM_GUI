@@ -6,7 +6,7 @@ Two views, one at a time, switched by the two buttons below the map:
   (``get_run_locations``: lon, lat, number of runs that earned a point - no users,
   no dates);
 - **User location** (orange): the own locations of the users who ticked *Show my
-  location on the world map* (``get_user_locations``: no names, rounded to 0.01°,
+  location on the world map* (``get_user_locations``: no names, rounded to 0.5°,
   counted per place).
 
 One circle per place; the more runs (or users) at a place, the larger the circle.
@@ -53,7 +53,7 @@ MODES = {
     "users": {
         "title": "Where CWatM users are",
         "info": ("{places} place(s), {count} user(s). Each orange circle is where "
-                 "users who chose to show their location are (no names, ~1 km) - the "
+                 "users who chose to show their location are (no names, ~50 km) - the "
                  "bigger the circle, the more users. Show yours: account window ▸ "
                  "Show my location on the world map."),
     },
@@ -285,7 +285,7 @@ class WorldMapWindow(QDialog):
             # without the shared handler the basemap stays blank behind a proxy,
             # but the circles still show
             log.warning("world map: osmtile serving failed", exc_info=True)
-            self.web_view.setHtml(html)
+            self.web_view.setHtml(html)  # html-safe: our template + numbers only + pinned Leaflet
 
     def _on_loaded(self, ok):
         self._loaded = bool(ok)

@@ -95,24 +95,26 @@ class TestLedgerHook:
 
 
 class TestQualifies:
+    H = "f" * 64
+
     @pytest.mark.parametrize("entry,ok", [
-        ({"uid": "u", "success": True, "kind": "run"}, True),
-        ({"uid": "u", "success": True, "kind": "hidden"}, True),
-        ({"uid": "u", "success": True, "kind": "batch"}, True),
-        ({"uid": "u", "success": False, "kind": "run"}, False),   # failed / stopped
-        ({"uid": "u", "success": True, "kind": "stopped"}, False),
-        ({"success": True, "kind": "run"}, False),                # no uid
+        ({"uid": "u", "success": True, "kind": "run", "settings_hash": H}, True),
+        ({"uid": "u", "success": True, "kind": "hidden", "settings_hash": H}, True),
+        ({"uid": "u", "success": True, "kind": "batch", "settings_hash": H}, True),
+        ({"uid": "u", "success": False, "kind": "run", "settings_hash": H}, False),
+        ({"uid": "u", "success": True, "kind": "stopped", "settings_hash": H}, False),
+        ({"success": True, "kind": "run", "settings_hash": H}, False),   # no uid
+        ({"uid": "u", "success": True, "kind": "run"}, False),   # no fingerprint
     ])
     def test_qualifies(self, entry, ok):
         assert account_runs.qualifies(entry) is ok
 
-    def test_meta_sends_only_the_whitelist(self):
+    def test_meta_sends_only_what_the_rules_need(self):
         entry = {"uid": "u", "success": True, "kind": "batch", "timesteps": 365,
                  "duration_s": 12.34, "settings": "C:/secret/a.ini",
-                 "title": "My basin", "pathout": "C:/out"}
+                 "title": "My basin", "pathout": "C:/out", "settings_hash": self.H}
         assert account_runs.run_meta(entry, "1.07") == {
-            "gui_version": "1.07", "kind": "batch", "timesteps": 365,
-            "duration_s": 12.3}
+            "timesteps": 365, "settings_hash": self.H}
 
 
 class TestPendingQueue:

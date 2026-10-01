@@ -31,7 +31,8 @@ supabase/
     20260929120000_signup_visibility_choices.sql
                                                sign-up stores show_on_leaderboard +
                                                show_location_on_map (Register ticks,
-                                               pre-ticked in the GUI)
+                                               optional + unticked in the GUI since
+                                               2026-10-01, security.md #4)
     20260929130000_academy_progress.sql        profiles.academy_completed (CWatM
                                                Academy progress, rpc-only);
                                                academy_complete_level() = 5 points
@@ -42,6 +43,27 @@ supabase/
                                                200, 400, 800, 1500, 3000, 5000,
                                                10000 points (Ganges back, between
                                                Rhine and Danube); re-evaluated
+    20261001120000_user_location_half_degree.sql
+                                               own location rounded to 0.5° (~50 km)
+                                               by a profiles trigger (stored rows
+                                               coarsened too); get_user_locations 0.5°
+    20261001130000_shop.sql                    the Shop: shop_items (prices), purchases
+                                               (read-own), shop_buy(); earned points
+                                               vs balance (computed); existing accounts
+                                               granted Advanced + Expert; award_run /
+                                               academy_complete_level wrapped (logic in
+                                               *_core); leaderboard by balance
+    20261001140000_point_decay.sql             the actual points decay without use
+                                               (-3 % week 1, -5 %/week after, min 5;
+                                               game_config decay_*): last_active_at,
+                                               point_decay rows, touch_activity()
+                                               after every login; balance, status and
+                                               leaderboard include the decay due
+    20261001150000_minimal_point_data.sql      data minimisation: a run keeps only its
+                                               fingerprint (= source_ref) + the day;
+                                               an Academy level only the level; meta +
+                                               created_at dropped; masked email in the
+                                               export
   functions/
     login-with-username/index.ts   username + password -> session
     delete-account/index.ts        delete the caller's account (password re-check)
@@ -58,10 +80,31 @@ supabase/
 - **Points are written only by `award_run()`** (security definer). No table has an
   insert/update/delete policy for clients; the server decides how many points a
   run is worth (`game_config`).
-- **A run counts once**: `point_events` is unique on `(user_id, source, source_ref)`
-  and `source_ref` is the Journal-of-Runs `uid`.
-- **No paths or settings content leave the machine**: `award_run` keeps only
-  `gui_version`, `kind`, `timesteps`, `duration_s` from the metadata it receives.
+- **A setup counts once**: `point_events` is unique on `(user_id, source, source_ref)`
+  and a run's `source_ref` **is its settings fingerprint** (SHA-256); an Academy
+  level's is `academy:<n>`. A run without a fingerprint is not counted
+  (`no_settings_hash`).
+- **Only what the points rules need is stored** (migration `…150000_minimal_point_data`):
+  a run row = fingerprint + `earned_on` (the UTC **day**, for the daily cap); an Academy
+  row = the level only (`earned_on` null). No `meta`, no timestamp. The number of
+  timesteps is sent and checked against the minimum, never stored.
+- **Earned points vs balance** (Shop): *earned* = `sum(point_events.points)`, never
+  goes down and decides the badges; *balance* = earned − `sum(purchases.price_paid)`,
+  what can be spent and what the leaderboard ranks by. Both are **computed**, never
+  stored. Spending never removes a badge. With the point decay, balance = earned −
+  spent − recorded decay, and everything shown (status, leaderboard, Shop) uses the
+  *current* balance = balance − the decay due but not yet recorded
+  (`_current_balance`); `touch_activity` / `shop_buy` record it first (`_settle_decay`,
+  same per-user lock).
+- **Purchases are written only by `shop_buy()`** (security definer, per-user lock):
+  it checks the `shop_required_badge` (Breg), the balance, "not owned yet" and the
+  item's `requires` (Expert needs Advanced). `award_run` and
+  `academy_complete_level` are thin wrappers that add `earned_points` + `balance`;
+  their logic lives in `_award_run_core` / `_academy_complete_level_core` - change
+  those, not the wrappers.
+- **No paths or settings content leave the machine**: the GUI sends only
+  `settings_hash` + `timesteps`. `export_my_data` shows the email address **masked**
+  (`_mask_email`: `p***@g***.com`).
 
 ## Client API
 
@@ -73,11 +116,14 @@ supabase/
 | Edge Function `login-with-username` `{username, password}` | anon | `{session}` (login with username) → `auth.set_session(...)` |
 | `auth.reset_password_for_email(email)` → `verify_otp(type="recovery")` → `update_user(password)` | anon | password reset by code |
 | rpc `username_available(p_username)` | anon | bool |
-| rpc `award_run(p_run_uid, p_meta)` | user | `{status: awarded\|duplicate\|same_settings\|too_short\|daily_limit\|email_not_confirmed\|invalid_run_uid, total_points, new_badges, ...}` — `p_meta.settings_hash` (SHA-256 hex of the setup) makes it one point per distinct setup |
+| rpc `award_run(p_run_uid, p_meta)` | user | `{status: awarded\|duplicate\|same_settings\|too_short\|daily_limit\|email_not_confirmed\|invalid_run_uid, total_points, earned_points, balance, new_badges, ...}` — `p_meta.settings_hash` (SHA-256 hex of the setup) makes it one point per distinct setup |
 | rpc `record_run_location(p_lon, p_lat)` | user | `{status: recorded\|no_consent\|invalid_location\|daily_limit}` — adds 1 to the anonymous count of (round(lon,2), round(lat,2), month); stores **no user** |
-| rpc `get_my_status()` | user | `{profile, total_points, badges, next_badge}` |
-| rpc `export_my_data()` | user | everything stored about the user (GDPR export) |
-| rpc `get_leaderboard(p_limit)` | anon | opt-in users only: rank, username, country, points, top_badge |
+| rpc `get_my_status()` | user | `{profile, total_points (= earned), earned_points, balance, purchases, badges, next_badge}` |
+| rpc `touch_activity()` | user | called by the GUI after every login: records the point decay due, restarts the clock; `get_my_status()` + `{status: active, decayed_points, inactive_weeks}` |
+| rpc `get_shop_items()` | anon | the price list: code, kind (`level`/`animal`), name, price, requires |
+| rpc `shop_buy(p_item)` | user | `get_my_status()` + `{status: bought\|unknown_item\|already_owned\|badge_required\|requires_item\|not_enough_points, item, price, requires?, missing?, badge?}` |
+| rpc `export_my_data()` | user | everything stored about the user (GDPR export), incl. purchases, earned_points, balance |
+| rpc `get_leaderboard(p_limit)` | anon | opt-in users only: rank, username, country, total_points (= **balance**, ranked by it), top_badge, earned_points |
 | `from("profiles").update({...}).eq("id", uid)` | user | edit own username/name/country/institute/leaderboard flag |
 | Edge Function `delete-account` `{password}` + Bearer token | user | deletes the account and all its data |
 

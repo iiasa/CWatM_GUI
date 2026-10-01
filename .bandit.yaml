@@ -1,0 +1,35 @@
+# Bandit configuration for CWatM GUI (sast.md step 7; CI job "bandit").
+#
+# Scope: the GUI's own code - src, cwatm_gui.py, cwatm_model.py, tools - given as
+# the EXPLICIT targets on the command line (CI job "bandit"). tests/ and cwatm/ are
+# simply not listed: tests use assert and fake data by design; cwatm/ is the model,
+# which we must not change (report-only CodeQL, sast.md step 12).
+#
+# Deliberately NO exclude_dirs: Bandit matches those as SUBSTRINGS of the path, so
+# "cwatm" also excluded cwatmpublic/ (every file in this repo), cwatm_gui.py and
+# cwatm_process_worker.py - a scan that silently found nothing.
+#
+# Every skipped check below says why - no unexplained skips.
+
+skips:
+  # B105/B106/B107 "hardcoded password": fire on the WORDS password/token - our error
+  # messages and error codes ("weak_password", "refresh_token_not_found") and a colour
+  # token argument. Real secrets are found by gitleaks (.gitleaks.toml, CI job
+  # "secrets") with rules for the secrets this project can actually leak.
+  - B105
+  - B106
+  - B107
+  # B311 "random": used for the sparkline animal and the Academy's random basin -
+  # never for anything security-related (tokens come from Supabase).
+  - B311
+  # B404 / B603 "subprocess": we start programs with an argument LIST only;
+  # tools/check_invariants.py forbids shell=, os.system, os.popen and single-string
+  # commands - a stricter, exact rule than Bandit's generic warning.
+  - B404
+  - B603
+
+# B101 "assert": fine in the developer tool scripts (never part of the GUI).
+assert_used:
+  skips:
+    - "*/tools/*"
+    - "tools/*"

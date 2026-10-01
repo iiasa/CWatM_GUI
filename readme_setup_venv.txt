@@ -81,7 +81,6 @@ pyinstaller cwatm_gui_dir.spec
 ##pip install -r requirements.txt
 
 pip install numpy
-pip install scipy
 pip install netCDF4
 pip install pandas
 pip install openpyxl

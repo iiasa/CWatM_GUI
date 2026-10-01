@@ -17,9 +17,9 @@ SRC = "src/gui"
 
 # Heavy third-party stacks that must NOT be imported at module level on the startup
 # path (CLAUDE.md "fast startup / lazy imports"). `cwatm.version` is fine - it is a
-# tiny module; `cwatm.run_cwatm` is not, it drags in scipy/pandas/netCDF4.
+# tiny module; `cwatm.run_cwatm` is not, it drags in pandas/netCDF4.
 HEAVY = {
-    "xarray", "rasterio", "plotly", "folium", "netCDF4", "scipy", "pandas",
+    "xarray", "rasterio", "plotly", "folium", "netCDF4", "pandas",
     "matplotlib", "flopy", "branca", "openpyxl",
     # CWatM account: only src/gui/utils/account_client.py may import these, lazily.
     "supabase", "supabase_auth", "postgrest", "pydantic", "keyring",
@@ -85,8 +85,152 @@ def module_level_imports(tree):
     return out
 
 
+_SHELL_CALLS = {("os", "system"), ("os", "popen"), ("subprocess", "getoutput"),
+                ("subprocess", "getstatusoutput")}
+_SUBPROCESS_RUNNERS = {"Popen", "run", "call", "check_call", "check_output"}
+
+
+def shell_problems(path, tree):
+    """Programs are started with an argument LIST, never through a shell (security
+    review, bandit B602/B605/B607): no shell=True, no os.system/os.popen/getoutput,
+    and no subprocess call whose command is one string (that is shell parsing on
+    POSIX and command-line re-parsing on Windows)."""
+    out = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "shell" and not (isinstance(kw.value, ast.Constant)
+                                          and kw.value.value is False):
+                out.append(f"{path}:{node.lineno}: shell=... - pass an argument list "
+                           f"and never use a shell")
+        f = node.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            pair = (f.value.id, f.attr)
+            if pair in _SHELL_CALLS:
+                out.append(f"{path}:{node.lineno}: {pair[0]}.{pair[1]}() runs a shell - "
+                           f"use subprocess with an argument list (or QProcess)")
+            if f.value.id == "subprocess" and f.attr in _SUBPROCESS_RUNNERS and \
+                    node.args and isinstance(node.args[0], (ast.Constant, ast.JoinedStr,
+                                                            ast.BinOp)):
+                out.append(f"{path}:{node.lineno}: subprocess.{f.attr}() with one command "
+                           f"string - pass a list of arguments")
+    return out
+
+
+import re as _re
+
+_UNSAFE_LOADERS = {("pickle", "load"), ("pickle", "loads"), ("marshal", "load"),
+                   ("marshal", "loads"), ("shelve", "open"), ("yaml", "unsafe_load"),
+                   ("yaml", "full_load")}
+_RICH_TEXT_CALLS = {"setHtml", "insertHtml", "setMarkdown", "appendHtml"}
+_SECRET_RE = _re.compile(r"sb_secret_[A-Za-z0-9_-]{8,}"
+                         r"|eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.")
+
+
+def content_problems(path, tree, raw):
+    """sast.md step 4 - four rules, GUI code only:
+    a) no pickle / marshal / shelve / unsafe yaml for reading data (running code
+       hidden in a file); yaml.load only with a Safe loader;
+    b) no verify=False (switching off TLS certificate checks);
+    c) no Supabase secret key / JWT literal in the code (gitleaks checks too);
+    d) every rich-text sink (setHtml / insertHtml / setMarkdown / appendHtml) carries
+       a '# html-safe: <reason>' note, and setOpenExternalLinks(True) is not used -
+       links go through open_path.make_links_safe()."""
+    out = []
+    lines = raw.split("\n")
+
+    def noted(lineno):
+        here = lines[lineno - 1] if lineno - 1 < len(lines) else ""
+        before = lines[lineno - 2] if lineno >= 2 else ""
+        return "html-safe:" in here or "html-safe:" in before
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) \
+                and _SECRET_RE.search(node.value):
+            out.append(f"{path}:{node.lineno}: a secret key / JWT literal - secrets "
+                       f"never belong in the GUI")
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if kw.arg == "verify" and isinstance(kw.value, ast.Constant) \
+                    and kw.value.value is False:
+                out.append(f"{path}:{node.lineno}: verify=False switches off the TLS "
+                           f"certificate check")
+        f = node.func
+        if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name):
+            pair = (f.value.id, f.attr)
+            if pair in _UNSAFE_LOADERS:
+                out.append(f"{path}:{node.lineno}: {pair[0]}.{pair[1]}() can run code "
+                           f"hidden in the data - use json / a safe loader")
+            if pair == ("yaml", "load") and not any(
+                    kw.arg == "Loader" and "Safe" in ast.unparse(kw.value)
+                    for kw in node.keywords):
+                out.append(f"{path}:{node.lineno}: yaml.load() without a Safe loader - "
+                           f"use yaml.safe_load()")
+        if isinstance(f, ast.Attribute):
+            if f.attr in _RICH_TEXT_CALLS and not noted(node.lineno):
+                out.append(f"{path}:{node.lineno}: {f.attr}() renders rich text - escape "
+                           f"outside text and add '# html-safe: <reason>'")
+            if f.attr == "setOpenExternalLinks" and node.args and \
+                    isinstance(node.args[0], ast.Constant) and node.args[0].value is True:
+                out.append(f"{path}:{node.lineno}: setOpenExternalLinks(True) hands any "
+                           f"link to the desktop (a file:// link to a program runs it) - "
+                           f"use open_path.make_links_safe()")
+    return out
+
+
+_NOSEC_RE = _re.compile(r"#\s*nosec\b(.*)$")
+
+
+def nosec_problems(path, raw):
+    """A Bandit '# nosec' must name the check(s) it silences ('# nosec B110') and
+    have its reason on the line above ('# B110 accepted: <why>') - never a bare
+    '# nosec', which would silence every check on that line, unexplained (sast.md)."""
+    import io
+    import tokenize
+    out = []
+    lines = raw.split("\n")
+    comments = {}                       # line index -> comment text (real comments only)
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(raw).readline):
+            if tok.type == tokenize.COMMENT:
+                comments[tok.start[0] - 1] = tok.string
+    except (tokenize.TokenError, SyntaxError):
+        return out
+    for i, comment in sorted(comments.items()):
+        m = _NOSEC_RE.search(comment)
+        if not m:
+            continue
+        ids = _re.findall(r"\bB\d{3}\b", m.group(1))
+        if not ids:
+            out.append(f"{path}:{i + 1}: bare '# nosec' - name the check, e.g. "
+                       f"'# nosec B110'")
+            continue
+        above = lines[i - 1] if i else ""
+        for tid in ids:
+            if f"{tid} accepted:" not in above:
+                out.append(f"{path}:{i + 1}: '# nosec {tid}' needs its reason on the "
+                           f"line above: '# {tid} accepted: <why>'")
+    return out
+
+
 def check():
     problems = []
+
+    # 0. No shell, and the step-4 content rules, in the GUI's own code (also the two
+    #    entry scripts); and every Bandit suppression named and explained (also in
+    #    tools/).
+    for path in list(py_files(SRC)) + ["cwatm_gui.py", "cwatm_model.py"]:
+        if os.path.exists(path):
+            raw = open(path, encoding="utf-8").read()
+            tree = ast.parse(raw)
+            problems += shell_problems(path, tree)
+            problems += content_problems(path, tree, raw)
+    for path in list(py_files(SRC)) + list(py_files("tools")) + [
+            "cwatm_gui.py", "cwatm_model.py"]:
+        if os.path.exists(path):
+            problems += nosec_problems(path, open(path, encoding="utf-8").read())
 
     for path in py_files(SRC):
         raw = open(path, encoding="utf-8", newline="").read()

@@ -1,0 +1,37 @@
+# gitleaks configuration for CWatM GUI (sast.md step 3, CI job "secrets").
+#
+# Default gitleaks rules + rules for the secrets THIS project could leak, which the
+# defaults do not know. The only allowlisted value is the Supabase PUBLISHABLE key -
+# public by design (it ships in every GUI) - matched by its exact value, NOT by file:
+# a real secret pasted into account_config.py still fails.
+
+[extend]
+useDefault = true
+
+# Supabase secret key (new format) - full database access, bypasses row level security.
+[[rules]]
+id = "supabase-secret-key"
+description = "Supabase secret key (sb_secret_...) - never in the GUI or the repo"
+regex = '''\bsb_secret_[A-Za-z0-9_-]{20,}'''
+keywords = ["sb_secret_"]
+
+# Supabase legacy service_role JWT: the payload carries "role":"service_role". Its
+# base64url form depends on where it starts in the payload (offset mod 3), so all
+# three encodings are listed - a single one misses 2 of 3 real tokens.
+[[rules]]
+id = "supabase-service-role-jwt"
+description = "Supabase service_role JWT - full database access"
+regex = '''eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]*(?:InJvbGUiOiJzZXJ2aWNlX3JvbG|Jyb2xlIjoic2VydmljZV9yb2xl|icm9sZSI6InNlcnZpY2Vfcm9sZ)[A-Za-z0-9_-]*\.[A-Za-z0-9_-]{10,}'''
+keywords = ["injvbguioijzzxj2awnlx3jvbg", "jyb2xlijoic2vydmljzv9yb2xl", "icm9szsi6innlcnzpy2vfcm9sz"]
+
+# Google session cookies (CWatM AI / NotebookLM login state) - a logged-in Google account.
+[[rules]]
+id = "google-session-cookie"
+description = "Google account session cookie (e.g. a NotebookLM storage_state.json)"
+regex = '''__Secure-[13]PSID[A-Z]*["']?\s*[:=,]\s*(?:"value"\s*:\s*)?["']?[A-Za-z0-9._\-]{30,}'''
+keywords = ["__secure-1psid", "__secure-3psid"]
+
+[[allowlists]]
+description = "Supabase publishable key - public by design (src/gui/utils/account_config.py)"
+regexTarget = "secret"
+regexes = ['''^sb_publishable_nN1YHaYvwk80HMo82aAS-Q_Q71ibQSl$''']

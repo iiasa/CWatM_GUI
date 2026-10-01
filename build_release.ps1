@@ -34,7 +34,12 @@ param(
     [ValidateSet('venv', 'sync', 'build', 'installer', 'copyback')]
     [string[]]$Steps = @('venv', 'sync', 'build', 'installer', 'copyback'),
     # Re-mirror the venv even if <Work>\venv already has a python.exe.
-    [switch]$ForceVenv
+    [switch]$ForceVenv,
+    # Authenticode signing (security.md #3): the SHA-1 thumbprint of a code-signing
+    # certificate in the current user's store (Cert:\CurrentUser\My). Default: the
+    # environment variable CWATM_SIGN_THUMBPRINT. Empty = build unsigned (a warning).
+    [string]$SignThumbprint = $env:CWATM_SIGN_THUMBPRINT,
+    [string]$TimestampUrl = 'http://timestamp.digicert.com'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,6 +71,21 @@ function Measure-Step([string]$Name, [scriptblock]$Body) {
 }
 
 $venvPython = Join-Path $Work 'venv\Scripts\python.exe'
+
+function Invoke-Sign([string[]]$Files) {
+    # Signs with signtool (Windows SDK) when a certificate is configured; otherwise
+    # says the build is unsigned. A signed exe/setup lets Windows and users verify
+    # that it comes from IIASA and was not changed afterwards.
+    if (-not $SignThumbprint) {
+        Write-Host "NOT signed (no -SignThumbprint / CWATM_SIGN_THUMBPRINT): $($Files -join ', ')" -ForegroundColor Yellow
+        return
+    }
+    $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -First 1
+    if (-not $signtool) { throw 'signtool.exe not found - install the Windows SDK signing tools.' }
+    & $signtool.FullName sign /sha1 $SignThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 @Files
+    if ($LASTEXITCODE -ne 0) { throw "signtool failed (exit $LASTEXITCODE)" }
+}
 
 # --------------------------------------------------------------- venv (local copy)
 if ($Steps -contains 'venv') {
@@ -117,6 +137,9 @@ if ($Steps -contains 'build') {
         foreach ($p in 'dist\CWatM_GUI\CWatM_GUI.exe', 'dist\CWatM_GUI\_internal\CWatM_model.exe') {
             if (-not (Test-Path (Join-Path $Work $p))) { throw "Build did not produce $p" }
         }
+        # sign both exes BEFORE the installer packs them
+        Invoke-Sign @((Join-Path $Work 'dist\CWatM_GUI\CWatM_GUI.exe'),
+                      (Join-Path $Work 'dist\CWatM_GUI\_internal\CWatM_model.exe'))
     }
 }
 
@@ -133,6 +156,7 @@ if ($Steps -contains 'installer') {
     Measure-Step 'installer' {
         & $iscc (Join-Path $Work 'installer\CWatM_GUI.iss')
         if ($LASTEXITCODE -ne 0) { throw "ISCC failed (exit $LASTEXITCODE)" }
+        Invoke-Sign @((Join-Path $Work 'installer\Output\CWatM_GUI_Setup.exe'))
     }
 }
 

@@ -154,7 +154,7 @@ try:
                 buf.open(QBuffer.ReadOnly)
                 job.reply(b"text/html", buf)
                 return
-            import re as _re, os as _os, tempfile
+            import re as _re, os as _os
             # A WMS GetMap request (Show Basin2, EPSG:4326, and CWatM Academy's
             # outlet-picker map): osmtile://wms/service?<query>. The query
             # (LAYERS/BBOX/SRS/...) is forwarded verbatim to a real OSM WMS
@@ -165,9 +165,12 @@ try:
                 import hashlib
                 q = url.query()
                 real = "https://ows.terrestris.de/osm/service?" + q
-                cache = _os.path.join(tempfile.gettempdir(), 'cwatm_wms')
-                _os.makedirs(cache, exist_ok=True)
-                fp = _os.path.join(cache, hashlib.md5(q.encode("utf-8")).hexdigest() + ".png")
+                # per-user cache, not the shared temp dir (security.md #2)
+                from src.gui.utils.web_assets import user_cache_dir
+                cache = user_cache_dir('wms')
+                # md5 only names the cache file (not security) - same value as before
+                fp = _os.path.join(cache, hashlib.md5(
+                    q.encode("utf-8"), usedforsecurity=False).hexdigest() + ".png")
                 try:
                     if not _os.path.exists(fp):
                         import requests
@@ -202,8 +205,8 @@ try:
             provider, z, x, y = m.groups()
             tmpl = _TILE_PROVIDERS.get(provider, _TILE_PROVIDERS["standard"])
             tile_url = tmpl.format(z=z, x=x, y=y)
-            cache = _os.path.join(tempfile.gettempdir(), 'cwatm_tiles')
-            _os.makedirs(cache, exist_ok=True)
+            from src.gui.utils.web_assets import user_cache_dir
+            cache = user_cache_dir('tiles')
             fp = _os.path.join(cache, "%s_%s_%s_%s.png" % (provider, z, x, y))
             try:
                 if not _os.path.exists(fp):

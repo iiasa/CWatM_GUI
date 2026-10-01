@@ -4,6 +4,89 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
+## CWatM GUI 1.10 — what is new
+
+*Released 30 September 2026. Previous release: 1.07 (18 September 2026).*
+
+The headline of this release is **CWatM Academy**, a guided introduction to CWatM built
+into the GUI. It comes with an optional **CWatM account** — points for runs, river
+badges, a leaderboard and a world map of where CWatM is used — plus new NetCDF
+statistics and two more languages.
+
+---
+
+### 1. CWatM Academy
+
+A guided, **ten-level** introduction to CWatM. Open it with the **CWatM Academy** button
+in the menu bar (left of CWatM AI) or tick **Preferences ▸ CWatM Academy ▸ Enable CWatM
+Academy**, which also opens it at every start until it is turned off.
+
+- The Academy switches the skill level to **Beginner**, so only the essential sections
+  and menu entries are shown; you can switch back at any time.
+- **Level 1 is a small game**: the *Field Test* shows one of the world's 50 largest
+  river basins and asks for its outlet. A click on any of the basin's four biggest
+  upstream cells counts; *Another basin* draws a new one.
+- **Level 2 (Running CWatM)** leads straight to **Analyse ▸ Watercycle** to read the
+  water balance of your own run — that entry is therefore visible at every skill level.
+- **From Level 4 on a login is needed.** Selecting such a level offers the login.
+- **Progress follows your login** (*Link CWatM Academy to your login*, default on): it
+  is stored in your account, so it continues on any computer, and every finished level
+  earns **5 points** — once per level. *Start Over* clears the progress, not the points.
+  Logged out or unlinked, progress is kept locally and never merged into an account.
+
+### 2. CWatM account (optional)
+
+An **account button** in the menu bar (left of ⋮) opens **Log in · Register · Forgot
+password**. Nothing changes for a user who never logs in.
+
+- **Points for runs**: every successful full run — main run, Windowed Run or Batch
+  scenario — earns **1 point**, once per distinct setup (changing only `Title`,
+  `PathOut` or the outputs is the same setup). Runs made while offline are queued and
+  sent at your next login.
+- **River badges** as the points add up, shown with your points in the account window.
+- **Info ▸ Leaderboard** (while logged in): rank, user, country, highest badge and
+  points of the users who opted in.
+- **Advanced and Expert skill levels now need a login**; logged out, the GUI runs in
+  Beginner.
+- **Preferences ▸ Account**: *Stay logged in on this computer* and *Count my full CWatM
+  runs*. The login is kept in the operating system's credential store.
+- **Privacy**: no paths and no settings content are sent. The notice is under
+  **Help ▸ CWatM account privacy**; the account window offers *Export my data* and
+  *Delete account*.
+
+### 3. Info ▸ World Map
+
+A zoomable world map, visible to everyone without a login, with two layers:
+**CWatM runs** — where CWatM was applied, as anonymous counts per location that cannot
+be linked to an account — and **User location**, showing only users who ticked *Show my
+location on the world map*, without names.
+
+### 4. Analyse ▸ NetCDF
+
+- **File ▸ Load netcdf** opens another `.nc` from the same folder in the same window.
+- **Action ▸ Calculate mean** and **Calculate percentile** reduce the viewed variable
+  over time and save the result as `<var>_mean.nc` / `<var>_<p>_percentile.nc` next to
+  the original, with all its metadata plus the source file and time range, then show it.
+
+### 5. Languages
+
+**Français** and **Español** join the list — thirteen GUI languages in all.
+
+### 6. Smaller changes and fixes
+
+- **CWatM AI**: a Gemini notebook can be chosen (*Preferences ▸ Editor & Dates ▸
+  NotebookLM*).
+- **Dark Mode / Mikhail**: colour corrections, including the Watercycle window.
+- The Windows **taskbar icon** is fixed and the logo refined.
+- **SciPy is no longer required**: CWatM replaced it with its own methods, so it is
+  gone from `requirements.txt`, `requirements_linux.txt` and the build.
+
+### 7. Tests
+
+New tests for the account (login, runs, privacy notice), the Academy and its Field
+Test, and the NetCDF statistics.
+
+
 ## CWatM GUI 1.07 — what is new
 
 *Released 18 September 2026. Previous release: 1.06 (22 August 2026).*

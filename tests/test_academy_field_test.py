@@ -1,4 +1,4 @@
-"""CWatM Academy Level 1 Field Test: a random basin of the 50 largest, graded
+"""CWatM Academy Level 1 Field Test: a random basin of all 100, graded
 against its 4 biggest upstream cells on the bundled 30' grid."""
 
 import random
@@ -18,10 +18,10 @@ def grid(qapp):
     return np.asarray(data, dtype=float), np.asarray(lats), np.asarray(lons)
 
 
-def test_pool_is_the_50_largest():
+def test_pool_is_all_100_basins():
     basins = ft.load_basins()
-    assert len(basins) == 50
-    assert all(b["rank"] <= 50 for b in basins)
+    assert len(basins) == 100
+    assert all(b["rank"] <= 100 for b in basins)
     assert "Danube" in {b["name"] for b in basins}
     assert basins[0]["name"] == "Amazon"
 
@@ -47,6 +47,32 @@ def test_grading_snaps_to_cells(grid):
     lat, lon = targets[1]
     assert ft.is_target(lats, lons, lat + 0.1, lon - 0.1, targets)   # same cell
     assert not ft.is_target(lats, lons, 0.0, 0.0, targets)
+
+
+def test_distance_shrinks_longitude_with_latitude():
+    assert ft.distance_km(0, 0, 0, 1) == pytest.approx(111.19, rel=1e-3)
+    assert ft.distance_km(60, 0, 60, 1) == pytest.approx(111.19 / 2, rel=1e-2)
+    assert ft.distance_km(0, 0, 1, 0) == pytest.approx(111.19, rel=1e-3)
+    assert ft.distance_km(0, 179.5, 0, -179.5) == pytest.approx(111.19, rel=1e-3)
+
+
+def test_a_miss_reports_the_distance(qapp):
+    from PySide6.QtCore import QCoreApplication, QEvent
+    win = ft.BasinFieldTestWindow()
+    try:
+        b = win._basin
+        lat = b["lat"] + 10 if b["lat"] < 70 else b["lat"] - 10
+        win._on_web_title(f"NILETEST {b['lon']}|{lat}|1")
+        assert not win.confirm_button.isEnabled()
+        assert "Not the outlet - you are 1,112 kilometers away." in \
+            win.status_label.text()
+    finally:
+        win.close()
+        if win.web_view is not None:
+            win.web_view.setPage(None)
+        win.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+        qapp.processEvents()
 
 
 def test_view_contains_the_outlet_off_centre():

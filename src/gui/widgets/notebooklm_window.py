@@ -164,7 +164,10 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
 
         # Transcript (read-only, rich text so we can colour Q/A/status/error)
         self.transcript = QTextBrowser()
-        self.transcript.setOpenExternalLinks(True)
+        # Links in AI answers come from outside: never straight to the desktop (a
+        # file:// link to a program would run it) - open_link() decides (sast.md #4)
+        from src.gui.utils.open_path import make_links_safe
+        make_links_safe(self.transcript)
         layout.addWidget(self.transcript, 1)
 
         # Settings-bridge action: explain the settings editor's current line.
@@ -476,7 +479,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         try:
             html = self._settings.value("notebooklm/transcript_html", "", type=str)
             if html and html.strip():
-                self.transcript.setHtml(html)
+                self.transcript.setHtml(html)  # html-safe: our own transcript (escaped / html=False markdown); links via open_link
                 sb = self.transcript.verticalScrollBar()
                 sb.setValue(sb.maximum())
                 restored = True
@@ -495,7 +498,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
 
     # ---------------------------------------------------------------- transcript
     def _append_html(self, html):
-        self.transcript.append(html)
+        self.transcript.append(html)  # html-safe: callers escape (_esc) or render markdown with html=False
         sb = self.transcript.verticalScrollBar()
         sb.setValue(sb.maximum())
 
@@ -545,7 +548,10 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         text = text or ""
         try:
             from markdown_it import MarkdownIt
-            md = MarkdownIt("gfm-like", {"breaks": True, "linkify": False})
+            # html=False: raw HTML in an answer is shown as text, never rendered -
+            # the answer comes from outside (the preset would otherwise allow it)
+            md = MarkdownIt("gfm-like", {"breaks": True, "linkify": False,
+                                         "html": False})
             html = md.render(text).strip()
             # Unwrap a single top-level <p>…</p> so a short answer doesn't carry the
             # paragraph's extra top/bottom margin (keeps it to one carriage return).

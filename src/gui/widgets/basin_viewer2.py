@@ -93,47 +93,19 @@ def _strip_unused_assets(html):
 
 
 # ---------------------------------------------------------------------------
-# Offline asset inlining: fetch folium's CDN JS/CSS (Leaflet, awesome-markers,
-# font-awesome, bootstrap, jquery) with Python's network stack - which works
-# behind the proxy that blocks Chromium - and inline them into the page so the
-# map and the folium.Icon pins render without any Chromium CDN request. CSS
-# url() assets (marker PNGs, fonts) are inlined as data: URIs too.
-# Everything here is defensive: any failure leaves the original markup, so the
-# page is never worse than plain folium.
+# Offline asset inlining: folium's CDN JS/CSS (Leaflet) is inlined into the page
+# from the copies SHIPPED with the app (assets/web, pinned by SHA-256 in
+# web_assets.PINNED), so the map renders without any network request for code -
+# and no code from the network ever runs (security.md #2). CSS url() assets
+# (Leaflet's PNGs) are inlined as data: URIs too. An unpinned remote script or
+# stylesheet is removed from the page.
 # ---------------------------------------------------------------------------
-def _web_cache_dir():
-    d = os.path.join(tempfile.gettempdir(), "cwatm_web")
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
-_WEB_SESSION = None
-
-
-def _web_session():
-    global _WEB_SESSION
-    if _WEB_SESSION is None:
-        import requests
-        s = requests.Session()
-        s.headers.update({"User-Agent": "CWatM-GUI/1.0 (basin viewer2)"})
-        _WEB_SESSION = s
-    return _WEB_SESSION
-
-
 def _dl_bytes(url):
-    """Download a URL to bytes, cached on disk by name."""
-    import hashlib
-    key = hashlib.md5(url.encode("utf-8")).hexdigest()
-    ext = os.path.splitext(url.split("?")[0])[1][:6] or ".bin"
-    fp = os.path.join(_web_cache_dir(), key + ext)
-    if not os.path.exists(fp):
-        r = _web_session().get(url, timeout=15)
-        if r.status_code != 200:
-            raise RuntimeError(f"HTTP {r.status_code} for {url}")
-        with open(fp, "wb") as f:
-            f.write(r.content)
-    with open(fp, "rb") as f:
-        return f.read()
+    """The bytes of a page asset - ONLY the files shipped with the app and pinned by
+    SHA-256 (web_assets.PINNED). Nothing is downloaded and run at run time; any other
+    URL raises web_assets.UnpinnedAsset (security.md #2)."""
+    from src.gui.utils.web_assets import pinned_bytes
+    return pinned_bytes(url)
 
 
 def _dl_text(url):
@@ -175,9 +147,10 @@ def _inline_css_urls(css, base_url):
 
 
 def _inline_remote_assets(html):
-    """Inline every http(s) <script src> and <link rel=stylesheet href> so the
-    page is self-contained (proxy-proof). Fully defensive - returns the original
-    html on any failure."""
+    """Inline every http(s) <script src> and <link rel=stylesheet href> from the
+    pinned files shipped with the app, so the page is self-contained (proxy-proof).
+    A remote script or stylesheet that is NOT pinned is REMOVED - never fetched, so
+    an unknown script never runs (security.md #2)."""
     try:
         def sub_script(m):
             url = m.group(1)
@@ -186,7 +159,8 @@ def _inline_remote_assets(html):
             try:
                 return "<script>\n%s\n</script>" % _dl_text(url)
             except Exception:
-                return m.group(0)
+                log.warning("map page: unpinned script removed: %s", url)
+                return "<!-- removed unpinned script -->"
 
         def sub_link(m):
             url = m.group(1)
@@ -196,7 +170,8 @@ def _inline_remote_assets(html):
                 css = _inline_css_urls(_dl_text(url), url)
                 return "<style>\n%s\n</style>" % css
             except Exception:
-                return m.group(0)
+                log.warning("map page: unpinned stylesheet removed: %s", url)
+                return "<!-- removed unpinned stylesheet -->"
 
         html = re.sub(r'<script\b[^>]*\bsrc=["\']([^"\']+)["\'][^>]*>\s*</script>',
                       sub_script, html, flags=re.IGNORECASE)

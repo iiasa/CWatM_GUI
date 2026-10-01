@@ -264,7 +264,6 @@ hiddenimports = rasterio_hiddenimports + xarray_hiddenimports + dask_hiddenimpor
     'pyi_splash',
     'numpy',
     'pandas',
-    'scipy',
     'netCDF4',
     'cftime',   # netCDF/xarray time decoding (non-standard calendars, num2date)
     'configparser',
@@ -308,6 +307,9 @@ datas = [
     (os.path.join(spec_root, 'assets', '*'), 'assets'),
     # CWatM account river badges (assets/badges/<badge code>.png - badge_images.py)
     (os.path.join(spec_root, 'assets', 'badges', '*.png'), 'assets/badges'),
+    # Leaflet for the map windows, shipped + SHA-256-pinned (src/gui/utils/
+    # web_assets.py, security.md #2) - nothing is downloaded and run at run time
+    (os.path.join(spec_root, 'assets', 'web', '*'), 'assets/web'),
     (os.path.join(spec_root, 'cwatm', 'metaNetcdf.xml'), 'cwatm'),
     # Documentation shown by the Help menu
     (os.path.join(spec_root, 'documentation', 'CWatM_GUI_Documentation.md'), 'documentation'),
@@ -457,7 +459,7 @@ model_a = Analysis(
     # matplotlib must be in ITS graph too.
     hiddenimports=cwatm_hiddenimports + rasterio_hiddenimports + openpyxl_hiddenimports
                   + modflow_hiddenimports
-                  + ['numpy', 'pandas', 'scipy', 'netCDF4', 'cftime'],
+                  + ['numpy', 'pandas', 'netCDF4', 'cftime'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

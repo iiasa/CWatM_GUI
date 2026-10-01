@@ -71,3 +71,34 @@ class TestBuildBatchScript:
         lines = content.split("\r\n")
         assert lines[0] == "@echo off"
         assert not lines[1].startswith("cd /d")
+
+
+class TestNoShellInjection:
+    """The .bat is a shell script: a path must reach the program unchanged - no
+    %VAR% expansion, no command operators (security review: B602/B605-type)."""
+
+    HOSTILE = r"C:\data %PATH% & calc ^ x\set%USERNAME%tings (1).ini"
+
+    def test_percent_is_doubled_and_quoted(self):
+        assert bfc._quote(r"C:\a%b%\c.ini") == r'"C:\a%%b%%\c.ini"'
+
+    def test_quote_or_line_break_is_refused(self):
+        for bad in ('C:\\a"b.ini', "C:\\a\nb.ini", "C:\\a\rb.ini"):
+            with pytest.raises(ValueError):
+                bfc._quote(bad)
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="needs cmd.exe")
+    def test_cmd_passes_the_path_through_verbatim(self, tmp_path):
+        # A real cmd.exe runs a .bat built with _quote: the program must receive
+        # the hostile path as ONE argument, character for character.
+        import subprocess
+        out = tmp_path / "argv.txt"
+        probe = "import sys,pathlib; pathlib.Path(sys.argv[1]).write_text(" \
+                "repr(sys.argv[2:]), encoding='utf-8')"
+        line = " ".join(bfc._quote(t) for t in
+                        [sys.executable, "-c", probe, str(out), self.HOSTILE, "-l"])
+        bat = tmp_path / "probe.bat"
+        bat.write_text("@echo off\r\n" + line + "\r\n", encoding="utf-8")
+        subprocess.run(["cmd", "/c", str(bat)], check=True, timeout=60,
+                       capture_output=True)
+        assert out.read_text(encoding="utf-8") == repr([self.HOSTILE, "-l"])

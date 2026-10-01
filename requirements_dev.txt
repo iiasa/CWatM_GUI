@@ -12,3 +12,6 @@
 -r requirements.txt
 
 pytest==9.1.1
+
+# SAST (sast.md step 7): bandit -c .bandit.yaml -r src cwatm_gui.py cwatm_model.py tools
+bandit==1.9.4

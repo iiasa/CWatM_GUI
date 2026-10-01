@@ -343,12 +343,14 @@ class MenuBuilderMixin:
         prefs_button.setCursor(Qt.PointingHandCursor)
         prefs_button.clicked.connect(lambda: self.open_preferences())
         self._preferences_button = prefs_button
-        # The corner holds one widget: the CWatM account button (account_ui.py -
-        # "Log in" / "<user> · <points> pt") left of the ⋮ button.
+        # The corner holds one widget: the Shop button (only while logged in with
+        # the Breg badge), the CWatM account button (account_ui.py - "Log in" /
+        # "<user> · <points> pt") and the ⋮ button.
         corner = QWidget()
         corner_lay = QHBoxLayout(corner)
         corner_lay.setContentsMargins(0, 0, 0, 0)
         corner_lay.setSpacing(2)
+        corner_lay.addWidget(self._create_shop_button())
         corner_lay.addWidget(self._create_account_button())
         corner_lay.addWidget(prefs_button)
         menu_bar.setCornerWidget(corner, Qt.TopRightCorner)
@@ -488,13 +490,14 @@ class MenuBuilderMixin:
             }}
             /* the CWatM account button left of the ⋮ - menu-item sized text, not the
                large ⋮ glyph (pt, for the same reason as above) */
-            QMenuBar QToolButton#accountButton {{
+            QMenuBar QToolButton#accountButton, QMenuBar QToolButton#shopButton {{
                 font-size: 9pt;
                 font-weight: normal;
                 color: {theme.c('accent')};
                 padding: 2px 8px;
             }}
-            QMenuBar QToolButton#accountButton:hover {{
+            QMenuBar QToolButton#accountButton:hover,
+            QMenuBar QToolButton#shopButton:hover {{
                 color: {theme.c('menu_sel_text')};
             }}
         """

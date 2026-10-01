@@ -30,7 +30,7 @@ Check Data's double-click-to-jump uses). Finishing the guide is the end of
 the *teaching* - Level 1 itself isn't done until the graded Field Test
 passes: ``_on_guide_finished`` shows a "will you accept this mission"
 briefing (``academy_guide.show_mission_briefing``) for locating the outlet of
-a big river basin (a random one of the 50 largest) unaided, then
+a big river basin (a random one of the 100 largest) unaided, then
 ``_start_nile_field_test`` opens ``academy_field_test.BasinFieldTestWindow``
 for the actual graded pick; only
 once that passes (``_on_nile_field_test_passed``) does the centred
@@ -738,7 +738,7 @@ class OutletMapWidget(QWidget):
 
     def _start_nile_field_test(self):
         # (named after the Nile, its original single basin - now a random one of
-        # the 50 largest, see academy_field_test)
+        # the 100 largest, see academy_field_test)
         from src.gui.widgets.academy_field_test import BasinFieldTestWindow
         self._field_test = BasinFieldTestWindow(main_window=self.mw)
         self._field_test.passed.connect(self._on_nile_field_test_passed)

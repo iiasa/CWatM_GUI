@@ -160,21 +160,24 @@ class TestLoginDialog:
         d._do_confirm()
         assert mw.worker.sent[-1] == ("confirm_signup", ("b@example.org", "221435"), {})
 
-    def test_register_visibility_choices_default_yes(self, mw):
+    def test_register_choices_are_optional_and_start_unticked(self, mw):
+        # a pre-ticked box is not consent (CJEU Planet49) - security.md finding 4
         d = self._dialog(mw)
-        assert d.reg_locations.isChecked()
-        assert d.reg_leaderboard.isChecked() and d.reg_map.isChecked()
+        assert not d.reg_locations.isChecked()
+        assert not d.reg_leaderboard.isChecked() and not d.reg_map.isChecked()
         d.reg_username.setText("Blabla")
         d.reg_email.setText("b@example.org")
         d.reg_password.setText("secret123")
         d.reg_repeat.setText("secret123")
         d.reg_agree.setChecked(True)
-        d.reg_map.setChecked(False)                       # the user may untick
-        d._do_register()
+        d._do_register()                                  # nothing ticked: still fine
         kwargs = mw.worker.sent[-1][2]
-        assert kwargs["share_locations"] is True
-        assert kwargs["show_on_leaderboard"] is True
+        assert kwargs["share_locations"] is False
+        assert kwargs["show_on_leaderboard"] is False
         assert kwargs["show_location_on_map"] is False
+        d.reg_leaderboard.setChecked(True)                # the user may tick
+        d._do_register()
+        assert mw.worker.sent[-1][2]["show_on_leaderboard"] is True
 
     def test_register_rejects_bad_input_locally(self, mw):
         d = self._dialog(mw)
@@ -309,11 +312,167 @@ class TestLoginState:
         assert not h._settings.value("account/remembered", type=bool)
 
 
+# ---- Shop entitlements (shop.md Step 4) -----------------------------------------------
+
+def _status_owning(*codes, user="Blabla"):
+    return dict(STATUS, profile=dict(STATUS["profile"], username=user),
+                purchases=[{"code": c} for c in codes], balance=0, earned_points=1)
+
+
+class TestShopEntitlements:
+    @pytest.fixture
+    def h(self, host, monkeypatch):
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
+        host._init_account()
+        return host
+
+    def test_logged_out_owns_nothing(self, h):
+        assert h.owned_items() == set()
+        assert h.level_allowed("Beginner") and not h.level_allowed("Advanced")
+        assert h.owned_animals() == []
+
+    def test_levels_and_animals_follow_the_purchases(self, h):
+        h._on_account_succeeded("login", _status_owning("advanced", "otter"))
+        assert h.level_allowed("Advanced") and not h.level_allowed("Expert")
+        assert h.owned_animals() == ["Otter"]
+        h._on_account_succeeded("buy", _status_owning("advanced", "expert", "otter",
+                                                      "octopus"))
+        assert h.level_allowed("Expert")
+        assert h.owned_animals() == ["Otter", "Octopus (for Carla)"]
+
+    def test_offline_uses_the_cached_purchases(self, h):
+        h._on_account_succeeded("login", _status_owning("advanced", "expert"))
+        h._on_account_failed("restore", "offline", "no connection")
+        assert h._account_state == "offline" and h.level_allowed("Expert")
+        h._on_account_succeeded("logout", None)
+        assert not h.level_allowed("Advanced")            # logged out: nothing
+
+    def test_no_cache_yet_does_not_demote_while_restoring(self, host, monkeypatch):
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
+        monkeypatch.setattr(account_ui.QTimer, "singleShot", lambda ms, fn: None)
+        host._settings.setValue("account/remembered", True)
+        host._settings.setValue("account/last_user", "Blabla")
+        host._init_account()
+        assert host._account_state == "restoring"
+        assert host.owned_items() is None and host.level_allowed("Expert")
+
+    def test_cheat_opens_the_levels_for_the_session_only(self, h):
+        h._set_cheat_levels(True)
+        assert h.level_allowed("Expert") and h.level_allowed("Advanced")
+        assert h.owned_animals() == []                    # animals stay bought-only
+        # never persisted: nothing in the settings file mentions it
+        assert not any("cheat" in k.lower() for k in h._settings.allKeys())
+        h._set_cheat_levels(False)
+        assert not h.level_allowed("Expert")
+
+    def test_a_server_without_the_shop_keeps_the_old_rule(self, h):
+        h._on_account_succeeded("login", STATUS)          # no "purchases" key
+        assert h.owned_items() is None and h.level_allowed("Expert")
+
+    def test_everything_open_without_an_account_server(self, host, monkeypatch):
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: False)
+        host._init_account()
+        assert host.level_allowed("Expert") and len(host.owned_animals()) == 5
+
+
+class TestPointDecay:
+    """A login tells the server CWatM GUI is used (touch_activity); a recorded decay
+    is reported in the output box."""
+
+    @pytest.fixture
+    def h(self, host, monkeypatch):
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
+        host._init_account()
+        return host
+
+    @pytest.mark.parametrize("op", ["login", "restore", "confirm_signup"])
+    def test_every_login_touches_the_activity(self, h, op):
+        h._on_account_succeeded(op, STATUS)
+        assert ("touch_activity", (), {}) in h.fake.sent
+
+    def test_a_status_refresh_does_not_touch(self, h):
+        h._on_account_succeeded("login", STATUS)
+        h.fake.sent.clear()
+        h._on_account_succeeded("get_status", STATUS)
+        h._on_account_succeeded("touch_activity", dict(STATUS, decayed_points=0))
+        assert h.fake.sent == []                          # no loop, nothing re-sent
+
+    def test_a_decay_is_reported(self, h):
+        h._on_account_succeeded("login", STATUS)
+        h._on_account_succeeded("touch_activity", dict(STATUS, balance=87,
+                                                       decayed_points=13,
+                                                       inactive_weeks=3))
+        assert any("-13 points" in n and "3 weeks" in n for n in h.notes)
+        assert h._account_button.text() == "Blabla · 87 pt"
+
+    @pytest.mark.parametrize("result,text", [
+        ({"decayed_points": 0, "inactive_weeks": 2}, ""),
+        ({"decayed_points": 1, "inactive_weeks": 1},
+         "-1 point - CWatM GUI was not used for 1 week."),
+        ({}, ""),
+    ])
+    def test_decay_message(self, result, text):
+        assert text in account_ui.decay_message(result)
+        assert bool(account_ui.decay_message(result)) == bool(text)
+
+
+def _decayed(balance, weeks, first=3, weekly=5, minimum=5):
+    """The server's rule (_decay_due), restated: week 1 -first %, every later week
+    -weekly % of what is left, rounded, never below the minimum. Used to pin the
+    numbers the docs promise."""
+    if weeks < 1 or balance <= minimum:
+        return balance
+    factor = (1 - first / 100) * (1 - weekly / 100) ** (weeks - 1)
+    return max(minimum, int(balance * factor + 0.5))
+
+
+@pytest.mark.parametrize("balance,weeks,left", [
+    (100, 0, 100), (100, 1, 97), (100, 2, 92), (100, 3, 88), (100, 4, 83),
+    (10, 1, 10),                  # 9.7 rounds back to 10
+    (6, 52, 5), (5, 10, 5), (3, 10, 3),          # never below 5; 5 or less: no decay
+])
+def test_documented_decay_numbers(balance, weeks, left):
+    assert _decayed(balance, weeks) == left
+
+
+class TestEffectiveLevel:
+    """CWatMMainWindow._effective_level: the preferred level, or the highest owned
+    one below it."""
+
+    @pytest.mark.parametrize("preferred,owned,level", [
+        ("Expert", {"Advanced", "Expert"}, "Expert"),
+        ("Expert", {"Advanced"}, "Advanced"),
+        ("Expert", set(), "Beginner"),
+        ("Advanced", {"Advanced", "Expert"}, "Advanced"),
+        ("Beginner", {"Advanced", "Expert"}, "Beginner"),
+    ])
+    def test_falls_back_to_the_highest_owned(self, preferred, owned, level):
+        from types import SimpleNamespace
+        from src.gui.components.main_window import CWatMMainWindow
+        fake = SimpleNamespace(
+            _preferred_level=preferred,
+            level_allowed=lambda lvl: lvl == "Beginner" or lvl in owned)
+        assert CWatMMainWindow._effective_level(fake) == level
+
+
+def test_sparkline_without_an_animal_shows_only_the_dot(qapp):
+    from src.gui.widgets.discharge_sparkline import DischargeSparkline
+    s = DischargeSparkline()
+    s.set_animal(None)
+    for _ in range(200):
+        s._tick_animal()
+    assert s._animal is None and not s._show_animal
+    s.set_animal("Otter")
+    assert s._animal == "Otter"
+    s.deleteLater()
+
+
 # ---- S5: points for runs ------------------------------------------------------------
 
 def _run(uid="a" * 32, success=True, kind="run", timesteps=365):
     return {"uid": uid, "success": success, "kind": kind, "timesteps": timesteps,
-            "duration_s": 42.0, "settings": "C:/secret/a.ini"}
+            "duration_s": 42.0, "settings": "C:/secret/a.ini",
+            "settings_hash": "f" * 64}
 
 
 AWARDED = {"status": "awarded", "points_awarded": 1, "total_points": 5,
@@ -347,8 +506,8 @@ class TestPointsForRuns:
         run_ledger.add_entry(_run())
         op, args, _kw = h.fake.sent[-1]
         assert op == "award_run" and args[0] == "a" * 32
-        assert args[1] == {"gui_version": account_ui.GUI_VERSION, "kind": "run",
-                           "timesteps": 365, "duration_s": 42.0}   # no path
+        # only what the points rules need - no path, version, kind or run time
+        assert args[1] == {"timesteps": 365, "settings_hash": "f" * 64}
 
     @pytest.mark.parametrize("entry", [_run(success=False), _run(kind="stopped")])
     def test_failed_or_stopped_runs_are_not_sent(self, host, entry):
@@ -384,8 +543,9 @@ class TestPointsForRuns:
         assert [i["uid"] for i in account_runs.pending_for("Blabla")] == ["a" * 32]
         h.fake.sent.clear()
         h._on_account_succeeded("restore", STATUS)          # next session
-        assert [(op, args[0]) for op, args, _k in h.fake.sent] == [
-            ("award_run", "a" * 32)]
+        # the queued run, then the login's touch_activity (point decay)
+        assert [(op, args[:1]) for op, args, _k in h.fake.sent] == [
+            ("award_run", ("a" * 32,)), ("touch_activity", ())]
         assert h.fake.sent[0][1][1]["timesteps"] == 365           # meta kept
         h._on_account_succeeded("award_run", {"status": "duplicate"})
         assert account_runs.pending_for("Blabla") == []
@@ -601,7 +761,8 @@ class TestRunLocations:
         host._on_account_succeeded("login", STATUS)
         assert "_ask_location_consent" in scheduled
 
-    def test_register_needs_the_location_tick(self, mw):
+    def test_the_location_tick_is_not_a_condition_of_the_account(self, mw):
+        # consent must be freely given (GDPR Art. 7(4)) - security.md finding 4
         from src.gui.widgets.account_dialogs import LoginDialog
         d = LoginDialog(mw)
         d.reg_username.setText("Blabla")
@@ -609,14 +770,20 @@ class TestRunLocations:
         d.reg_password.setText("secret123")
         d.reg_repeat.setText("secret123")
         d.reg_agree.setChecked(True)
-        assert d.reg_locations.isChecked()                  # default: yes
-        d.reg_locations.setChecked(False)                   # the user unticks it
+        assert not d.reg_locations.isChecked()              # default: no
         d._do_register()
-        assert mw.worker.sent == []
-        assert "location" in d.status.text()
+        assert mw.worker.sent[-1][2]["share_locations"] is False   # registers anyway
         d.reg_locations.setChecked(True)
         d._do_register()
         assert mw.worker.sent[-1][2]["share_locations"] is True
+
+    def test_no_second_question_right_after_registering(self, host, monkeypatch):
+        scheduled = []
+        monkeypatch.setattr(account_ui.QTimer, "singleShot",
+                            lambda ms, fn: scheduled.append(fn.__name__))
+        host._init_account()
+        host._on_account_succeeded("confirm_signup", STATUS)  # answered on the form
+        assert "_ask_location_consent" not in scheduled
 
     def test_account_window_can_switch_it_off(self, qapp):
         from src.gui.widgets.account_dialogs import AccountWindow
@@ -631,19 +798,20 @@ class TestRunLocations:
 
 
 class TestLocationDefaults:
-    def test_question_preselects_yes(self, host, monkeypatch):
+    def test_question_does_not_preselect_yes(self, host, monkeypatch):
         from PySide6.QtWidgets import QMessageBox
         calls = []
         monkeypatch.setattr(account_ui.QMessageBox, "question",
-                            lambda *a, **k: calls.append(a) or QMessageBox.Yes)
+                            lambda *a, **k: calls.append(a) or QMessageBox.No)
         host._init_account()
         host._on_account_succeeded("restore", STATUS)
         host._ask_location_consent()
-        assert calls[0][-1] == QMessageBox.Yes              # the default button
+        assert calls[0][-1] == QMessageBox.No               # the default button
+        assert ("update_profile", (), {"share_locations": True}) not in host.fake.sent
 
     def test_preferences_value(self, host):
         host._init_account()
-        assert host.account_share_locations() is True       # logged out: default yes
+        assert host.account_share_locations() is False      # logged out: default no
         host._on_account_succeeded("restore", STATUS)       # stored: no
         assert host.account_share_locations() is False
         host._on_account_succeeded("restore", SHARING)
@@ -672,7 +840,7 @@ class TestOwnLocationUI:
         d.reg_agree.setChecked(True)
         d._do_register()
         kwargs = mw.worker.sent[-1][2]
-        assert (kwargs["location_lat"], kwargs["location_lon"]) == (48.067, 16.357)
+        assert (kwargs["location_lat"], kwargs["location_lon"]) == (48.0, 16.5)
 
     def test_register_rejects_half_a_location(self, mw):
         from src.gui.widgets.account_dialogs import LoginDialog
@@ -694,10 +862,10 @@ class TestOwnLocationUI:
         w.ed_lon.setText("16.357")
         w._do_save()
         assert m.worker.sent[-1] == ("update_profile", (),
-                                     {"location_lat": 48.067, "location_lon": 16.357})
+                                     {"location_lat": 48.0, "location_lon": 16.5})
         # stored value shown unchanged -> nothing to save
-        loc = dict(STATUS, profile=dict(STATUS["profile"], location_lat=48.067,
-                                        location_lon=16.357))
+        loc = dict(STATUS, profile=dict(STATUS["profile"], location_lat=48.0,
+                                        location_lon=16.5))
         m.worker.succeeded.emit("update_profile", loc)       # the answer to the save
         m.worker.sent.clear()
         w._do_save()
@@ -734,6 +902,27 @@ class TestBadgeEnlarge:
         assert not v.medal.pixmap().isNull()
         texts = [lbl.text() for lbl in v.findChildren(type(v.medal))]
         assert "Earned on 28 September 2026" in texts
+        _dispose(qapp, m)
+
+    def test_enlarged_badge_shows_the_points_it_needed(self, qapp):
+        from src.gui.widgets.account_dialogs import _ClickableLabel
+        m, w = self._window(qapp)
+        m.worker.sent.clear()
+        earned = w.badge_grid.itemAt(0).widget().findChild(_ClickableLabel)
+        earned.clicked.emit()
+        v = w._badge_viewer
+        assert m.worker.sent == [("get_badges", (), {})]   # ladder fetched on demand
+        assert not v.points_note.isVisibleTo(v)
+        m.worker.succeeded.emit("get_badges", [
+            {"code": "breg", "name": "Breg", "points_required": 5},
+            {"code": "thames", "name": "Thames", "points_required": 15}])
+        assert v.points_note.text() == "5 points needed for this badge"
+        assert v.points_note.isVisibleTo(v)
+        # a second click uses the fetched ladder - nothing sent again
+        m.worker.sent.clear()
+        earned.clicked.emit()
+        assert m.worker.sent == []
+        assert w._badge_viewer.points_note.text() == "5 points needed for this badge"
         _dispose(qapp, m)
 
     def test_next_badge_is_not_clickable(self, qapp):

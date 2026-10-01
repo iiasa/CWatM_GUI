@@ -46,6 +46,21 @@ class RunControllerMixin:
         win.raise_()
         win.activateWindow()
 
+    def _run_guard_ok(self, file_path, title, what):
+        """run_guard on the settings file on disk; True = the model may be started
+        with it. The working directory is the one the run uses (relative paths)."""
+        from src.gui.utils import run_guard
+        try:
+            with open(file_path, encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        except OSError:
+            return True          # unreadable: the model reports that itself
+        base_dir = self.working_dir() or os.path.dirname(os.path.abspath(file_path))
+        ok = run_guard.confirm_safe_to_run(self, content, base_dir, title, what)
+        if not ok:
+            self.status_bar.showMessage(f"{title}: not started - see the message")
+        return ok
+
     def create_run_batch_file(self):
         """RUN CWATM > Create batch: write a standalone .bat file that runs the
         current settings file with CWatM (CWatM_model.exe frozen, the venv python
@@ -86,6 +101,10 @@ class RunControllerMixin:
                     self.status_bar.showMessage(
                         "The file was not saved - batch file not created")
                     return
+
+        # the .bat runs the model without the GUI - so without this guard (security.md #1)
+        if not self._run_guard_ok(file_path, "Create batch", "create the batch file"):
+            return
 
         from src.gui.utils.batch_file_creator import (
             build_batch_script, suggested_batch_name)
@@ -141,7 +160,12 @@ class RunControllerMixin:
             self.status_bar.showMessage("No settings file information available")
             print("No settings file available for CWatM execution")
             return
-            
+
+        # Guard against code hidden in the settings file / forcing NetCDF
+        # (security.md #1) - checks the file on DISK, which is what the model reads.
+        if not self._run_guard_ok(file_path, "Run CWatM", "run"):
+            return
+
         # Clear previous output first
         self._pending_output.clear()
         self._last_was_progress = False

@@ -38,8 +38,8 @@ log = get_logger("account_dialogs")
 PRIVACY_TEXT = (
     "Stored on the CWatM account server (Supabase, in the EU - Frankfurt): your "
     "username, email address and the optional name, country and institute; for every "
-    "counted run only the date, the GUI version, the number of timesteps, the run "
-    "time and a one-way fingerprint of the settings (one point per distinct setup). "
+    "counted run only the day and a one-way fingerprint of the settings (one point "
+    "per distinct setup); for a CWatM Academy level only which level it was. "
     "No file paths, settings files or model data. You can export or delete all "
     "your data at any time in the account window.")
 
@@ -113,18 +113,19 @@ def badge_tile(parent, code, name, size, faded=False, caption=None, on_click=Non
 
 
 class BadgeViewer(QDialog):
-    """An earned badge, large: the medal at BIG px, its name and when it was earned.
-    A click anywhere or Esc closes it."""
+    """An earned badge, large: the medal at BIG px, its name, when it was earned and
+    how many points it needed. A click anywhere or Esc closes it."""
 
     BIG = 320            # px - the source pictures are 350 px, so it stays sharp
 
-    def __init__(self, parent, code, name, awarded_at=None):
+    def __init__(self, parent, code, name, awarded_at=None, points_required=None):
         super().__init__(parent)
         self.setWindowTitle(name)
         self.setAttribute(Qt.WA_DeleteOnClose)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(24, 20, 24, 18)
         lay.setSpacing(8)
+        self.code = code
         self.medal = _medal_label(self, code, self.BIG)
         lay.addWidget(self.medal, 0, Qt.AlignHCenter)
         title = QLabel(name)
@@ -138,7 +139,23 @@ class BadgeViewer(QDialog):
             note.setAlignment(Qt.AlignCenter)
             note.setStyleSheet(f"color: {theme.c('text_gray')};")
             lay.addWidget(note)
+        # the points the badge needed - filled later when the ladder arrives
+        self.points_note = QLabel("")
+        self.points_note.setAlignment(Qt.AlignCenter)
+        self.points_note.setStyleSheet(f"color: {theme.c('text_gray')};")
+        lay.addWidget(self.points_note)
+        self.set_points(points_required)
         self.setToolTip("Click to close")
+
+    def set_points(self, points_required):
+        """Show '<n> points needed for this badge' (hidden while unknown)."""
+        if points_required is None:
+            self.points_note.setVisible(False)
+            return
+        n = int(points_required)
+        self.points_note.setText(
+            f"{n} point{'s' if n != 1 else ''} needed for this badge")
+        self.points_note.setVisible(True)
 
     def mousePressEvent(self, event):
         self.accept()
@@ -389,22 +406,23 @@ class LoginDialog(_AccountDialogBase):
         self.reg_agree = QCheckBox("I agree that these data are stored "
                                    "(privacy notice)")
         lay.addWidget(self.reg_agree)
+        # The three choices below are OPTIONAL and start UNTICKED: consent must be
+        # freely given (not a condition of the account, GDPR Art. 7(4)) and a
+        # pre-ticked box is not consent (CJEU Planet49) - security.md, finding 4.
+        lay.addWidget(self._note("Optional - you can change these later in your "
+                                 "account window:"))
         self.reg_locations = QCheckBox(
-            "I agree that the location of my runs (first gauge, ~100 m) is "
-            "recorded anonymously")
+            "Record the location of my runs anonymously (first gauge, ~100 m)")
         self.reg_locations.setToolTip(LOCATION_TEXT)
-        self.reg_locations.setChecked(True)          # default: yes
         lay.addWidget(self.reg_locations)
         self.reg_leaderboard = QCheckBox(
             "Show me on the leaderboard (username, country and points only)")
-        self.reg_leaderboard.setChecked(True)        # default: yes
         lay.addWidget(self.reg_leaderboard)
         self.reg_map = QCheckBox(
-            "Show my location on the world map (without my name, ~1 km)")
+            "Show my location on the world map (without my name, ~50 km)")
         self.reg_map.setToolTip(
             "Only if you enter your location above. Other users see a point on "
-            "Info ▸ World Map ▸ User location - no name, rounded to 0.01°.")
-        self.reg_map.setChecked(True)                # default: yes
+            "Info ▸ World Map ▸ User location - no name, rounded to 0.5°.")
         lay.addWidget(self.reg_map)
         row = QHBoxLayout()
         row.addStretch(1)
@@ -502,15 +520,12 @@ class LoginDialog(_AccountDialogBase):
         if not self.reg_agree.isChecked():
             return self._problem("Please agree to the storage of your data "
                                  "(tick the box above).")
-        if not self.reg_locations.isChecked():
-            return self._problem("Please confirm that the location of your runs is "
-                                 "recorded (anonymously) - tick the box above.")
         self._run("register", email, self.reg_password.text(),
                   self.reg_username.text().strip(),
                   full_name=self.reg_name.text(), country=self.reg_country.text(),
                   institute=self.reg_institute.text(),
                   privacy_version=account_config.PRIVACY_VERSION,
-                  share_locations=True,
+                  share_locations=self.reg_locations.isChecked(),
                   show_on_leaderboard=self.reg_leaderboard.isChecked(),
                   show_location_on_map=self.reg_map.isChecked(),
                   **dict(zip(("location_lat", "location_lon"),
@@ -601,6 +616,9 @@ class AccountWindow(_AccountDialogBase):
         self.progress = QProgressBar()
         self.progress.setTextVisible(True)
         outer.addWidget(self.progress)
+        # point decay: the rule, and the last decay if there was one
+        self.lbl_decay = self._note("")
+        outer.addWidget(self.lbl_decay)
         self.lbl_badges = QLabel("")
         self.lbl_badges.setObjectName("accBadges")
         self.lbl_badges.setWordWrap(True)
@@ -639,10 +657,10 @@ class AccountWindow(_AccountDialogBase):
         self.cb_locations.setToolTip(LOCATION_TEXT)
         outer.addWidget(self.cb_locations)
         self.cb_map = QCheckBox(
-            "Show my location on the world map (without name, ~1 km)")
+            "Show my location on the world map (without name, ~50 km)")
         self.cb_map.setToolTip(
             "Info ▸ World Map ▸ User location shows the locations of the users who "
-            "ticked this - as points without names, rounded to about 1 km. Needs "
+            "ticked this - as points without names, rounded to about 50 km. Needs "
             "your location (latitude/longitude) above.")
         outer.addWidget(self.cb_map)
         save_row = QHBoxLayout()
@@ -673,10 +691,24 @@ class AccountWindow(_AccountDialogBase):
     def _fill(self, status):
         self._status = status
         profile = status.get("profile") or {}
-        points = status.get("total_points", 0)
+        from src.gui.utils import account_shop
+        # badges and the next-badge bar follow the EARNED points; the label shows
+        # the actual points (what the Shop spends) next to them
+        points = account_shop.earned(status)
+        balance = account_shop.balance(status)
         self.lbl_name.setText(profile.get("username", ""))
         self.lbl_email.setText(status.get("email", ""))
-        self.lbl_points.setText(f"Points: {points}")
+        self.lbl_points.setText(f"Points: {balance}" if balance == points else
+                                f"Points: {balance}  ·  earned in total: {points}")
+        from src.gui.components.account_ui import DECAY_RULE
+        decay = DECAY_RULE
+        last = status.get("last_decay") or {}
+        if last.get("points"):
+            weeks = int(last.get("weeks") or 0)
+            decay += (f"\nLast decay: -{last['points']} points on "
+                      f"{_format_date(last.get('decayed_at'))} ({weeks} week"
+                      f"{'s' if weeks != 1 else ''} without use).")
+        self.lbl_decay.setText(decay)
         nxt = status.get("next_badge")
         if nxt:
             need = max(1, nxt.get("points_required", 1))
@@ -727,12 +759,29 @@ class AccountWindow(_AccountDialogBase):
         self.badge_host.setVisible(bool(tiles))
 
     def _enlarge(self, badge):
-        """An earned badge was clicked: show it large."""
+        """An earned badge was clicked: show it large, with the points it needed.
+        The earned badges in the status carry no points, so the ladder is fetched
+        (once per window) and the viewer filled in when it arrives."""
+        ladder = getattr(self, "_badge_points", None) or {}
+        points = badge.get("points_required", ladder.get(badge.get("code")))
         viewer = BadgeViewer(self, badge.get("code"), badge.get("name", ""),
-                             badge.get("awarded_at"))
+                             badge.get("awarded_at"), points)
         self._badge_viewer = viewer
         viewer.show()
+        if points is None and not ladder:
+            self._run("get_badges")
         return viewer
+
+    def _on_badge_ladder(self, ladder):
+        self._badge_points = {b.get("code"): b.get("points_required")
+                              for b in ladder or [] if b.get("code")}
+        viewer = getattr(self, "_badge_viewer", None)
+        if viewer is None:
+            return
+        try:
+            viewer.set_points(self._badge_points.get(viewer.code))
+        except RuntimeError:                  # the viewer was closed meanwhile
+            self._badge_viewer = None
 
     def _changes(self):
         profile = (self._status or {}).get("profile") or {}
@@ -803,6 +852,8 @@ class AccountWindow(_AccountDialogBase):
             self.accept()
         elif op == "export_data":
             self._save_export(result or {})
+        elif op == "get_badges":
+            self._on_badge_ladder(result)
 
     def handle_error(self, op, code, message):
         if code in ("session_expired", "not_logged_in"):
