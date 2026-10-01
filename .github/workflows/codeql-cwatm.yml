@@ -1,0 +1,40 @@
+name: CodeQL (cwatm, report only)
+
+# sast.md step 12: an independent check of the CWatM model code in cwatm/ - which
+# the GUI must not change - and in particular of the eval/exec fix done inside
+# CWatM (security.md #1): its code-injection alerts (py/code-injection) should be
+# absent. REPORT ONLY: it runs weekly and on demand, never on push or pull request,
+# so it can never block anyone. Results appear in Security ▸ Code scanning under
+# the category "/cwatm-report-only"; findings go to the CWatM maintainers.
+
+on:
+  schedule:
+    - cron: '23 6 * * 3'        # Wednesdays 06:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (cwatm/, Python)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: python
+          build-mode: none
+          queries: security-extended
+          config: |
+            paths:
+              - cwatm
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /cwatm-report-only

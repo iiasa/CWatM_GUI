@@ -1,0 +1,58 @@
+name: CodeQL
+
+# sast.md steps 9-11: GitHub code scanning for the GUI's OWN code - Python (src,
+# cwatm_gui.py, cwatm_model.py, tools), the TypeScript Supabase functions, and the
+# GitHub Actions workflows themselves (injection in CI).
+#
+# - cwatm/ is NOT scanned here: it is the model, which the GUI must not change. It
+#   gets its own report-only scan (codeql-cwatm.yml, step 12).
+# - Query suite "default" = CodeQL's high-precision security queries. Switch to
+#   "security-extended" once the alert backlog is empty (the "don't drown" lever).
+# - Weekly as well as on push/PR, so new CodeQL queries also look at old code.
+# - Results: repo ▸ Security ▸ Code scanning. A ruleset (step 11) blocks merging a
+#   pull request that ADDS a high-severity alert; nothing else is blocked.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '41 5 * * 2'        # Tuesdays 05:41 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write      # upload the results to code scanning
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: default
+          config: |
+            paths-ignore:
+              - cwatm
+              - tests
+              - dist
+              - build
+              - venv
+              - venv2
+              - build_env
+
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}
