@@ -96,6 +96,14 @@ WelcomeLabel2=This will install [name/ver] on your computer.
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "iniassoc";    Description: "Add CWatM GUI to the 'Open with' menu for .ini settings files"; Flags: unchecked
 
+[InstallDelete]
+; An upgrade only overwrites files, it never removes what the new build no longer
+; ships. A left-over package folder is then still importable as an empty namespace
+; package (scipy after 1.10: dask's "import scipy.sparse" succeeded and the viewers
+; failed with "scipy.sparse has no attribute spmatrix"). So clear _internal first -
+; it holds only program files, no user data.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 ; Copy the entire one-folder PyInstaller build verbatim. 'recursesubdirs' +
 ; 'createallsubdirs' preserves _internal\ (holding CWatM_model.exe and all

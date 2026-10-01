@@ -274,7 +274,12 @@ add Bandit, 8 dependencies, 9–12 CodeQL; 13–15 keep it running.
         **urllib3 2.7.0 → 2.8.0** (proxy TLS settings, streaming API) and
         **anyio 4.14.1 → 4.14.2** (IDN TLS, process pool, POSIX option). Low practical
         risk for the GUI (it uses none of those features directly).
-      - **To do:** bump both pins in the next release.
+      - **Dependabot rates them** anyio up to **critical**, urllib3 up to **high** (each
+        listed twice: the same pins are in two requirements files).
+      - **To do:** bump both pins (urllib3 2.8.0, anyio 4.14.2) in all requirements
+        files, then release – soon rather than "next time", given the critical rating.
+      - **Both alarms work on GitHub:** the first manual run of the audit workflow was
+        red with exactly these 6 findings, as intended.
 - [ ] 9 CodeQL workflow
 - [ ] 10 CodeQL first run triaged
 - [ ] 11 Ruleset blocking new high alerts
