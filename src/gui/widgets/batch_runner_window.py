@@ -935,7 +935,7 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
         base file is simply *appended* as a new key - a typo then runs the unchanged
         scenario to completion. All of that is cheap to catch here."""
         errors, warnings = [], []
-        seen_names, seen_out, seen_nc = {}, {}, set()
+        seen_names, seen_out = {}, {}
         cores = os.cpu_count() or 2
         parallel = self.parallel_spin.value()
         if parallel > max(1, cores // 2) and len(rows) > 1:
@@ -979,19 +979,11 @@ class BatchRunnerWindow(GeometryMemoryMixin, QDialog):
             elif os.path.isdir(resolved) and os.listdir(resolved):
                 warnings.append(f"{label}: PathOut is not empty - existing results "
                                 f"there will be mixed with the new ones ({resolved})")
-            # code hidden in the scenario's settings / forcing NetCDF (security.md
-            # #1) - per row, since an override may carry it; each NetCDF once
+            # output entries CWatM would refuse (Error 135) - per row, since an
+            # override may change them; caught before the batch, not mid-way
             from src.gui.utils import run_guard
-            blocking, nc_warn, nc = run_guard.check(
-                content, self._base_dir or os.path.dirname(os.path.abspath(
-                    self._base_path)))
-            for b in blocking:
-                errors.append(f"{label}: output entry CWatM would run as code - {b}")
-            if nc and nc_warn and nc not in seen_nc:
-                seen_nc.add(nc)
-                warnings.append(f"{label}: the meteo forcing file has metadata CWatM "
-                                f"would execute as code - it may have been "
-                                f"manipulated ({nc}): " + "; ".join(nc_warn[:3]))
+            for b in run_guard.check(content):
+                errors.append(f"{label}: output entry CWatM would refuse - {b}")
         return self._confirm_problems(errors, warnings)
 
     def _confirm_problems(self, errors, warnings):

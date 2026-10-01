@@ -374,14 +374,12 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         except Exception as e:
             self._append_output(f"Could not read the settings file: {e}\n", True)
             return False
-        # code hidden in the settings file / forcing NetCDF (security.md #1); this
-        # window runs relative paths against the settings file's own folder
+        # output entries CWatM would refuse (Error 135) - named before the start
         from src.gui.utils import run_guard
         if not run_guard.confirm_safe_to_run(
-                self, self._content, os.path.dirname(os.path.abspath(path)),
-                "Windowed Run CWatM", "run"):
-            self._append_output("Not started - the settings file did not pass the "
-                                "safety check (see the message).\n", True)
+                self, self._content, "Windowed Run CWatM", "run"):
+            self._append_output("Not started - CWatM would refuse some output "
+                                "entries (see the message).\n", True)
             return False
         self._title = _read_key(self._content, "Title") or os.path.basename(path)
         self._pathout = ""

@@ -11,6 +11,9 @@ import re
 
 import pytest
 
+# needs Qt (imports a module that imports PySide6) - skipped by the CI job without Qt
+pytestmark = pytest.mark.qt
+
 from src.gui.utils import account_config, account_runs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

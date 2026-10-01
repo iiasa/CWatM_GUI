@@ -60,9 +60,9 @@ CI already runs on every push (`.github/workflows/ci.yml`): byte-compile,
 - heavy imports on the startup path.
 
 **To add**, for the GUI code:
-- ~~no `eval` / `exec`~~ – **left out for now (decided 2026-10-01).** The eval/exec
-  problem is handled inside CWatM by its maintainer; the GUI's run guard
-  (`run_guard.py`, security.md #1) stays as it is.
+- ~~no `eval` / `exec`~~ – **left out (decided 2026-10-01).** The eval/exec problem
+  was handled inside CWatM: the current `cwatm/` has none left (security.md #1). The
+  GUI's `run_guard.py` now just mirrors CWatM's Error 135 early.
 - no `pickle` / `yaml.load` / `marshal` on files;
 - no `verify=False` in `requests`;
 - no `sb_secret` / `service_role` strings outside `supabase/functions`;
@@ -264,7 +264,17 @@ add Bandit, 8 dependencies, 9–12 CodeQL; 13–15 keep it running.
       - **New invariant:** every `# nosec` must name its check (`# nosec B110`) and
         carry `# B110 accepted: <why>` on the line above. The 3 accepted sites in
         `cwatm_gui.py` follow it.
-- [ ] 8 Dependabot + pip-audit
+- [x] 8 Dependabot + pip-audit — 2026-10-01.
+      - **Dependabot alerts** enabled via the GitHub API (`vulnerability-alerts`). No
+        automatic update PRs: a pin change alters the shipped exe, so it goes through
+        a release.
+      - **Weekly `pip-audit`:** `.github/workflows/dependencies.yml` (Mondays + on
+        demand, never on push), over the fully pinned `requirements.txt`.
+      - **First audit:** 6 CVEs in 2 packages, all with patch fixes –
+        **urllib3 2.7.0 → 2.8.0** (proxy TLS settings, streaming API) and
+        **anyio 4.14.1 → 4.14.2** (IDN TLS, process pool, POSIX option). Low practical
+        risk for the GUI (it uses none of those features directly).
+      - **To do:** bump both pins in the next release.
 - [ ] 9 CodeQL workflow
 - [ ] 10 CodeQL first run triaged
 - [ ] 11 Ruleset blocking new high alerts

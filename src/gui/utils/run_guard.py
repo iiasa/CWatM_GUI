@@ -1,45 +1,31 @@
-"""Guard against code hidden in a settings file or a NetCDF input (security.md #1).
+"""Early check of the output entries of a settings file - CWatM's own rule, before
+the model starts (security.md #1).
 
-CWatM (the model in ``cwatm/``, which the GUI must not change) evaluates parts of
-its inputs as Python code:
+History: CWatM used to run ``eval("self.var." + entry)`` on every ``OUT_MAP_*`` /
+``OUT_TSS_*`` entry and ``exec`` on NetCDF attributes, so a crafted settings or
+forcing file could run code. The CWatM in ``cwatm/`` no longer does (2026-10-01):
+``data_handling.parseoutvar`` accepts an entry only when it fully matches
+``[A-Za-z_]\\w*`` + optional integer indices ``[n]`` / ``[-n]`` and otherwise stops
+with **Error 135**; values are read with ``getattr`` / ``setattr``. The NetCDF check
+the GUI had for the old ``exec`` was therefore removed.
 
-- **Output variable names** - ``output.py`` checks only the part of an
-  ``OUT_MAP_*`` / ``OUT_TSS_*`` entry before ``[`` and then runs
-  ``eval("self.var." + entry)``. An entry such as ``discharge[<any expression>]``
-  passes CWatM's own check and the expression runs when the model writes output.
-- **NetCDF metadata** - ``data_handling.py`` copies the attributes of the
-  coordinate variables of the meteo forcing file (``PrecipitationMaps``, read by
-  ``metaNetCDF``) with ``exec('longitude.<name>="<value>"')``: an attribute name
-  that is not a plain identifier, or a value with a quote, backslash or line break,
-  breaks out of that string and runs code.
+What stays is this check: it gives **the same verdict as CWatM's Error 135**, before
+every run (main run, Windowed Run, Batch Run, Create batch), naming the line - so a
+bad entry is fixed in the editor instead of a model start failing. It mirrors
+CWatM's parsing exactly (configparser, case-sensitive keys, ``OUT_`` keys in every
+section except ``[OPTIONS]``, ``*_Dir`` keys excluded, values split on commas and
+stripped, an empty FIRST entry means "no output" (``splitout``), every entry except
+``None`` parsed). It looks at the raw value, so a ``$(...)`` placeholder in an
+output entry is refused too - CWatM would see whatever it expands to.
 
-So a shared model setup or a downloaded forcing file can carry a program. Before
-every run (main run, Windowed Run, Batch Run, Create batch) the GUI checks:
-
-- ``output_problems(content)`` - every output entry must be a plain name with
-  only numeric indices (``discharge``, ``actualET[1]``, ``rootDepth[0][1]``). This
-  mirrors CWatM's own parsing (configparser, case-sensitive keys, ``OUT_`` keys in
-  every section except ``[OPTIONS]``, ``*_Dir`` keys excluded, values split on
-  commas and stripped, ``$(...)`` placeholders expanded - so a placeholder in an
-  output entry is refused too). **A problem blocks the run.**
-- ``netcdf_problems(path)`` - the attributes of exactly the variables CWatM
-  ``exec``s. **A problem is a warning** (default answer: do not run).
-
-Pure Python; netCDF4 and Qt are imported only inside the functions that need them.
+Pure Python; Qt is imported only inside ``confirm_safe_to_run``.
 """
 
 import configparser
-import glob
-import os
 import re
 
-# a plain output entry: identifier + optional numeric indices, nothing else
-_SAFE_ENTRY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\[\d+\])*$")
-_SAFE_ATTR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_BAD_VALUE_CHARS = ('"', "\\", "\n", "\r")
-# the variables whose attributes data_handling.py copies with exec()
-EXEC_VARIABLES = ("x", "y", "X", "Y", "lon", "lat", "laea",
-                  "lambert_azimuthal_equal_area")
+# = cwatm/management_modules/data_handling.py _OUTVARNAME (used with fullmatch)
+OUTVARNAME = re.compile(r"([A-Za-z_]\w*)((?:\[-?\d+\])*)")
 
 
 def _parse(content):
@@ -64,9 +50,18 @@ def _key_rows(content):
     return rows
 
 
+def _entries(value):
+    """configuration.splitout: split on commas, strip; an empty FIRST entry = None."""
+    out = [e.strip() for e in value.split(",")]
+    if out[0] == "":
+        out[0] = "None"
+    return out
+
+
 def output_problems(content):
-    """Output entries CWatM would evaluate as code: [(row, key, entry, reason)].
-    Empty = safe. An unreadable file yields no problems here (CWatM refuses it)."""
+    """Output entries CWatM would refuse (Error 135): [(row, key, entry, reason)].
+    Empty = CWatM accepts them all. An unreadable file yields nothing here (CWatM
+    reports that itself)."""
     try:
         cfg = _parse(content)
     except configparser.Error:
@@ -80,88 +75,25 @@ def output_problems(content):
             low = key.lower()
             if not low.startswith("out_") or low.endswith("_dir"):
                 continue
-            value = cfg.get(sec, key, raw=True)
-            for entry in (e.strip() for e in value.split(",")):
-                if entry in ("", "None") or _SAFE_ENTRY.match(entry):
+            for entry in _entries(cfg.get(sec, key, raw=True)):
+                if entry == "None" or OUTVARNAME.fullmatch(entry):
                     continue
-                if "$(" in entry:
+                if entry == "":
+                    reason = "empty entry (a comma too many?)"
+                elif "$(" in entry:
                     reason = "placeholder in an output name"
                 elif "[" in entry:
-                    reason = "index is not a plain number"
+                    reason = "index is not a whole number"
                 else:
                     reason = "not a plain variable name"
                 problems.append((rows.get((sec, key)), key, entry, reason))
     return problems
 
 
-def _resolve(value, cfg):
-    try:
-        from src.gui.widgets.basin_viewer import _resolve_settings_placeholders
-        return _resolve_settings_placeholders(value, cfg)
-    except Exception:
-        return value
-
-
-def forcing_metadata_file(content, base_dir):
-    """The NetCDF CWatM reads its coordinate metadata from: the first file of
-    ``PrecipitationMaps`` (``glob.glob(...)[0]``, like ``metaNetCDF``), relative
-    paths against ``base_dir`` (the run's working directory). None if not found."""
-    try:
-        cfg = _parse(content)
-    except configparser.Error:
-        return None
-    value = None
-    for sec in cfg.sections():
-        if cfg.has_option(sec, "PrecipitationMaps"):
-            value = cfg.get(sec, "PrecipitationMaps", raw=True)   # last one wins
-    if not value:
-        return None
-    path = (_resolve(value, cfg) or "").strip().strip('"')
-    if not path or "$(" in path:
-        return None
-    if not os.path.isabs(path) and base_dir:
-        path = os.path.join(base_dir, path)
-    found = glob.glob(os.path.normpath(path))
-    return found[0] if found else None
-
-
-def netcdf_problems(path):
-    """Attributes of the exec'd coordinate variables that would break out of
-    CWatM's exec string: ['variable "lon": attribute ...']. Unreadable = []."""
-    try:
-        import netCDF4
-        ds = netCDF4.Dataset(path)
-    except Exception:
-        return []
-    problems = []
-    try:
-        for var in EXEC_VARIABLES:
-            if var not in ds.variables:
-                continue
-            v = ds.variables[var]
-            for name in v.ncattrs():
-                if name == "_FillValue":
-                    continue
-                if not _SAFE_ATTR_NAME.match(name):
-                    problems.append(f'variable "{var}": attribute name {name!r} is '
-                                    'not a plain name')
-                    continue
-                text = str(v.getncattr(name))
-                if any(c in text for c in _BAD_VALUE_CHARS):
-                    problems.append(f'variable "{var}": attribute "{name}" contains a '
-                                    'quote, backslash or line break')
-    finally:
-        ds.close()
-    return problems
-
-
-def check(content, base_dir):
-    """(blocking, warnings, metadata_file) for one settings content."""
-    blocking = [f"line {row + 1 if row is not None else '?'}: {key} = {entry} "
-                f"({reason})" for row, key, entry, reason in output_problems(content)]
-    nc = forcing_metadata_file(content, base_dir)
-    warnings = netcdf_problems(nc) if nc else []
-    return blocking, warnings, nc
+def check(content):
+    """Readable lines for every entry CWatM would refuse (empty = all fine)."""
+    return [f"line {row + 1 if row is not None else '?'}: {key} = {entry!r} "
+            f"({reason})" for row, key, entry, reason in output_problems(content)]
 
 
 def _bullets(items, limit=12):
@@ -171,30 +103,19 @@ def _bullets(items, limit=12):
     return text
 
 
-def confirm_safe_to_run(parent, content, base_dir, title="Run CWatM", what="run"):
-    """The Qt side, used by every run path: True when the run may start. Blocks on
-    unsafe output entries; asks (default No) on suspicious NetCDF metadata."""
+def confirm_safe_to_run(parent, content, title="Run CWatM", what="run"):
+    """The Qt side, used by every run path: True when the run may start. A bad
+    output entry stops it here with the line named - CWatM would stop with
+    Error 135 anyway, only later and less clearly."""
+    problems = check(content)
+    if not problems:
+        return True
     from PySide6.QtWidgets import QMessageBox
-    blocking, warnings, nc = check(content, base_dir)
-    if blocking:
-        QMessageBox.critical(
-            parent, title,
-            "CWatM will not run this settings file.\n\n"
-            "These output entries are not plain variable names. CWatM evaluates "
-            "output names as Python code, so an entry like this could run any "
-            "program on your computer - a settings file from someone else may have "
-            "been manipulated:\n\n" + _bullets(blocking) +
-            "\n\nAllowed are names with numeric indices only, e.g. discharge, "
-            "actualET[1]. Check settingsfile (F4) marks these lines.\n\n"
-            f"Nothing was started ({what}).")
-        return False
-    if warnings:
-        return QMessageBox.question(
-            parent, title,
-            "The meteo forcing file has metadata that CWatM would execute as code:\n"
-            f"{nc}\n\n" + _bullets(warnings) +
-            "\n\nThis is not normal for a NetCDF file - it may have been "
-            "manipulated. Only continue if you trust where this file comes from.\n\n"
-            f"{what.capitalize()} anyway?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes
-    return True
+    QMessageBox.warning(
+        parent, title,
+        "CWatM would refuse these output entries (Error 135) - each must be a "
+        "variable name, optionally with whole-number indices, e.g. discharge or "
+        "actualET[1]:\n\n" + _bullets(problems) +
+        "\n\nCheck settingsfile (F4) marks these lines.\n\n"
+        f"Nothing was started ({what}).")
+    return False

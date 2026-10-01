@@ -27,6 +27,7 @@ def test_leaflet_matches_the_integrity_leaflet_publishes():
         assert base64.b64encode(bytes.fromhex(W.PINNED[url][1])).decode() == b64
 
 
+@pytest.mark.qt          # imports a Qt module
 def test_everything_folium_loads_is_pinned():
     # a folium upgrade with new URLs must fail here, not as a blank map
     folium = pytest.importorskip("folium")
@@ -41,6 +42,7 @@ def test_pinned_bytes_refuses_anything_else():
         W.pinned_bytes("https://evil.example.org/x.js")
 
 
+@pytest.mark.qt          # imports a Qt module
 def test_an_unpinned_script_is_removed_never_fetched(monkeypatch):
     from src.gui.widgets import basin_viewer2 as B
     html = ('<script src="https://evil.example.org/x.js"></script>'
@@ -52,6 +54,7 @@ def test_an_unpinned_script_is_removed_never_fetched(monkeypatch):
     assert "Leaflet" in out                       # the pinned one is inlined
 
 
+@pytest.mark.qt          # imports a Qt module
 def test_leaflet_css_images_are_inlined_from_pinned_files():
     from src.gui.widgets import basin_viewer2 as B
     html = ('<link rel="stylesheet" '

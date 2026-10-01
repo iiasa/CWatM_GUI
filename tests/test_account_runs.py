@@ -10,6 +10,9 @@ another user logging in on the same computer.
 
 import pytest
 
+# needs Qt (imports a module that imports PySide6) - skipped by the CI job without Qt
+pytestmark = pytest.mark.qt
+
 from src.gui.utils import account_runs, run_ledger
 
 

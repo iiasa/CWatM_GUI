@@ -70,6 +70,7 @@ def test_points_to_cheapest():
     assert S.points_to_cheapest(ITEMS, st) == 20                # Advanced, not Expert
 
 
+@pytest.mark.qt          # imports a Qt module
 def test_animal_codes_cover_the_sparkline_animals():
     from src.gui.widgets.discharge_sparkline import ANIMALS
     assert set(S.ANIMAL_CODES) == {name for name, _emoji in ANIMALS}

@@ -6,3 +6,9 @@
 # Windows launchers stay CRLF (cmd/wscript are happier with it).
 *.bat text eol=crlf
 *.vbs text eol=crlf
+
+# Pinned third-party web files (src/gui/utils/web_assets.py): each is checked against
+# a SHA-256, so git must store and check them out BYTE FOR BYTE - no line-ending
+# conversion. As "text", leaflet.js got CRLF on a Windows checkout, failed its hash,
+# and the map pages dropped it (blank maps in a build from such a checkout).
+assets/web/** -text

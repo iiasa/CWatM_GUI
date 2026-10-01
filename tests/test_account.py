@@ -201,6 +201,7 @@ class TestLogin:
         assert calls.posted is None and calls.password_login is None
 
 
+@pytest.mark.qt          # imports a Qt module
 def test_worker_rejects_unknown_operations():
     from src.gui.utils.account_worker import AccountWorker
     w = AccountWorker()
@@ -311,6 +312,7 @@ class TestShopClient:
         assert items[1] == {"code": "expert", "kind": "level", "name": "Expert",
                             "price": 40, "requires": "advanced"}
 
+    @pytest.mark.qt          # imports a Qt module
     def test_worker_knows_the_shop_ops(self):
         from src.gui.utils.account_worker import OPS
         assert {"buy", "get_shop_items"} <= OPS

@@ -10,7 +10,10 @@ import re
 
 import pytest
 
-from src.gui.widgets import world_map_window as W
+# needs Qt (imports a module that imports PySide6) - skipped by the CI job without Qt
+pytestmark = pytest.mark.qt
+
+from src.gui.widgets import world_map_window as W  # noqa: E402
 
 
 class TestCircleRadius:

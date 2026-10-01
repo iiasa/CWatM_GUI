@@ -47,16 +47,15 @@ class RunControllerMixin:
         win.activateWindow()
 
     def _run_guard_ok(self, file_path, title, what):
-        """run_guard on the settings file on disk; True = the model may be started
-        with it. The working directory is the one the run uses (relative paths)."""
+        """run_guard on the settings file on disk (what the model reads); True = the
+        model may be started with it - i.e. CWatM would accept every output entry."""
         from src.gui.utils import run_guard
         try:
             with open(file_path, encoding="utf-8", errors="ignore") as f:
                 content = f.read()
         except OSError:
             return True          # unreadable: the model reports that itself
-        base_dir = self.working_dir() or os.path.dirname(os.path.abspath(file_path))
-        ok = run_guard.confirm_safe_to_run(self, content, base_dir, title, what)
+        ok = run_guard.confirm_safe_to_run(self, content, title, what)
         if not ok:
             self.status_bar.showMessage(f"{title}: not started - see the message")
         return ok
@@ -102,7 +101,7 @@ class RunControllerMixin:
                         "The file was not saved - batch file not created")
                     return
 
-        # the .bat runs the model without the GUI - so without this guard (security.md #1)
+        # the .bat runs the model without the GUI - catch a bad output entry here
         if not self._run_guard_ok(file_path, "Create batch", "create the batch file"):
             return
 
@@ -161,8 +160,8 @@ class RunControllerMixin:
             print("No settings file available for CWatM execution")
             return
 
-        # Guard against code hidden in the settings file / forcing NetCDF
-        # (security.md #1) - checks the file on DISK, which is what the model reads.
+        # Output entries CWatM would refuse (Error 135), named before the model
+        # starts - checks the file on DISK, which is what the model reads.
         if not self._run_guard_ok(file_path, "Run CWatM", "run"):
             return
 

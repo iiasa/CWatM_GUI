@@ -685,15 +685,15 @@ class SettingsCheckMixin:
                 for vmsg in _out_value_problems(s[eq + 1:].strip()):
                     problems.append((i, f"{key}: {vmsg}"))
 
-        # Output entries CWatM would evaluate as code (security.md #1) - the same
-        # rule run_guard uses to BLOCK a run, so F4 shows the lines a run refuses.
-        from src.gui.utils.run_guard import output_problems as _code_problems
-        for row, key, entry, reason in _code_problems(content):
+        # Output entries CWatM refuses at start (Error 135, parseoutvar) - the same
+        # rule run_guard uses to stop a run early, so F4 shows the lines it names.
+        from src.gui.utils.run_guard import output_problems as _entry_problems
+        for row, key, entry, reason in _entry_problems(content):
             if row is not None:
                 problems.append(
-                    (row, f"{key}: '{entry}' - {reason}. CWatM runs output names as "
-                          "Python code, so this could run a program - a run is "
-                          "refused until it is a plain name (numeric index only)."))
+                    (row, f"{key}: '{entry}' - {reason}. CWatM refuses it at start "
+                          "(Error 135): use a variable name, optionally with whole-"
+                          "number indices, e.g. discharge or actualET[1]."))
 
         # Forcing coverage: is [StepStart..StepEnd] inside the meteo forcing time axis?
         # Only when StepStart is a real date; StepEnd checked only if it is a date too.
