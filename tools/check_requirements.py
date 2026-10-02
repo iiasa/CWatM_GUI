@@ -14,7 +14,7 @@ import sys
 
 FILES = ("requirements.txt", "requirements_build.txt", "requirements_linux.txt")
 # name[extra] followed by a PEP 440 comparator
-PIN = re.compile(r"^[A-Za-z0-9_.\[\],-]+\s*(==|>=|<=|~=|!=|<|>)")
+PIN = re.compile(r"^[A-Za-z0-9_.\[\],-]+\s*(==|~=|!=|[<>]=?)")
 
 
 def load(name, stack=()):

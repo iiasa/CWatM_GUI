@@ -283,10 +283,31 @@ add Bandit, 8 dependencies, 9–12 CodeQL; 13–15 keep it running.
         pick them up.
       - **Both alarms work on GitHub:** the first manual run of the audit workflow was
         red with exactly these 6 findings, as intended.
-- [ ] 9 CodeQL workflow
-- [ ] 10 CodeQL first run triaged
-- [ ] 11 Ruleset blocking new high alerts
-- [ ] 12 Report-only CodeQL on `cwatm/`
+- [x] 9 CodeQL workflow — 2026-10-01, `.github/workflows/codeql.yml`.
+      - **Scope:** Python, JavaScript/TypeScript (the Supabase functions) and the
+        Actions workflows; push, PR and weekly; default query suite.
+      - **Excluded:** `cwatm/`, tests and build output.
+      - **First attempt failed:** `queries: default` is not a valid value (it is
+        read as a pack name) – removed.
+- [x] 10 CodeQL first run triaged — 2026-10-02, 5 alerts, all handled:
+      - **`py/bad-tag-filter` (high), `tools/check_requirements.py:17`:** false
+        positive. It is a requirements-version regex, not HTML filtering. Rewritten
+        `(<|>|<=|>=)` → `[<>]=?`, with an identical verdict on all test inputs.
+      - **4 × `actions/missing-workflow-permissions` (medium), `ci.yml`:** real.
+        Top-level `permissions: contents: read` added (least privilege).
+      - JavaScript/TypeScript: 0 results (87 rules).
+- [x] 11 Ruleset — 2026-10-01, "Code scanning: no new high alerts" on `main`:
+      CodeQL, security alerts ≥ high, alerts ≥ error.
+      - **Lesson:** for DIRECT pushes the rule wants CodeQL results for the commit
+        before accepting it, which cannot exist yet, so every direct push was
+        refused.
+      - **Fix:** repository admins may bypass (`RepositoryRole` 5, always). Pull
+        requests from anyone else are still checked.
+- [x] 12 Report-only CodeQL on `cwatm/` — 2026-10-01,
+      `.github/workflows/codeql-cwatm.yml`: weekly + on demand, never on push/PR,
+      `security-extended`, category `/cwatm-report-only`.
+      - **First run: 0 results with 50 rules**, which independently confirms the
+        eval/exec fix in CWatM (security.md #1).
 - [ ] 13 Security Advisor after each `db push` (`test_server_sql.py` ✅ already in place)
 - [ ] 14 Ruff `S` + pre-commit, PSScriptAnalyzer (optional)
 - [ ] 15 Weekly review routine

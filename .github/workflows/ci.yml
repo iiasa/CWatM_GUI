@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege (CodeQL actions/missing-workflow-permissions): every job only
+# reads the repository; none writes, comments or uploads anything.
+permissions:
+  contents: read
+
 jobs:
   # Fast, dependency-free structural checks: seconds to run, and the job that
   # should stay green at all times.
