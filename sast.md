@@ -291,8 +291,11 @@ add Bandit, 8 dependencies, 9–12 CodeQL; 13–15 keep it running.
         read as a pack name) – removed.
 - [x] 10 CodeQL first run triaged — 2026-10-02, 5 alerts, all handled:
       - **`py/bad-tag-filter` (high), `tools/check_requirements.py:17`:** false
-        positive. It is a requirements-version regex, not HTML filtering. Rewritten
-        `(<|>|<=|>=)` → `[<>]=?`, with an identical verdict on all test inputs.
+        positive. It is a requirements-version regex, not HTML filtering.
+        Rewritten `(<|>|<=|>=)` → `[<>]=?` (identical verdict on all test inputs).
+        CodeQL then flagged the same line again ("-->" heuristic), so alert #6 was
+        **dismissed as a false positive** with that reason in GitHub.
+      - **Result:** 0 open alerts.
       - **4 × `actions/missing-workflow-permissions` (medium), `ci.yml`:** real.
         Top-level `permissions: contents: read` added (least privilege).
       - JavaScript/TypeScript: 0 results (87 rules).
