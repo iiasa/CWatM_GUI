@@ -282,13 +282,29 @@ class AccountMixin:
             return True
         return account_shop.LEVEL_CODES.get(level) in owned
 
+    def cheat_animals(self):
+        """Preferences ▸ Account ▸ Cheat (animals): every animal usable, this session."""
+        return bool(getattr(self, "_cheat_animals", False))
+
+    def _set_cheat_animals(self, value):
+        """Session-only like the level Cheat: never written to QSettings."""
+        self._cheat_animals = bool(value)
+        refresh = getattr(self, "_refresh_animal", None)
+        if refresh is not None:
+            refresh()
+
     def owned_animals(self):
-        """The sparkline animals (discharge_sparkline.ANIMALS names) this user may
-        show - all of them without an account server; none logged out."""
-        from src.gui.widgets.discharge_sparkline import ANIMALS
+        """The sparkline animals (discharge_sparkline.animal_names()) this user may
+        show - all of them without an account server or with the Cheat tick; none
+        logged out. An animal with no Shop item (e.g. an image-only one) is never
+        owned - only the Cheat opens it."""
+        from src.gui.widgets.discharge_sparkline import animal_names, shop_name
+        names = animal_names()
+        if self.cheat_animals():
+            return names
         owned = self.owned_items()
-        return [name for name, _emoji in ANIMALS
-                if owned is None or account_shop.ANIMAL_CODES.get(name) in owned]
+        return [name for name in names if owned is None
+                or account_shop.ANIMAL_CODES.get(shop_name(name)) in owned]
 
     # ---- worker ------------------------------------------------------------------
     def account_worker(self):
@@ -372,6 +388,7 @@ class AccountMixin:
     # ---- points for runs (S5) ------------------------------------------------------
     def _on_run_recorded(self, entry):
         """run_ledger listener: a run was recorded in the Journal of Runs."""
+        self._check_modflow_reward(entry)
         if not account_runs.qualifies(entry):
             return
         if not self.account_count_runs():
@@ -391,6 +408,111 @@ class AccountMixin:
                 account_runs.add_pending(entry["uid"], meta, user, gauge)
                 log.info("run kept for the CWatM account (offline)")
         # logged out: runs do not count
+
+    # ---- the mole: reward for the first successful run with coupled MODFLOW ----------
+    _REWARD_PENDING_KEY = "account/reward_pending/" + account_shop.MODFLOW_REWARD
+    _REWARD_HINT_KEY = "account/reward_hint_shown/" + account_shop.MODFLOW_REWARD
+
+    def _check_modflow_reward(self, entry):
+        """A successful coupled-MODFLOW run (main, Windowed or Batch) earns the mole,
+        once per account (the server's claim_reward decides). Logged out / offline:
+        kept on this computer and claimed at the next login."""
+        if not (entry.get("success") and entry.get("modflow")):
+            return
+        if entry.get("kind") not in ("run", "hidden", "batch"):
+            return
+        if not account_config.is_configured():
+            return                              # no account server: every animal open
+        owned = self.owned_items()
+        if owned and account_shop.ANIMAL_CODES[account_shop.MODFLOW_REWARD_ANIMAL] in owned:
+            return                              # already has the mole
+        if self._account_state == "logged_in":
+            self.account_worker().submit("claim_reward", account_shop.MODFLOW_REWARD)
+            return
+        first = not self._settings.value(self._REWARD_PENDING_KEY, False, type=bool)
+        self._settings.setValue(self._REWARD_PENDING_KEY, True)
+        if first and not self._settings.value(self._REWARD_HINT_KEY, False, type=bool):
+            self._settings.setValue(self._REWARD_HINT_KEY, True)
+            QTimer.singleShot(300, self._show_reward_waiting)
+
+    def _claim_pending_reward(self):
+        """After a login: claim a reward earned while logged out / offline."""
+        if self._settings.value(self._REWARD_PENDING_KEY, False, type=bool):
+            self.account_worker().submit("claim_reward", account_shop.MODFLOW_REWARD)
+
+    def _on_reward_answer(self, result):
+        result = result or {}
+        if isinstance(result, dict) and "profile" in result:
+            self._set_account_status(result)    # owns the mole now
+        status = result.get("status")
+        if status in ("granted", "already_owned", "unknown_reward"):
+            self._settings.remove(self._REWARD_PENDING_KEY)
+        if status == "granted":
+            animal = account_shop.MODFLOW_REWARD_ANIMAL
+            setter = getattr(self, "_set_animal", None)
+            if setter is not None:
+                try:
+                    setter(animal)              # the reward goes straight on the plot
+                except Exception:
+                    log.debug("could not select the reward animal", exc_info=True)
+            self._account_note(f"CWatM account: reward - the {animal} is yours!")
+            QTimer.singleShot(300, self._show_mole_reward)
+
+    def reset_modflow_reward(self):
+        """Preferences ▸ Account ▸ Reset MODFLOW reward: forget the mole, so the next
+        successful coupled-MODFLOW run earns it again (with its popup). Clears the
+        local notes at once; the mole itself is removed on the server (needs a login).
+        Returns a short text for the caller to show."""
+        self._settings.remove(self._REWARD_PENDING_KEY)
+        self._settings.remove(self._REWARD_HINT_KEY)
+        if self._account_state == "logged_in":
+            self.account_worker().submit("reset_reward", account_shop.MODFLOW_REWARD)
+            return "Resetting the MODFLOW reward - the mole is being taken back."
+        return ("The local reward notes are cleared. Log in to take the mole back "
+                "from your account as well.")
+
+    def _on_reward_reset(self, result):
+        result = result or {}
+        if isinstance(result, dict) and "profile" in result:
+            self._set_account_status(result)    # the mole is gone -> animal refresh
+        if result.get("status") == "reset":
+            self._account_note("CWatM account: MODFLOW reward reset - the next "
+                               "coupled-MODFLOW run earns the mole again.")
+        else:
+            self._account_note("CWatM account: MODFLOW reward reset - you did not "
+                               "own the mole; the next coupled-MODFLOW run earns it.")
+
+    def _reward_box(self, title, text):
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setText(text)
+        from src.gui.widgets.discharge_sparkline import animal_pixmap
+        pm = animal_pixmap(account_shop.MODFLOW_REWARD_ANIMAL)
+        if pm is not None:
+            box.setIconPixmap(pm.scaled(96, 96, Qt.KeepAspectRatio,
+                                        Qt.SmoothTransformation))
+        else:
+            box.setIcon(QMessageBox.Information)
+        box.exec()
+
+    def _show_mole_reward(self):
+        self._reward_box(
+            "Your reward: the Mole",
+            "Congratulations on your first CWatM run with coupled MODFLOW!\n\n"
+            "As a reward you get the Mole. Like MODFLOW, it lives below the surface "
+            "and knows every groundwater layer - it cannot be bought in the Shop, "
+            "only this run earns it.\n\n"
+            "The Mole now runs along your live discharge plot. You can change the "
+            "animal in Preferences ▸ Display ▸ Select animal.")
+
+    def _show_reward_waiting(self):
+        self._reward_box(
+            "A reward is waiting: the Mole",
+            "Congratulations on your first CWatM run with coupled MODFLOW!\n\n"
+            "This run earns you the Mole - a special animal for your live discharge "
+            "plot that cannot be bought in the Shop.\n\n"
+            "Log in to your CWatM account (the account button in the menu bar) to "
+            "collect it.")
 
     def _shares_locations(self):
         profile = (self.account_status() or {}).get("profile") or {}
@@ -621,10 +743,15 @@ class AccountMixin:
             self._on_academy_answer(op, result)
         elif op == "record_location":
             log.debug("run location: %s", (result or {}).get("status"))
+        elif op == "claim_reward":
+            self._on_reward_answer(result)
+        elif op == "reset_reward":
+            self._on_reward_reset(result)
         elif op in _STATUS_OPS and isinstance(result, dict) and "profile" in result:
             self._set_account_status(result)
             if op in _LOGIN_OPS:
                 self._send_pending_awards()
+                self._claim_pending_reward()
                 # a login = CWatM GUI is used: record the point decay due, restart
                 # the clock (the answer is a status - handled just above)
                 self.account_worker().submit("touch_activity")
@@ -646,6 +773,19 @@ class AccountMixin:
                 log.debug("status bar message failed", exc_info=True)
 
     def _on_account_failed(self, op, code, message):
+        if op == "reset_reward":
+            self._account_note(f"CWatM account: the MODFLOW reward could not be reset "
+                               f"({message or code}).")
+            if code in ("session_expired", "not_logged_in"):
+                self._clear_account()
+            return
+        if op == "claim_reward":
+            # kept: claimed again at the next login
+            self._settings.setValue(self._REWARD_PENDING_KEY, True)
+            log.info("reward not claimed: %s", code)
+            if code in ("session_expired", "not_logged_in"):
+                self._clear_account()
+            return
         if op == "record_location":
             log.info("run location not recorded: %s", code)   # best-effort, no retry
             return

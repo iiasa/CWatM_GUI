@@ -176,7 +176,7 @@ plot windows need — those are Chromium, and on a forwarded X11 display without
 they come up blank. `CWATM_GUI_SOFTWARE_GL=0 ./gui.sh` turns that off on a local
 desktop. Qt and QtWebEngine also need a set of system libraries; see the *Running on
 Linux* section of `CLAUDE.md` for the package list. To run only the model, with no GUI
-at all: `python cwatm_gui.py --run-cwatm settings.ini`.
+at all: `python cwatm_model.py settings.ini`.
 
 **Linux: "Could not load the Qt platform plugin xcb".**
 Qt 6.5+ needs a few X11 system libraries that no pip package can provide — most often
@@ -406,9 +406,9 @@ The coupling needs the `xmipy` and `flopy` Python packages **and** the compiled 
 6 library (`libmf6.dll`) whose path you set in the settings — the GUI does not ship the
 DLL. Make sure `modflow_coupling = True` and the `[GROUNDWATER_MODFLOW]` paths are set.
 
-**Startup feels slower after enabling MODFLOW.**
-Turn on **Preferences ▸ Startup & Model ▸ Use Modflow** only when you need it — when on, the GUI pre-loads
-flopy (heavy) so MODFLOW use is ready; when off it isn't loaded, keeping startup fast.
+**Do I have to switch MODFLOW on somewhere in the GUI?**
+No. A run with `modflow_coupling = True` loads `flopy` and `xmipy` by itself (in the
+installed version too); the GUI never loads them, so its startup is not affected.
 
 ---
 

@@ -54,7 +54,7 @@ from src.gui.utils.gui_log import get_logger
 # Reuse the classic viewer's display-agnostic helpers (marker sources, colour
 # rasters, gauge check plumbing) - they only touch data/fields, not the canvas.
 from src.gui.widgets.basin_viewer import (
-    BasinDataHelpers, BasinViewer, _parse_coord_pairs, grid_is_latlon)
+    BasinDataHelpers, BasinViewer, _parse_coord_pairs, _point_in_mask, grid_is_latlon)
 
 log = get_logger("basin_viewer2")
 
@@ -226,11 +226,28 @@ def _read_shapefile(path):
     try:
         features = [{"type": "Feature",
                      "geometry": sr.shape.__geo_interface__,
-                     "properties": sr.record.as_dict()}
+                     "properties": {k: _json_safe(v)
+                                    for k, v in sr.record.as_dict().items()}}
                     for sr in sf.iterShapeRecords()]
     finally:
         sf.close()
     return {"type": "FeatureCollection", "features": features}
+
+
+def _json_safe(value):
+    """A dbf attribute as something ``json.dumps`` accepts: pyshp gives a date
+    field as ``datetime.date`` (→ ISO text), a numeric one possibly as ``Decimal``
+    (→ float) and undecodable text as ``bytes`` (→ text, bad bytes replaced)."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value).decode("utf-8", errors="replace")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return str(value)
 
 
 class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
@@ -617,17 +634,28 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
           if(PROJ){ // CRS.Simple: 1 zoom unit halves the scale; UTM extents of
             // ~1e5 m need strongly negative zooms for fitBounds to work.
             MAP.setMinZoom(-30); MAP.options.zoomSnap=0.25; }
-          function pin(color,letter){return L.divIcon({className:'',
-            html:'<div class="cwatm-pin" style="background:'+color+'">'
-                 +'<span>'+(letter||'')+'</span></div>',
-            iconSize:[24,24], iconAnchor:[12,23], tooltipAnchor:[0,-20]});}
+          // s = icon size in px (default 24). The tip sits at the point for every
+          // size, so a small mask-start pin drawn on top of a bigger gauge pin at
+          // the same place shows both: the gauge IS at the basin mouth.
+          // The teardrop is a (d+4)-px square (2-px border) rotated -45deg, its
+          // sharp corner pointing down: the tip is half the square's diagonal
+          // below its centre - the anchor puts exactly that point on the map.
+          function pin(color,letter,s){s=s||24; var d=s-2, b=d+4;
+            var ax=b/2, ay=b/2+b/Math.SQRT2;
+            return L.divIcon({className:'',
+            html:'<div class="cwatm-pin" style="background:'+color
+                 +';width:'+d+'px;height:'+d+'px">'
+                 +'<span style="font-size:'+Math.round(s/2)+'px">'+(letter||'')
+                 +'</span></div>',
+            iconSize:[s,s], iconAnchor:[ax,ay], tooltipAnchor:[0,-b]});}
+          var GAUGE_PIN=27, MASK_PIN=18;
           function tip(lon,lat,ups,label){
             return label+' '+lon.toFixed(DEC)+' '+lat.toFixed(DEC)
                    +(ups?'<br>UPS: '+ups:'');}
           window.redGroup=L.layerGroup().addTo(MAP);
           window.setRedAll=function(arr){window.redGroup.clearLayers();
             arr.forEach(function(g,i){
-              var mk=L.marker([g[0],g[1]],{icon:pin('#e74c3c',String(i+1))})
+              var mk=L.marker([g[0],g[1]],{icon:pin('#e74c3c',String(i+1),GAUGE_PIN)})
                .addTo(window.redGroup)
                .bindTooltip(tip(g[1],g[0],g[2],'Gauge '+(i+1))+'<br>(click to remove)');
               mk.on('click',function(ev){L.DomEvent.stopPropagation(ev);
@@ -636,7 +664,8 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
           window.blueMarker=null;
           window.setBlue=function(lat,lon,ups){
             if(window.blueMarker){MAP.removeLayer(window.blueMarker);}
-            window.blueMarker=L.marker([lat,lon],{icon:pin('#2c7fff','M')})
+            window.blueMarker=L.marker([lat,lon],{icon:pin('#2c7fff','M',MASK_PIN),
+                                                    zIndexOffset:1000})
               .addTo(MAP).bindTooltip(tip(lon,lat,ups,'Mask start'));};
           window.blackMarker=null;
           window.setBlack=function(lat,lon,ups){
@@ -930,10 +959,39 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
             return
         mw.maskmap_field.setText(coord)
         self._run_gauge_check(mw, rebuild_mask=True)
+        dropped = self._drop_gauges_outside_mask(mw, coord)
         self._refresh_markers()
         self.use_coords_button.setEnabled(False)
         self.copy_mask_action.setEnabled(False)
-        self.info_label.setText(f"Mask copied to settings: {coord}")
+        self.info_label.setText(f"Mask copied to settings: {coord}" + dropped)
+
+    def _drop_gauges_outside_mask(self, mw, outlet):
+        """After Copy Mask: take the gauges that lie outside the NEW mask (mostly
+        left over from the previous basin) out of the Gauges box, judged by the
+        mask the main window just rebuilt - the same one its gauge warning uses.
+        If none is left, the mask outlet itself becomes the gauge (it is inside by
+        construction, and CWatM needs at least one). Returns a note for the info
+        label ("" when nothing changed or the mask could not be built)."""
+        ctx = getattr(mw, "_mask_context", None)
+        if ctx is None or not self._gauges:
+            return ""
+        try:
+            keep = [g for g in self._gauges if _point_in_mask(ctx, g[0], g[1])]
+        except Exception:
+            log.debug("_drop_gauges_outside_mask: ignored", exc_info=True)
+            return ""
+        n_out = len(self._gauges) - len(keep)
+        if n_out == 0:
+            return ""
+        note = f" - removed {n_out} gauge(s) outside the new mask"
+        if not keep:
+            lon, lat = (float(v) for v in outlet.split())
+            keep = [(lon, lat)]
+            note += "; the mask outlet is now the gauge"
+        self._gauges = keep
+        mw.gauges_field.setText(" ".join(f"{lon:.4f} {lat:.4f}" for lon, lat in keep))
+        self._run_gauge_check(mw, rebuild_mask=False)
+        return note
 
     def _create_gauge(self):
         """Append the clicked point to the working gauge list as a new numbered red

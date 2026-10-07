@@ -572,7 +572,7 @@ points earn **river badges** (Breg, Thames, Morava, …).
   the right of the menu bar): one window holding every GUI setting, on five pages you
   pick from the list on the left:
   - **Output** — the file the output box is written to, and whether it is written.
-  - **Startup & Model** — reopen the last session's tabs at start; use MODFLOW.
+  - **Startup & Model** — reopen the last session's tabs at start.
   - **Display** — colour mode, header banner, the font and font size of the settings
     file, decimals shown, initial map transparency, default background map,
     sparkline animal.
@@ -603,9 +603,6 @@ points earn **river badges** (Breg, Thames, Morava, …).
   Analyse windows follow the mode too (Analyse plots switch to a dark Plotly
   style); a window that is already open keeps its colours until it is reopened.
   Map/data content (OSM tiles, the basin canvas) stays in its natural colours.
-- **Use Modflow** (Preferences ▸ Startup & Model): when on, the GUI pre-loads the MODFLOW coupling library
-  (flopy) so MODFLOW-coupled runs and checks are ready; when off (default), flopy is not
-  loaded, keeping startup fast. Persisted across sessions.
 - **Select animal** (Preferences ▸ Display): pick the little animal that
   occasionally appears on the live discharge sparkline. The list holds the animals you
   bought in the **Shop** (Fish / Otter / Beaver / Sailboat / Octopus); without one, the

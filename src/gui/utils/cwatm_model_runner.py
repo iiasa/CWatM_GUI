@@ -18,8 +18,8 @@ The parent side (src/gui/utils/cwatm_process_worker.py) strips these marker line
 from the stream before display. Entry points that call main():
 - frozen build:  CWatM_model.exe <settings.ini>          (see cwatm_gui_dir.spec)
                  CWatM_GUI.exe --run-cwatm <settings.ini> (fallback, older builds)
-- from source:   python cwatm_gui.py --run-cwatm <settings.ini>
-                 (dispatched at the very top of cwatm_gui.py, before any Qt import)
+- from source:   python cwatm_model.py <settings.ini>          (what the GUI starts)
+                 python cwatm_gui.py --run-cwatm <settings.ini> (still works)
 
 MUST NOT import PySide6/Qt: the child stays light, and run_cwatm.mainwarm calls
 globalclear() when it sees PySide6 in sys.modules (an in-process-era workaround

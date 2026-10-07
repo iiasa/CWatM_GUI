@@ -56,11 +56,12 @@ MESSAGES = {
     "badge_required": "The Shop opens once you have earned the Breg badge.",
     "requires_item": "Buy the previous item first.",
     "not_enough_points": "You do not have enough points for this.",
+    "reward_only": "This is a reward - it cannot be bought.",
 }
 
 # shop_buy() answers 'status'; everything but 'bought' is a refusal with these codes.
 _SHOP_REFUSALS = ("unknown_item", "already_owned", "badge_required",
-                  "requires_item", "not_enough_points")
+                  "requires_item", "not_enough_points", "reward_only")
 
 
 def shop_refusal(result):
@@ -549,6 +550,22 @@ class AccountClient:
         refusal = shop_refusal(result)
         if refusal is not None:
             raise refusal
+        return dict(result, email=session.user.email)
+
+    def claim_reward(self, reward):
+        """Claim a reward item (e.g. 'modflow_first_run' -> the mole), once. Returns
+        the new status (get_status() shape) plus status = granted | already_owned |
+        unknown_reward, reward and items (the codes given now)."""
+        session = self._session()
+        result = self._rpc("claim_reward", {"p_reward": str(reward)}) or {}
+        return dict(result, email=session.user.email)
+
+    def reset_reward(self, reward):
+        """Take a given reward back so it can be earned again (testing). Removes only
+        the caller's granted, 0-point items of that reward. Returns the new status
+        plus status = reset | not_owned | unknown_reward."""
+        session = self._session()
+        result = self._rpc("reset_reward", {"p_reward": str(reward)}) or {}
         return dict(result, email=session.user.email)
 
     def get_run_locations(self):

@@ -4,6 +4,108 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
+## CWatM GUI 1.11 — what is new
+
+*Released 7 October 2026. Previous release: 1.10 (30 September 2026).*
+
+The headline of this release is the **Shop**: points earned with CWatM runs can now be
+spent on the skill levels and on animals for the live discharge plot. Alongside come a
+round of security hardening, a much better Compare settings window, new NetCDF
+actions, and a simpler MODFLOW setup.
+
+---
+
+### 1. The Shop and actual points
+
+- A **Shop** button in the menu bar (logged in, from the Breg badge on) sells the
+  **Advanced** (20 points) and **Expert** (40) skill levels and **animals** for the
+  live discharge sparkline — Trout, Catfish, Clownfish, Otter, Beaver, Octopus and a
+  Bottle, now drawn as pictures. Every purchase is confirmed first.
+- **Earned** points (they decide your badges) never go down. What you see on the
+  account button and the leaderboard are your **actual** points: earned minus spent.
+  Spending never removes a badge.
+- **Points fade when the GUI is not used**: −3 % after the first week without a login,
+  then −5 % a week, never below 5. Earned points and badges never fade.
+- **The mole** is a reward, not for sale: your first successful run with coupled
+  MODFLOW earns it, with a popup. *Preferences ▸ Account ▸ Reset MODFLOW reward* lets
+  you earn it again.
+- **Preferences ▸ Display ▸ Select animal** lists the animals you own, with a preview.
+- **Cheat ticks** (*Preferences ▸ Account*, session only, work logged out): one opens
+  every skill level, one every animal — the game must never stop a serious user.
+  Accounts that existed before the Shop got Advanced and Expert for free.
+
+### 2. Privacy and security
+
+- **Less data per run**: a counted run is stored as a settings fingerprint and the day
+  only; the data export masks your e-mail address. The public world map rounds run
+  places to 0.1° (~10 km), your own location is kept to 0.5° (~50 km).
+- **Sign-up choices** (record run locations, leaderboard, world map) are optional and
+  **unticked**; registering with an address that already has an account gets the same
+  neutral answer as a new one.
+- **CWatM AI** asks once before reading browser cookies and says where the Google
+  session is stored and how to delete it.
+- **Run guard**: a run (main, Windowed, Batch, Create batch) stops early, naming the
+  lines, when an output entry is something CWatM would refuse (Error 135); *Check
+  settingsfile* (F4) marks the same lines.
+- The map windows load only the Leaflet files shipped with the GUI (hash-checked),
+  never code from the network; programs and scripts in a PathOut are never started,
+  only shown in their folder.
+- The installer clears the old `_internal` folder on upgrade, so files a new build no
+  longer ships cannot linger. Updated `urllib3` and `anyio`.
+
+### 3. Compare settings
+
+- **Editing keeps both sides aligned**: added lines get gray placeholder lines
+  opposite, deleted lines leave one behind (display only, never saved). Adding empty
+  lines and deleting them again leaves no colour.
+- A line edited so it now **equals** the other side turns a lighter orange.
+- **Save no longer resets the view**: undo/redo still work after a save, and folds,
+  cursor and scroll position stay.
+- **Next / Previous Diff** work from the side you last clicked, and unfold a section
+  holding a difference.
+
+### 4. Analyse ▸ NetCDF and Show Basin
+
+- **Action ▸ Save as a .tif**: the shown timestep as a GeoTIFF (`<name>_<ddmmyyyy>.tif`).
+- **Points from a loaded JSON/shapefile**: the popup of a point offers *Make this point a
+  gauge* and *Make all points to gauges* — they become selected points for the
+  Timeseries, Flow duration and Flow regime actions.
+- The **OSM transparency** slider has its own row below Play; colour scale and basemap
+  are in the **Display** window.
+- **Show Basin ▸ Copy Mask** also removes gauges that lie outside the new mask; if none
+  is left, the mask outlet becomes the gauge.
+
+### 5. Analyse ▸ Flow Diagram
+
+- **Click a node or flow** to highlight it and everything downstream of it; click again
+  or on the background to show everything.
+- Tall nodes (Precipitation, Evapotranspiration) are no longer cut off at the plot edge
+  at some window sizes.
+
+### 6. Running CWatM
+
+- **RUN CWATM ▸ Run CWatM + error message**: the same run with CWatM's `-e` flag —
+  error messages show the code lines where the error occurred.
+- **MODFLOW needs no GUI setting any more**: a run with `modflow_coupling = True` loads
+  `flopy` and `xmipy` by itself. *Preferences ▸ Startup & Model ▸ Use Modflow* is gone.
+- **Fixed**: a coupled-MODFLOW run started from source no longer starts the model a
+  second time inside MODFLOW's helper process.
+- The bundled **CWatM model** is updated (snow and frost split into their own modules,
+  MODFLOW 6 in its own process, and more).
+
+### 7. CWatM Academy
+
+- **Completed levels stay available**: Level 1 (outlet map) and Level 2 (walkthrough)
+  can be done again; points are still paid only once per level.
+
+### 8. Tests and CI
+
+New tests for the Shop, the run guard, safe links and process launch, the pinned map
+files, the server functions, GeoTIFF export, shapefile/GeoJSON points and Copy Mask.
+CI now also runs **gitleaks** (secrets), **Bandit** and **CodeQL**, plus a weekly
+`pip-audit` of the pinned requirements.
+
+
 ## CWatM GUI 1.10 — what is new
 
 *Released 30 September 2026. Previous release: 1.07 (18 September 2026).*

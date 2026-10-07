@@ -299,7 +299,7 @@ class initcondition(object):
 		Puts all the variables which has to be stored in 2 lists:
 
 		* initCondVar: the name of the variable in the init netcdf file
-		* initCondVarValue: the variable as it can be read with the 'eval' command
+		* initCondVarValue: the variable name, optionally with integer index e.g. w1[2] (read with getoutvar)
 
 		Reads the parameter *save_initial* and *save_initial* to know if to save or load initial values
         """
@@ -348,7 +348,7 @@ class initcondition(object):
                 xl_settings_file_path = cbinding('Excel_settings_file')
                 self.var.Crops, self.var.Crops_names = self.crops_initialise(xl_settings_file_path)
             else:
-                msg = "The Excel settings file needs to be included into the settings file:\n" \
+                msg = "Error 137: The Excel settings file needs to be included into the settings file:\n" \
                       "Excel_settings_file ="+r"*PATH*\cwatm_settings.xlsx"+"\n"
                 raise CWATMError(msg)
 
@@ -371,6 +371,13 @@ class initcondition(object):
 
                 initCondVar.append('activatedCrops_'+ str(c))
                 initCondVarValue.append('activatedCrops['+str(c)+']')
+
+                # crop coefficients: set only on the 1st of a month - without them a run starting later in the
+                # month has Kc = 0 until the next month (no crop transpiration, no non-paddy irrigation)
+                initCondVar.append('currentKC_' + str(c))
+                initCondVarValue.append('currentKC[' + str(c) + ']')
+                initCondVar.append('currentKY_' + str(c))
+                initCondVarValue.append('currentKY[' + str(c) + ']')
 
         # water demand
         initCondVar.append("unmetDemandPaddy")
@@ -397,6 +404,13 @@ class initcondition(object):
         if not self.var.modflow:
             initCondVar.append("storGroundwater")
             initCondVarValue.append("storGroundwater")
+        else:
+            # MODFLOW: capillary rise and saturated fraction are used by soil and land cover before MODFLOW runs on
+            # the first day of a restart (the MODFLOW head is saved as <initSave>_<date>_modflowhead.nc)
+            initCondVar.append("capillar")
+            initCondVarValue.append("capillar")
+            initCondVar.append("capriseindex")
+            initCondVarValue.append("capriseindex")
 
         # routing
         Var1 = ["channelStorage", "discharge", "riverbedExchange"]
@@ -491,9 +505,8 @@ class initcondition(object):
                 initVar=[]
                 i = 0
                 for var in initCondVar:
-                    variabel = "self.var."+initCondVarValue[i]
-                    #print variabel
-                    initVar.append(eval(variabel))
+                    base, index = parseoutvar(initCondVarValue[i])
+                    initVar.append(getoutvar(self.var, base, index))
                     i += 1
                 writeIniNetcdf(saveFile, initCondVar,initVar)
 

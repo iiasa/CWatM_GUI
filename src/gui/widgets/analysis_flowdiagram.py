@@ -148,10 +148,91 @@ _GRADIENT_JS = """
       path.style.fillOpacity = '1';
     });
   }
+  // Keep every node inside the plot. With arrangement "fixed" plotly.js puts a
+  // node's CENTRE at y * plot height, while the node's height scales with the
+  // window - so a tall node with a centre near an edge (Precipitation,
+  // Evapotranspiration) stuck out of the plot and was clipped, more or less
+  // depending on the window size. After every redraw (a resize too) each node's
+  // centre is clamped so the node plus its two-line label fits, starting again
+  // from the ORIGINAL y each time, so a larger window gives the layout back.
+  var LABEL_HALF = 12, EDGE = 4;
+  function fitNodes(gd) {
+    var trace = gd.data && gd.data[0];
+    if (!trace || !trace.node || !trace.node.y) return;
+    if (!gd._cwatmOrigY) gd._cwatmOrigY = trace.node.y.slice();
+    var orig = gd._cwatmOrigY, cur = trace.node.y, want = orig.slice();
+    gd.querySelectorAll('g.sankey-node').forEach(function(el) {
+      var d = el.__data__;
+      if (!d || !d.node || !(d.size > 0)) return;
+      var i = d.node.pointNumber;
+      if (i === undefined || i >= want.length) return;
+      var half = Math.max(d.visibleHeight || 0, 2 * LABEL_HALF) / 2 + EDGE;
+      var lo = half / d.size, hi = 1 - half / d.size;
+      want[i] = lo > hi ? 0.5 : Math.min(hi, Math.max(lo, orig[i]));
+    });
+    for (var i = 0; i < want.length; i++) {
+      if (Math.abs(want[i] - cur[i]) > 0.002) {
+        // node heights do not depend on y, so the redraw this triggers finds
+        // nothing left to move and the loop stops there
+        Plotly.restyle(gd, {'node.y': [want]});
+        return;
+      }
+    }
+  }
+  // Click a node: it and everything downstream of it (the links leaving it, their
+  // target nodes, their links, ...) keep their colour, the rest is dimmed. Click a
+  // link: that link and the branch downstream of its target. Click the same
+  // element again, or the background, to show everything again. Kept on
+  // gd._cwatmFocus and re-applied after every redraw (resize, fitNodes restyle).
+  var DIM_NODE = 0.25, DIM_LINK = 0.12;
+  function downstream(gd, startNode, startLink) {
+    var lk = gd.data[0].link, nodes = {}, links = {}, queue = [startNode];
+    nodes[startNode] = true;
+    if (startLink !== null) links[startLink] = true;
+    while (queue.length) {
+      var n = queue.shift();
+      for (var i = 0; i < lk.source.length; i++) {
+        if (lk.source[i] !== n || links[i]) continue;
+        links[i] = true;
+        if (!nodes[lk.target[i]]) { nodes[lk.target[i]] = true; queue.push(lk.target[i]); }
+      }
+    }
+    return {nodes: nodes, links: links};
+  }
+  function applyFocus(gd) {
+    var f = gd._cwatmFocus;
+    gd.querySelectorAll('g.sankey-node').forEach(function(el) {
+      var d = el.__data__, i = d && d.node ? d.node.pointNumber : undefined;
+      el.style.opacity = !f || i === undefined || f.nodes[i] ? '' : DIM_NODE;
+    });
+    gd.querySelectorAll('path.sankey-link').forEach(function(el) {
+      var d = el.__data__, i = d && d.link ? d.link.pointNumber : undefined;
+      el.style.opacity = !f || i === undefined || f.links[i] ? '' : DIM_LINK;
+    });
+  }
+  function onClick(gd, ev) {
+    var t = ev.target, nodeEl = t.closest && t.closest('g.sankey-node'),
+        linkEl = t.closest && t.closest('path.sankey-link'), key = null, focus = null;
+    if (nodeEl && nodeEl.__data__ && nodeEl.__data__.node) {
+      var n = nodeEl.__data__.node.pointNumber;
+      key = 'n' + n; focus = downstream(gd, n, null);
+    } else if (linkEl && linkEl.__data__ && linkEl.__data__.link) {
+      var l = linkEl.__data__.link.pointNumber;
+      key = 'l' + l; focus = downstream(gd, gd.data[0].link.target[l], l);
+    }
+    if (key === null || key === gd._cwatmFocusKey) { key = null; focus = null; }
+    gd._cwatmFocusKey = key;
+    gd._cwatmFocus = focus;
+    applyFocus(gd);
+  }
   function hookAll() {
     document.querySelectorAll('.js-plotly-plot').forEach(function(gd) {
+      fitNodes(gd);
       applyGradients(gd);
-      gd.on('plotly_afterplot', function() { applyGradients(gd); });
+      applyFocus(gd);
+      gd.on('plotly_afterplot', function() { fitNodes(gd); applyGradients(gd); applyFocus(gd); });
+      // capture phase: runs before plotly's own handlers can stop the event
+      gd.addEventListener('click', function(ev) { onClick(gd, ev); }, true);
     });
   }
   if (document.readyState === 'loading')

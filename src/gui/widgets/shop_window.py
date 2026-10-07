@@ -21,8 +21,8 @@ Spending lowers the balance only - the badges and the earned points never change
 The rules are in ``account_shop`` (pure, tested); this module only shows them.
 """
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel,
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel, QLayout,
                                QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from src.gui.utils import account_shop as S
@@ -33,7 +33,7 @@ log = get_logger("shop_window")
 
 # Shop item code -> the level / sparkline-animal name the GUI uses
 _LEVEL_NAMES = {code: name for name, code in S.LEVEL_CODES.items()}
-_ANIMAL_NAMES = {code: name for name, code in S.ANIMAL_CODES.items()}
+_ANIMAL_NAMES = S.ANIMAL_NAMES
 
 
 def _points(n):
@@ -41,8 +41,24 @@ def _points(n):
 
 
 def _emoji(code):
-    from src.gui.widgets.discharge_sparkline import ANIMALS
-    return dict(ANIMALS).get(_ANIMAL_NAMES.get(code), "")
+    """The emoji of an animal - only in the emoji mode (else '': the icon shows it)."""
+    from src.gui.widgets import discharge_sparkline as ds
+    if ds.USE_IMAGE_ANIMALS:
+        return ""
+    names = {c: n for n, c in S.ANIMAL_CODES.items() if n in dict(ds.ANIMALS)}
+    return dict(ds.ANIMALS).get(names.get(code), "")
+
+
+def _icon(code):
+    """The animal's picture (assets/ani) as a QIcon, or None (emoji mode / no file)."""
+    from src.gui.widgets import discharge_sparkline as ds
+    if not ds.USE_IMAGE_ANIMALS:
+        return None
+    pm = ds.animal_pixmap(_ANIMAL_NAMES.get(code))
+    if pm is None:
+        return None
+    from PySide6.QtGui import QIcon
+    return QIcon(pm)
 
 
 def level_row_text(item, status):
@@ -67,6 +83,9 @@ class ShopWindow(_AccountDialogBase):
         self._items = []
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 14, 16, 12)
+        # the rows change after the window is shown: _grow_to_content sizes it,
+        # not the layout (whose forced resize caused a Windows geometry warning)
+        outer.setSizeConstraint(QLayout.SetNoConstraint)
         head = QLabel("CWatM Shop")
         head.setObjectName("accHead")
         outer.addWidget(head)
@@ -147,6 +166,7 @@ class ShopWindow(_AccountDialogBase):
         self._clear_body()
         if not self._items:
             self.body_lay.addWidget(self._note("The price list could not be loaded."))
+            self._grow_to_content()
             return
         self._add_levels(status)
         self.body_lay.addWidget(self._line())
@@ -157,6 +177,7 @@ class ShopWindow(_AccountDialogBase):
                 f"You cannot afford anything yet - the cheapest item needs "
                 f"{_points(need)} more."))
         self.body_lay.addStretch(1)
+        self._grow_to_content()
 
     def _section(self, title):
         lbl = QLabel(title)
@@ -200,10 +221,15 @@ class ShopWindow(_AccountDialogBase):
         for_sale = S.animals_for_sale(self._items, status)
         row = QHBoxLayout()
         self.cmb_animal = QComboBox()
+        self.cmb_animal.setIconSize(QSize(32, 32))
         for item in for_sale:
-            self.cmb_animal.addItem(
-                f"{_emoji(item['code'])}  {item['name']} - {_points(int(item['price']))}",
-                item["code"])
+            text = f"{item['name']} - {_points(int(item['price']))}"
+            icon = _icon(item["code"])
+            if icon is not None:
+                self.cmb_animal.addItem(icon, text, item["code"])
+            else:
+                self.cmb_animal.addItem(f"{_emoji(item['code'])}  {text}".strip(),
+                                        item["code"])
         self.btn_animal = QPushButton("Buy")
         self.btn_animal.setAutoDefault(False)
         self.btn_animal.clicked.connect(self._buy_selected_animal)
@@ -217,7 +243,7 @@ class ShopWindow(_AccountDialogBase):
         mine = S.owned(status)
         owned = [i for i in self._items if i.get("kind") == "animal" and i["code"] in mine]
         if owned:
-            names = ", ".join(f"{_emoji(i['code'])} {i['name']}" for i in owned)
+            names = ", ".join(f"{_emoji(i['code'])} {i['name']}".strip() for i in owned)
             self.body_lay.addWidget(self._note(
                 f"✓ bought: {names} - choose one in Preferences ▸ Display ▸ "
                 "Select animal"))

@@ -41,7 +41,7 @@ class TestBuildBatchScript:
         lines = content.split("\r\n")
         assert lines[0] == "@echo off"
         assert lines[1] == 'cd /d "C:\\proj"'
-        assert "--run-cwatm" in lines[2]
+        assert 'cwatm_model.py"' in lines[2]
         assert '"C:\\proj\\settings.ini"' in lines[2]
         assert lines[2].rstrip().endswith('"-l"')
         assert lines[3] == "pause"

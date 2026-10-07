@@ -1,6 +1,6 @@
 # CWatM GUI — Documentation and User Manual
 
-## Version 1.10
+## Version 1.11
 
 A graphical user interface for the **Community Water Model (CWatM)** developed by
 IIASA. The application lets you load, edit, validate and run CWatM settings files,
@@ -439,7 +439,9 @@ UTM33) are shown on the raw x/y without an OSM basemap.
 - **Buttons**: Hide/Show Mask, Create new Mask, **Copy Mask**, Zoom to Mask, Create
   gauge / **Copy Gauge** (accumulate several gauges, then commit them all to the
   Gauges box), **Load JSON** (overlay a GeoJSON), Exit. **Clicking a gauge pin removes
-  it** from the working list.
+  it** from the working list. **Copy Mask** also removes from Gauges every station
+  that lies outside the new mask (typically left over from the previous basin); if none
+  is left, the mask outlet becomes the gauge.
 - **OSM transparency slider**: fades between only-the-data and the OSM basemap with the
   data on top; the start value comes from Preferences ▸ Display ▸ Initial map transparency. A **Basemap**
   dropdown switches the OSM style.
@@ -559,9 +561,13 @@ result-CSV format.
 
 **Analyse ▸ NetCDF** shows a result `.nc` (e.g. `discharge_daily.nc`) as a raster
 overlay on an OSM map (EPSG:4326). A **timestep slider + Play** scrubs through time; a
-**colour-scale** selector, **Log scale** toggle and **OSM transparency** slider tune
-the display. Click a cell to read its value. The left-window gauges appear as small
-numbered red pins.
+**colour-scale** selector (menu **Display**), **Log scale** toggle and the **OSM
+transparency** slider (directly below Play) tune the display. Click a cell to read its value. The left-window gauges appear as small
+numbered red pins. Clicking a shape loaded with **File ▸ Load JSON / Load shape** shows
+its attributes; for a **point** the popup also offers **Make this point a gauge** and
+**Make all points to gauges** (every point of that file). They become selected points
+just like clicked cells: numbered pins that the Timeseries, Flow duration and Flow
+regime actions use, and a left click on a pin removes it again.
 
 - **Left-click** a cell (or a gauge pin) to select it as a numbered point; click more
   cells to add stations, and click a selected cell or its pin again to remove it.
@@ -759,10 +765,10 @@ always starts off).
 - **Load previous settings at start** — re-open **all** the tabs of the last session
   automatically at the next startup (the file you were working in on top). A settings
   file passed on the command line wins and opens on its own.
-- **Use Modflow** — pre-load the MODFLOW coupling library (flopy) so MODFLOW runs/checks
-  are ready; off (default) keeps startup fast. *(A MODFLOW run also needs `xmipy` and the
-  MODFLOW 6 library `libmf6`, whose path you set in the settings — the GUI does not ship
-  the DLL.)*
+
+*(MODFLOW needs no setting: a run with `modflow_coupling = True` loads `flopy` and
+`xmipy` by itself. It also needs the MODFLOW 6 library `libmf6`, whose path you set in
+the settings — the GUI does not ship the DLL.)*
 
 **Display**
 
@@ -903,8 +909,7 @@ current user's locations. Reference: `installer/CWatM_GUI.iss`.
   administrator). Make sure your NotebookLM notebook (title contains "CWatM") has its
   CWatM sources uploaded — see [§14.1](#141-prepare-a-notebooklm-notebook-with-cwatm-sources-one-time).
 - **A MODFLOW run fails** — it needs `xmipy` + `flopy` installed and the `libmf6`
-  library path set in the settings; enable **Preferences ▸ Startup & Model ▸ Use Modflow** for a faster
-  first use.
+  library path set in the settings.
 - **Diagnostic log** — swallowed errors are written to
   `%LOCALAPPDATA%/CWatM_GUI/gui.log`.
 
@@ -916,9 +921,9 @@ current user's locations. Reference: `installer/CWatM_GUI.iss`.
 ## 18. Versioning
 
 The **CWatM GUI** carries its own version number, independent of the CWatM model
-version it drives. The current release is **Version 1.10**.
+version it drives. The current release is **Version 1.11**.
 
-You can see it in-app under **Info ▸ About CWatM**, where **CWatM GUI version 1.10**
+You can see it in-app under **Info ▸ About CWatM**, where **CWatM GUI version 1.11**
 is shown above the **CWatM Version** block (the latter reports the model's Git
 branch, hash and build time).
 
@@ -930,6 +935,7 @@ disagree. Only this manual — the header above and the table below — needs it
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.11 | 07/10/2026 | **Shop**: spend points on the **Advanced** / **Expert** levels and on picture **animals** for the live discharge plot; earned points (badges) never go down, the shown **actual** points are earned minus spent and fade after a week without login (never below 5); the **mole** reward for the first coupled-MODFLOW run; session-only **Cheat** ticks. Less data stored per run, unticked sign-up choices, a **run guard** for output entries CWatM would refuse. **Compare settings** keeps both sides aligned while editing and keeps undo/view after Save. **NetCDF**: *Save as a .tif*, JSON/shapefile points as selected gauges. **Flow Diagram**: click to highlight a branch. **Run CWatM + error message** (`-e`). MODFLOW needs no GUI setting any more (*Use Modflow* removed). Updated CWatM model — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.10 | 30/09/2026 | **CWatM Academy**: a guided ten-level introduction to CWatM (menu-bar button left of CWatM AI, or *Preferences ▸ CWatM Academy ▸ Enable CWatM Academy*); Level 1 is a small game — find the outlet of one of the world's 100 largest basins on the map — progress follows your login to any computer, every finished level earns 5 points, and from Level 4 on a login is needed. **CWatM account** (optional): log in / register from the menu bar, 1 point per successful full run of a distinct setup, river **badges**, a **Leaderboard**, *Export my data* / *Delete account*, and a privacy notice under *Help ▸ CWatM account privacy*. **Advanced / Expert** skill levels now need a login. **Info ▸ World Map**: where CWatM was run (anonymous counts) and where users are (opt-in). **Analyse ▸ NetCDF**: *Load netcdf* in the same window, *Calculate mean* and *Calculate percentile* saved as a new `.nc`. Two more GUI languages — **Français** and **Español** (13 in all). A Gemini notebook choice for CWatM AI, dark/Mikhail-mode colour corrections (incl. Watercycle), a fixed taskbar icon and a refined logo. **SciPy is no longer needed** (CWatM replaced it with its own methods) — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.07 | 18/09/2026 | **GUI language**: *Preferences ▸ Display ▸ Language* switches menus, menu items, buttons, labels and tooltips live between English, Deutsch, Italiano, Magyar, Română, Srpski, Hrvatski, Slovenčina, Български, Čeština and Українська (remembered for the next start; messages, window titles and the settings file stay English). New **RUN CWATM ▸ Create batch** (Expert) writes a Windows `.bat` that runs the current settings file without the GUI. "Run Ledger" is now called **Journal of Runs** throughout. The build bundles CWatM's new **t6** routing libraries (replacing t5), and a Watercycle sunburst calculation was corrected — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.06 | 22/08/2026 | Frozen-build startup dropped from ~6.2 s to ~0.5 s (lazy `xarray`/`rasterio`/CWatM-model imports, the first settings-file load's checks deferred until after the window is shown, a trimmed `dask`) — plus a startup window-flash fix that came with it. **Show Basin**, **Analyse ▸ NetCDF**, **Restore settingsfile**, **Analyse ▸ Timeseries**, **Journal of Runs**, **Excel Crops/Reservoirs** and **Batch Run** lost their button rows for File/Action/… menus (Mask/Gauge, Backward/Forward and Run all/Stop all stayed **also** as buttons, each window's most-used action), and the NetCDF map gained a right-click Action menu. New: **Flow duration** and **Flow regime** plots (Analyse ▸ NetCDF/Timeseries, one point at a time, per-year lines + average + percentile bands), **Load JSON/Load shape** map overlays (Show Basin and NetCDF), faster NetCDF reads on large files (parallel chunked reads, caching, Cancel), subwindows now sized to the screen they open on, and a fixed month-slider minimum gap at the very start of the Watercycle/Flow Diagram range — see [CHANGELOG.md](CHANGELOG.md). |

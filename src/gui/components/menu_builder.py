@@ -201,6 +201,12 @@ class MenuBuilderMixin:
         run_action = run_menu.addAction("Run CWATM")
         run_action.setShortcut("Ctrl+R")
         run_action.triggered.connect(lambda: self.run_cwatm())
+        # Same run with CWatM's -e flag (error messages with the code lines).
+        run_error_action = run_menu.addAction("Run CWatM + error message")
+        run_error_action.setToolTip(
+            "This runs CWatM with an extended error message")
+        run_error_action.triggered.connect(
+            lambda: self.run_cwatm(extended_errors=True))
         # The history of what has been run - next to the actions that produce it
         # (this was Tools > Run Ledger).
         ledger_action = run_menu.addAction("Journal of Runs")
@@ -428,9 +434,6 @@ class MenuBuilderMixin:
         # Load previous settings at start (read by cwatm_gui.py main())
         self._on_load_previous_toggled(
             self._settings.value("startup/load_previous", False, type=bool))
-        # Use Modflow: pre-warm flopy in the background when on (heavy import)
-        self._on_use_modflow_toggled(
-            self._settings.value("modflow/enabled", False, type=bool))
         # Bookmark Change: auto-bookmark changed lines - apply to the editor
         self._on_bookmark_change_toggled(
             self._settings.value("editor/bookmark_change", False, type=bool))

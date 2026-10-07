@@ -242,3 +242,25 @@ class TestEntryIdentity:
                                                    time.time(), True, 0))
         rows = run_ledger.load_entries()
         assert len({run_ledger._entry_key(r) for r in rows}) == 2
+
+
+@pytest.mark.parametrize("content, expected", [
+    ("[OPTIONS]\nmodflow_coupling = True\n", True),
+    ("[OPTIONS]\nmodflow_coupling = 1  # on\n", True),
+    ("[OPTIONS]\nmodflow_coupling = False\n", False),
+    ("[OPTIONS]\n# modflow_coupling = True\n", False),
+    ("[OPTIONS]\nmodflow_coupling = True\nmodflow_coupling = False\n", False),  # last wins
+    ("", False),
+    (None, False),
+])
+def test_settings_modflow(content, expected):
+    assert run_ledger.settings_modflow(content) is expected
+
+
+def test_make_entry_marks_a_modflow_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(run_ledger, "history_dir", lambda: str(tmp_path))
+    on = run_ledger.make_entry("a.ini", "", "", None, True, None,
+                               content="[OPTIONS]\nmodflow_coupling = True\n")
+    off = run_ledger.make_entry("a.ini", "", "", None, True, None,
+                                content="[OPTIONS]\nmodflow_coupling = False\n")
+    assert on.get("modflow") is True and "modflow" not in off

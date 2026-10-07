@@ -79,6 +79,11 @@ class TestLevelButton:
 
 
 class TestPreferencesAnimals:
+    @pytest.fixture(autouse=True)
+    def emoji_animals(self, monkeypatch):
+        from src.gui.widgets import discharge_sparkline
+        monkeypatch.setattr(discharge_sparkline, "USE_IMAGE_ANIMALS", False)
+
     def _prefs(self, w):
         from src.gui.widgets.preferences_window import PreferencesWindow
         return PreferencesWindow(w)
@@ -98,6 +103,46 @@ class TestPreferencesAnimals:
         offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
         assert offered == ["Otter", "Octopus (for Carla)"]
         assert w.discharge_sparkline._animal == "Otter"     # Fish chosen, not owned
+        p.deleteLater()
+
+    def test_animal_cheat_lists_all_and_applies(self, make_window):
+        w = make_window()
+        p = self._prefs(w)
+        p.cb_cheat_animals.setChecked(True)                 # before Apply: refilled
+        assert p.cmb_animal.isEnabled() and p.cmb_animal.count() == 5
+        p._select_data(p.cmb_animal, "Beaver")
+        p._apply()                                          # cheat applied first
+        assert w.discharge_sparkline._animal == "Beaver"
+        p.cb_cheat_animals.setChecked(False)
+        assert p.cmb_animal.itemData(0) is None             # back to "buy one"
+        p.deleteLater()
+
+    def test_image_animals_from_the_assets_folder(self, make_window, monkeypatch):
+        from src.gui.widgets import discharge_sparkline as ds
+        monkeypatch.setattr(ds, "USE_IMAGE_ANIMALS", True)
+        w = make_window()
+        p = self._prefs(w)
+        p.cb_cheat_animals.setChecked(True)
+        offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
+        assert offered == [n for n, _p in ds.image_animals()] and offered  # assets/ani
+        assert not p.cmb_animal.itemIcon(0).isNull()
+        p._select_data(p.cmb_animal, offered[0])
+        assert p.lbl_animal_preview.pixmap().width() == 64   # the bigger picture
+        p._apply()
+        assert w.discharge_sparkline._animal == offered[0]
+        p.deleteLater()
+
+    def test_images_are_the_standard_and_bought_ones_listed(self, make_window,
+                                                            monkeypatch):
+        from src.gui.widgets import discharge_sparkline as ds
+        monkeypatch.setattr(ds, "USE_IMAGE_ANIMALS", True)   # the standard
+        w = make_window()
+        w._on_account_succeeded("restore", _status("trout", "octopus"))
+        p = self._prefs(w)
+        assert not hasattr(p, "cb_anim_images")              # no switch any more
+        offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
+        assert offered == ["Octopus (Carla)", "Trout"]
+        assert w.discharge_sparkline._animal == "Trout"      # the image default
         p.deleteLater()
 
 

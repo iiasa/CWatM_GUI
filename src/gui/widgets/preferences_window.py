@@ -23,9 +23,9 @@ from PySide6.QtWidgets import (QDialog, QWidget, QFrame, QVBoxLayout, QHBoxLayou
                                QLabel, QListWidget, QListWidgetItem, QStackedWidget,
                                QCheckBox, QComboBox, QFontComboBox, QSpinBox,
                                QLineEdit, QPushButton, QDialogButtonBox, QFileDialog,
-                               QSizePolicy)
+                               QSizePolicy, QMessageBox)
 from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QIcon
 
 from src.gui.utils import theme, display_format, run_ledger, i18n
 from src.gui.utils.gui_log import get_logger
@@ -43,6 +43,8 @@ ACADEMY_POINTS = 5
 
 # Default OpenStreetMap basemap for Show Basin - the EPSG:4326 WMS layers of
 # basin_viewer2 (kept in sync with its _B2_PROVIDERS).
+_ANIMAL_PREVIEW = 64   # px, the bigger picture of the selected animal (Display page)
+
 BASEMAPS = [("OSM", "OSM-WMS"), ("Topographic", "TOPO-OSM-WMS"),
             ("Terrain", "SRTM30-Colored-Hillshade"), ("Dark", "Dark")]
 
@@ -216,14 +218,11 @@ class PreferencesWindow(QDialog):
     def _page_startup(self):
         page, lay = self._page(
             "Startup & Model",
-            "What happens when the GUI starts, and which model libraries are loaded.")
+            "What happens when the GUI starts.")
         self.cb_load_previous = self._check(
             lay, "Load previous settings at start",
             "When ticked, the last settings file you had open is loaded again "
             "automatically the next time CWatM GUI starts.")
-        self.cb_use_modflow = self._check(
-            lay, "Use Modflow",
-            "Load flopy for MODFLOW coupling. Off = flopy is not loaded (faster start).")
         lay.addStretch(1)
         return page
 
@@ -282,19 +281,23 @@ class PreferencesWindow(QDialog):
         self._row(lay, "Default openstreet map:", self.cmb_basemap,
                   "Basemap Show Basin opens with")
 
-        from src.gui.widgets.discharge_sparkline import ANIMALS
+        from src.gui.widgets import discharge_sparkline as ds
         self.cmb_animal = QComboBox()
-        # only the animals bought in the Shop (all without an account server)
-        owned = getattr(self.mw, "owned_animals", lambda: [n for n, _e in ANIMALS])()
-        for name, emoji in ANIMALS:
-            if name in owned:
-                self.cmb_animal.addItem(f"{emoji}  {name}", name)
-        if not owned:
-            self.cmb_animal.addItem("None – buy one in the Shop", None)
-            self.cmb_animal.setEnabled(False)
-        self._row(lay, "Select animal:", self.cmb_animal,
-                  "Animal shown now and then on the live discharge plot - the "
-                  "animals you bought in the Shop")
+        self.cmb_animal.setIconSize(QSize(32, 32))    # the list shows the pictures big
+        # a bigger picture of the selected animal, right of the box
+        self.lbl_animal_preview = QLabel()
+        self.lbl_animal_preview.setFixedSize(_ANIMAL_PREVIEW, _ANIMAL_PREVIEW)
+        self.lbl_animal_preview.setAlignment(Qt.AlignCenter)
+        self.cmb_animal.currentIndexChanged.connect(self._show_animal_preview)
+        self._fill_animal_box(getattr(self.mw, "cheat_animals", lambda: False)())
+        animal_box = QWidget()
+        animal_lay = QHBoxLayout(animal_box)
+        animal_lay.setContentsMargins(0, 0, 0, 0)
+        animal_lay.addWidget(self.cmb_animal)
+        animal_lay.addWidget(self.lbl_animal_preview)
+        self._row(lay, "Select animal:", animal_box,
+                  "Animal shown on the live discharge plot - the animals you bought "
+                  "in the Shop (all of them with the animal Cheat on the Account page)")
         self.cb_tooltip_reverse = self._check(
             lay, "Tooltip reverse",
             "Show tooltips with the text and background colours swapped "
@@ -411,8 +414,96 @@ class PreferencesWindow(QDialog):
             "buying the levels in the Shop - for this session only: it is off again "
             "the next time CWatM GUI starts. Works without a login.")
         self.cb_cheat.toggled.connect(self._sync_level_box)
+        # Same rule for the sparkline animals (session only as well)
+        self.cb_cheat_animals = self._check(
+            lay, "Cheat - you can use all animals",
+            "Lets you select every animal for the live discharge plot without "
+            "buying it in the Shop - for this session only: it is off again the "
+            "next time CWatM GUI starts. Works without a login.")
+        self.cb_cheat_animals.toggled.connect(self._on_cheat_animals_ticked)
+        # an action, not a setting: acts at once (after a question), not on Apply
+        self.btn_reset_reward = QPushButton("Reset MODFLOW reward (the mole)")
+        self.btn_reset_reward.setAutoDefault(False)
+        self.btn_reset_reward.clicked.connect(self._reset_modflow_reward)
+        self._row(lay, "", self.btn_reset_reward,
+                  "Takes the mole back, so the next successful run with coupled "
+                  "MODFLOW earns it again - with its reward message. No points "
+                  "change.")
+        self.btn_reset_reward.setVisible(hasattr(self.mw, "reset_modflow_reward"))
         lay.addStretch(1)
         return page
+
+    def _reset_modflow_reward(self):
+        if QMessageBox.question(
+                self, "Reset MODFLOW reward",
+                "Take the mole back, so that your next successful run with coupled "
+                "MODFLOW earns it again?\n\nNo points change.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        text = self.mw.reset_modflow_reward()
+        try:
+            self.mw.status_bar.showMessage(text, 8000)
+        except Exception:
+            log.debug("_reset_modflow_reward: no status bar", exc_info=True)
+
+    def _fill_animal_box(self, cheat):
+        """(Re)fill Select animal: the owned animals, or all of them with the Cheat
+        (as dialled in, so the box follows the tick before Apply). Images from
+        assets/ani or emoji, as discharge_sparkline.USE_IMAGE_ANIMALS says."""
+        from src.gui.widgets import discharge_sparkline as ds
+        use_images = ds.USE_IMAGE_ANIMALS
+        names = ds.animal_names(use_images)
+        if cheat:
+            usable = names
+        else:
+            # same rule as AccountMixin.owned_animals, without its Cheat
+            items = getattr(self.mw, "owned_items", lambda: None)()
+            from src.gui.utils import account_shop
+            usable = [n for n in names if items is None
+                      or account_shop.ANIMAL_CODES.get(ds.shop_name(n)) in items]
+        current = self.cmb_animal.currentData()
+        self._animal_box_images = use_images     # what the preview has to draw
+        self.cmb_animal.clear()
+        emoji = dict(ds.ANIMALS)
+        for name in names:
+            if name not in usable:
+                continue
+            if use_images:
+                pm = ds.animal_pixmap(name)
+                if pm is not None:
+                    self.cmb_animal.addItem(QIcon(pm), name, name)
+                else:
+                    self.cmb_animal.addItem(name, name)
+            else:
+                self.cmb_animal.addItem(f"{emoji.get(name, '')}  {name}", name)
+        self.cmb_animal.setEnabled(bool(usable))
+        if not usable:
+            self.cmb_animal.addItem("None – buy one in the Shop", None)
+        elif current is not None:
+            self._select_data(self.cmb_animal, current)
+        self._show_animal_preview()
+
+    def _show_animal_preview(self, *_):
+        """The selected animal, big: the image (smoothly scaled) or the emoji."""
+        from src.gui.widgets import discharge_sparkline as ds
+        label = self.lbl_animal_preview
+        label.clear()
+        name = self.cmb_animal.currentData()
+        if name is None:
+            return
+        pm = (ds.animal_pixmap(name)
+              if getattr(self, "_animal_box_images", False) else None)
+        if pm is not None:
+            label.setPixmap(pm.scaled(_ANIMAL_PREVIEW, _ANIMAL_PREVIEW,
+                                      Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        else:
+            font = QFont()
+            font.setPixelSize(int(_ANIMAL_PREVIEW * 0.8))
+            label.setFont(font)
+            label.setText(dict(ds.ANIMALS).get(name, ""))
+
+    def _on_cheat_animals_ticked(self, checked):
+        self._fill_animal_box(checked)
 
     def _sync_level_box(self, *_):
         """Skill of user is usable when a level beyond Beginner is owned, or the
@@ -470,9 +561,9 @@ class PreferencesWindow(QDialog):
         effective = getattr(mw, "effective_animal", None)
         if effective is not None:
             return effective()
-        from src.gui.widgets.discharge_sparkline import ANIMALS
-        name = s.value("display/animal", "Fish")
-        return name if name in dict(ANIMALS) else "Fish"
+        from src.gui.widgets.discharge_sparkline import animal_names, default_animal
+        name = s.value("display/animal", default_animal())
+        return name if name in animal_names() else default_animal()
 
     def _read_state(self):
         """The settings as they currently are in the running app."""
@@ -482,7 +573,6 @@ class PreferencesWindow(QDialog):
             "output_file": mw._output_file_override or "",
             "write_output": bool(mw.write_output_action.isChecked()),
             "load_previous": s.value("startup/load_previous", False, type=bool),
-            "use_modflow": s.value("modflow/enabled", False, type=bool),
             "academy_enabled": s.value("academy/enabled", False, type=bool),
             "academy_link": s.value("academy/link_login", True, type=bool),
             "language": i18n.current_language(),
@@ -511,6 +601,7 @@ class PreferencesWindow(QDialog):
             "account_count_runs": mw.account_count_runs(),
             "account_share_locations": mw.account_share_locations(),
             "cheat_levels": getattr(mw, "cheat_levels", lambda: False)(),
+            "cheat_animals": getattr(mw, "cheat_animals", lambda: False)(),
         }
 
     def _to_widgets(self, st):
@@ -518,7 +609,6 @@ class PreferencesWindow(QDialog):
         self.ed_output_file.setText(st["output_file"])
         self.cb_write_output.setChecked(st["write_output"])
         self.cb_load_previous.setChecked(st["load_previous"])
-        self.cb_use_modflow.setChecked(st["use_modflow"])
         self.cb_academy.setChecked(st["academy_enabled"])
         self.cb_academy_link.setChecked(st["academy_link"])
         self._select_data(self.cmb_language, st["language"])
@@ -529,6 +619,7 @@ class PreferencesWindow(QDialog):
         self.sp_decimals.setValue(st["decimals"])
         self.sp_transparency.setValue(st["transparency"])
         self._select_data(self.cmb_basemap, st["basemap"])
+        self.cb_cheat_animals.setChecked(st["cheat_animals"])   # refills the box
         self._select_data(self.cmb_animal, st["animal"])
         self.cb_tooltip_reverse.setChecked(st["tooltip_reverse"])
         self._select_data(self.cmb_level, st["level"])
@@ -551,7 +642,6 @@ class PreferencesWindow(QDialog):
             "output_file": self.ed_output_file.text().strip(),
             "write_output": self.cb_write_output.isChecked(),
             "load_previous": self.cb_load_previous.isChecked(),
-            "use_modflow": self.cb_use_modflow.isChecked(),
             "academy_enabled": self.cb_academy.isChecked(),
             "academy_link": self.cb_academy_link.isChecked(),
             "language": self.cmb_language.currentData(),
@@ -576,6 +666,7 @@ class PreferencesWindow(QDialog):
             "account_count_runs": self.cb_account_count_runs.isChecked(),
             "account_share_locations": self.cb_account_locations.isChecked(),
             "cheat_levels": self.cb_cheat.isChecked(),
+            "cheat_animals": self.cb_cheat_animals.isChecked(),
         }
 
     @staticmethod
@@ -604,13 +695,16 @@ class PreferencesWindow(QDialog):
         """Push everything the user changed since the last apply into the app.
 
         Only the *changed* keys are pushed, so applying twice does not re-fire
-        handlers (a theme re-apply, a flopy warm-up) for untouched settings.
+        handlers (a theme re-apply, a language switch) for untouched settings.
         """
         new = self._from_widgets()
         changed = {k: v for k, v in new.items() if v != self._applied.get(k)}
         # the Cheat tick first, so a level chosen in the same Apply is allowed
         if "cheat_levels" in changed:
             changed = {"cheat_levels": changed.pop("cheat_levels"), **changed}
+        # ...and the animal Cheat before the animal, so a cheated choice sticks
+        if "cheat_animals" in changed:
+            changed = {"cheat_animals": changed.pop("cheat_animals"), **changed}
         if not changed:
             return
         mw = self.mw
@@ -635,8 +729,6 @@ class PreferencesWindow(QDialog):
             mw.write_output_action.setChecked(value)
         elif key == "load_previous":
             mw._on_load_previous_toggled(value)
-        elif key == "use_modflow":
-            mw._on_use_modflow_toggled(value)
         elif key == "academy_enabled":
             mw._on_academy_toggled(value)
         elif key == "academy_link":
@@ -670,6 +762,8 @@ class PreferencesWindow(QDialog):
             mw._set_animal(value)
         elif key == "cheat_levels":
             mw._set_cheat_levels(value)
+        elif key == "cheat_animals":
+            mw._set_cheat_animals(value)
         elif key == "level":
             mw.set_experience_level(value)
         elif key == "web_picker":

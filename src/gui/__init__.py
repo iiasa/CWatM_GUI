@@ -7,4 +7,4 @@ GUI package for CWatM application
 # bumping it here is enough for both the app and the installer. Keep the literal
 # on one line as `__version__ = "X.YZ"` - the installer's preprocessor looks for
 # that pattern and aborts the build if it cannot find it.
-__version__ = "1.10"
+__version__ = "1.11"

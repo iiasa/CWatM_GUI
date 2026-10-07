@@ -17,6 +17,12 @@ import os
 import sys
 
 if __name__ == "__main__":
+    # CWatM starts MODFLOW in a multiprocessing "spawn" child. Frozen, that child is
+    # this exe again (with --multiprocessing-fork): freeze_support() runs it and exits,
+    # instead of treating the arguments as a settings file. From source the child
+    # imports this file as "__mp_main__", so nothing below runs there.
+    import multiprocessing
+    multiprocessing.freeze_support()
     _root = os.path.dirname(os.path.abspath(__file__))
     if _root not in sys.path:
         sys.path.insert(0, _root)

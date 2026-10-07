@@ -332,6 +332,15 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         self.go_to_level(progress.current_level())
         self.stack.setCurrentIndex(_PAGE_BROWSER)
 
+    def _replay_level1(self):
+        """Level 1 again: the outlet-picker map (needs a loaded settings file, like
+        the first time). Picking an outlet saves it and returns to the browser."""
+        if self.mw is not None and not self.mw.file_manager.has_file_loaded():
+            self._show_load_settings_prompt()
+            return
+        self.outlet_map.reset()
+        self.stack.setCurrentIndex(_PAGE_MAP)
+
     def _show_load_settings_prompt(self):
         """Level 1's actual first step: there is nothing to pick an outlet
         ON until a settings file is loaded. Hide this window (so it doesn't
@@ -482,16 +491,19 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         )
         done = progress.completed_levels()
         already = level_id in done
-        # Only the current (lowest unfinished) level - or an already-completed one,
-        # just to re-view it - can be marked; a level cannot be skipped ahead of.
-        unlocked = level_id <= progress.current_level()
-        self.complete_button.setEnabled(unlocked and not already)
+        # The current (lowest unfinished) level can be marked, and a completed one
+        # stays available - to do it again; a level cannot be skipped ahead of.
+        unlocked = already or level_id <= progress.current_level()
+        self.complete_button.setEnabled(unlocked)
         if self._needs_login(level_id):
             # clickable: it explains the lock and offers the login again
             self.complete_button.setEnabled(True)
             self.complete_button.setText("Log in to continue")
+        elif already and level_id in (1, 2):
+            # the interactive levels (outlet map, walkthrough) can be replayed
+            self.complete_button.setText("Completed ✓ - do it again")
         elif already:
-            self.complete_button.setText("Completed ✓")
+            self.complete_button.setText("Completed ✓ - next level")
         elif level_id == 2:
             # Level 2 is a guided walkthrough over the real GUI, not a
             # "read this, then tick it off" level - see _start_level2_tour.
@@ -506,7 +518,16 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         if self._needs_login(level_id):
             self._explain_login_needed()
             return
-        if level_id == 2 and level_id not in progress.completed_levels():
+        if level_id in progress.completed_levels():
+            # a completed level stays available (its points are paid only once)
+            if level_id == 1:
+                self._replay_level1()
+            elif level_id == 2:
+                self._start_level2_tour()
+            else:
+                self.go_to_level(min(level_id + 1, LEVEL_COUNT))
+            return
+        if level_id == 2:
             self._start_level2_tour()
             return
         if progress.mark_complete(level_id):

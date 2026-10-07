@@ -134,8 +134,12 @@ class RunControllerMixin:
         if not open_path(folder):
             log.warning("could not open batch-file folder: %s", folder)
 
-    def run_cwatm(self):
-        """Handle CWatM button click - run or stop CWatM model"""
+    def run_cwatm(self, *, extended_errors=False):
+        """Handle CWatM button click - run or stop CWatM model.
+
+        extended_errors: RUN CWATM > Run CWatM + error message - adds CWatM's '-e'
+        flag (error messages with the code lines where the error occurred).
+        Keyword-only so a button's clicked(bool) can never set it."""
         if self.cwatm_running:
             # If CWatM is running, stop it
             self.stop_cwatm_execution()
@@ -251,13 +255,17 @@ class RunControllerMixin:
         # §3.1 - real Stop, crash isolation, fresh interpreter each run); the
         # Configure > "Run model in separate process" toggle falls back to the
         # old in-process QThread worker.
+        flags = ['-lg', '-e'] if extended_errors else ['-lg']
+        if extended_errors:
+            print("Extended error messages on (-e)")
         if getattr(self, "_run_subprocess_enabled", True):
             # Run from the working directory (File > Change Working Dir; by default
             # the settings file's own folder) so relative paths resolve from there.
             self.cwatm_worker = CWatMProcessWorker(
-                file_path, self, working_dir=self.working_dir() or None)
+                file_path, self, working_dir=self.working_dir() or None,
+                flags=flags)
         else:
-            self.cwatm_worker = CWatMWorker(file_path, ['-lg'], self)
+            self.cwatm_worker = CWatMWorker(file_path, flags, self)
         self.cwatm_worker.finished.connect(self.on_cwatm_finished)
         self.cwatm_worker.error.connect(self.on_cwatm_error)
         self.cwatm_worker.progress.connect(self.on_cwatm_progress)

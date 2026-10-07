@@ -445,6 +445,32 @@ Themed like the other secondary windows; geometry key `compare_settings`.
   instead of the pre-save content — reloaded silently when the main editor is clean,
   and behind a discard-changes prompt when it has unsaved edits. A Save As to a
   different path does not touch the main window.
+- **Next / Previous Diff** (F6 / Shift+F6, `_goto_diff`) count from the cursor of the
+  **active** pane (the one last clicked or typed in), so they work from the right
+  side too; a difference inside a **folded** section unfolds that section on both
+  sides (`SettingsEditor.unfold_rows`) before the jump, the other folds stay.
+- **Where lines were inserted/deleted** is worked out from the pane's text before and
+  after the edit (`_ComparePane.snapshot` keeps the last lines, `_locate_lines` finds
+  the change by common prefix/suffix) — not from the cursor row, which put an Enter
+  at the *start* of a line one row too low. Inside a run of identical (e.g. empty)
+  lines every position is equally right; a deletion prefers the one opposite a gray
+  virtual line, so **adding empty lines and deleting them again leaves no colour**.
+- **Edited line now equal**: every edit is checked at once against the same row on the
+  other side (`_recheck_rows`, from `_on_pane_edit`): if the two lines are now equal
+  (trailing spaces ignored; a gray virtual line never counts) both rows turn a
+  **lighter orange** (`matched_rows` → `SettingsEditor.set_matched_rows`, token
+  `matched_line`) instead of the diff orange; edited to differ again, they go back to
+  `diff_line`. The marks follow line inserts/deletes (`_shift_marks`) and are cleared
+  by the next re-diff — Save / Save As / Load (`show_aligned`).
+- **Save keeps the view and the undo/redo history**: Save / Save As re-diff both sides
+  (`_recompare(preserve_view=True)`). When the sides are already row-for-row (the
+  normal case — the line sync keeps them so while editing) only the **marks** are
+  recomputed on the current alignment (`_rediff_in_place`); the documents are not
+  replaced, so **undo/redo still work after a save**, and folds, cursor and scroll stay.
+  Only when the sides were not aligned yet does the full re-alignment reload both
+  editors (that clears undo); then each pane's folds, cursor line and top visible line
+  are captured first (`_ComparePane.capture_view`, in **real-line** terms) and
+  restored afterwards (`_restore_views`). Load still starts fresh.
 - **Open two specific files** (used by Journal of Runs ▸ Compare settings):
   `open_compare_files(parent, a, b)` → `CompareSettingsWindow.load_files(left, right)`
   reads both paths into the two panes and re-diffs (a missing file loads as empty).
@@ -1205,7 +1231,11 @@ the raster onto a Mercator basemap and did not render well).
   (`_toggle_mask_from_menu`, `_use_coordinates`, `_create_gauge`, `_remove_gauge`,
   `_create_new_mask`). Behaviour: Hide/Show Mask, Create new Mask (same
   `mainwarm -vgm` temp-ini call; `updateMask` swaps the mask ImageOverlay in
-  place — creating it if the basin had none), Copy Mask, Create gauge / Copy Gauge
+  place — creating it if the basin had none), Copy Mask (then
+  `_drop_gauges_outside_mask`: every gauge outside the **new** mask — judged by the
+  main window's freshly rebuilt `_mask_context`, the same one its gauge warning uses —
+  is taken out of the Gauges box; none left → the mask outlet becomes the gauge),
+  Create gauge / Copy Gauge
   (see gauge editing above), Zoom to Mask (`fitBounds`), **OSM transparency slider**,
   basemap selector (`setBasemap` swaps the `L.tileLayer.wms` in place). There is no
   Exit button any more — the window closes via its title-bar X or Alt+F4. Clicks
@@ -1331,8 +1361,19 @@ so this folium viewer is now simply **NetCDF**.)
   the same name — same file dialogs, same shared reader functions
   (`basin_viewer2._read_geojson_file` / `_read_shapefile`, imported here rather than
   duplicated) and the same `window.addGeoJson` JS drawn into this window's own
-  `_helper_js` (its own `geoGroup` layer group; the JS is byte-identical to Show
-  Basin's, just under the `NC2ERR` error-title prefix instead of `B2ERR`). `pyshp` is
+  `_helper_js` (its own `geoGroup` layer group, `NC2ERR` error-title prefix instead of
+  `B2ERR`). Unlike Show Basin, the popup is built as DOM (`geoPopup`, attribute values
+  via `textContent`, 11 px — 2 px under Leaflet's default) and a **point** feature's
+  popup adds two buttons: *Make this point a gauge* (`NC2GAUGE lon|lat`) and *Make all
+  points to gauges* (`NC2GAUGEALL <idx>` — `_add_geojson` keeps each loaded file's
+  points, `_geojson_points`: Point/MultiPoint/GeometryCollection, file order). Both
+  **add selected points** exactly like mouse clicks (`_select_points` →
+  `_displayed_points`: numbered pins, click one to remove it, used by Fast/Total
+  Timeseries, Flow duration and Flow regime); an already-selected cell or a point off
+  the grid (`_inside_grid`, half a cell of slack) is skipped. The settings' Gauges
+  box is **not** touched. A shape point's `circleMarker` has
+  `bubblingMouseEvents:false`, so clicking it only opens the popup (it no longer also
+  selects the cell underneath). `pyshp` is
   imported lazily inside `_read_shapefile`, so it costs nothing at GUI startup — see
   the Requirements/`pyshp` note in `CLAUDE.md`.
 - **Projection = EPSG:4326** (`crs='EPSG4326'`), matching the CWatM `.nc` output, so
@@ -1351,8 +1392,9 @@ so this folium viewer is now simply **NetCDF**.)
   folium overlay has no built-in animation) + date + **Speed** + **Log scale**, plus
   `ts_progress` / `ts_elapsed_label` / `ts_cancel_button` (shown only while a background
   point-series read is in flight — shared by Total Timeseries, Flow duration and Flow
-  regime, see below). **Colour scale**, **OSM transparency** and **Basemap** moved into
-  the **Display** window (`setBasemap` still swaps the WMS in place; colour-scale changes
+  regime, see below). The **OSM transparency** slider (+ its label,
+  `opacity_label`) has its own row directly below Play (row 2); **Colour scale** and
+  **Basemap** live in the **Display** window (`setBasemap` still swaps the WMS in place; colour-scale changes
   still rebuild the overlay URI + HTML colour-bar). Play/slider/colourscale changes
   rebuild the overlay's `data:` URI in Python and push it with `_ov.setUrl(...)`.
 - **OSM transparency slider** (`_on_opacity_changed`): one slider fades **both** layers

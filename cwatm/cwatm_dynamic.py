@@ -15,6 +15,7 @@ import time
 # Local imports
 from cwatm.management_modules.data_handling import *
 from cwatm.management_modules.messages import *
+from cwatm.management_modules.configuration import check_settings_keys
 
 
 class CWATModel_dyn(DynamicModel):
@@ -131,8 +132,11 @@ class CWATModel_dyn(DynamicModel):
         Special execution modes:
         - Environmental flow only: If calc_environflow is True and
           calc_ef_afterRun is False, only environmental flow is calculated
-        - Calibration mode: If Flags['calib'] is True, only meteorological
-          data reading and output generation are performed
+        - Calibration mode: If Flags['calib'] is True (first calibration run), only
+          meteorological data reading, potential evaporation, storing the meteo data
+          in memory (readmeteo.store_calib) and output generation are performed
+        - Warm runs of the calibration (Flags['warm']): meteo data and potential
+          evaporation are restored from memory, evaporationPot is skipped
           
         Output verbosity controlled by flags:
         - 'v' or 'veryquiet': No progress output
@@ -155,7 +159,9 @@ class CWATModel_dyn(DynamicModel):
         # self.CalendarDay = int(self.CalendarDate.strftime("%j"))
         timestep_dynamic(self)
 
+        # time measures of this step (names too: otherwise timeMesString grows every step)
         del timeMes[:]
+        del timeMesString[:]
         timemeasure("Start dynamic")
 
         # ************************************************************
@@ -174,10 +180,15 @@ class CWATModel_dyn(DynamicModel):
         timemeasure("Read meteo")  # 1. timing after read input maps
 
         if Flags['calib']:
+            # first calibration run: potential evaporation before storing -> ETRef, EAct ... are stored as well
+            self.evaporationPot_module.dynamic()
+            self.readmeteo_module.store_calib()
             self.output_module.dynamic()
             return
 
-        self.evaporationPot_module.dynamic()
+        # warm runs of the calibration: ETRef, EWRef (and derived meteo variables) are restored from memory in readmeteo
+        if not Flags['warm']:
+            self.evaporationPot_module.dynamic()
         timemeasure("ET pot")  # 2. timing after read input maps
 
         # if Flags['check']: return  # if check than finish here
@@ -193,9 +204,12 @@ class CWATModel_dyn(DynamicModel):
         self.landcoverType_module.dynamic_fracIrrigation(init=dateVar['newYear'], dynamic=self.var.dynamicLandcover)
 
         # ***** RAIN AND SNOW *****************************************
-        self.snowfrost_module.dynamic()
+        if self.var.usepySnowClim:
+            self.snow_pysnowclim_module.dynamic()
+        else:
+            self.snow_module.dynamic()
+        self.frost_module.dynamic()
         timemeasure("Snow")  # 3. timing
-
         # if only snow the skip the rest:
         if not self.var.stopaftersnow:
 
@@ -229,6 +243,12 @@ class CWATModel_dyn(DynamicModel):
 
             if self.var.modflow:
                 groundwater_storage = self.var.groundwater_storage_available
+                # unmet demand (taken from fossil groundwater) summed up as without MODFLOW - also for the init file
+                # (MODFLOW storage is not reduced by it)
+                if checkOption('limitAbstraction'):
+                    self.var.unmetDemand_runningSum = globals.inZero.copy()
+                else:
+                    self.var.unmetDemand_runningSum = self.var.unmetDemand_runningSum + self.var.unmetDemand
             elif checkOption('limitAbstraction'):
                 groundwater_storage = self.var.storGroundwater
                 self.var.unmetDemand_runningSum = self.var.storGroundwater * 0
@@ -268,8 +288,13 @@ class CWATModel_dyn(DynamicModel):
                 self.var.tws = groundwater_storage + self.var.totalSto
 
             if checkOption('includeRunoffConcentration'):
+                # add storage of runoff concentration once to tws and tws_unmet
+                # (tws_unmet is only calculated above with routing and water bodies, otherwise it is tws)
+                if checkOption('includeRouting') and checkOption('includeWaterBodies'):
+                    self.var.tws_unmet = self.var.tws_unmet + self.var.gridcell_storage
+                else:
+                    self.var.tws_unmet = self.var.tws + self.var.gridcell_storage
                 self.var.tws = self.var.tws + self.var.gridcell_storage
-                self.var.tws_unmet = self.var.tws + self.var.gridcell_storage
 
 
             # ------------------------------------------------------
@@ -290,6 +315,11 @@ class CWATModel_dyn(DynamicModel):
                 timeMesSum.append(timeMes[i] - timeMes[0])
             else:
                 timeMesSum[i] += timeMes[i] - timeMes[0]
+
+        # after the first time step all settings of initial and of a normal time step were asked for:
+        # warn about keys which are misspelled or in the wrong section
+        if self.currentStep == self.firstStep:
+            check_settings_keys()
 
         # MODFLOW cleanup: temporary files produced by MODFLOW/Flopy must be properly closed
         # with finalize() to prevent file access conflicts in subsequent runs (pytest, calibration)

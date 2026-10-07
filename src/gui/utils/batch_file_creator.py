@@ -5,7 +5,7 @@ the current settings file without opening the GUI at all.
 Reuses cwatm_process_worker.model_command() - the exact same frozen/source
 detection the GUI itself uses to spawn the model child process - so the batch file
 launches CWatM the identical way a normal Run CWATM does (CWatM_model.exe when
-frozen, the venv python running "cwatm_gui.py --run-cwatm" from source). Pure
+frozen, the venv python running "cwatm_model.py" from source). Pure
 logic, no Qt: kept separate from the QFileDialog/QMessageBox wiring in
 run_controller.py so it can be unit tested without a display.
 """

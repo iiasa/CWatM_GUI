@@ -72,7 +72,36 @@ def test_points_to_cheapest():
 
 @pytest.mark.qt          # imports a Qt module
 def test_animal_codes_cover_the_sparkline_animals():
-    from src.gui.widgets.discharge_sparkline import ANIMALS
-    assert set(S.ANIMAL_CODES) == {name for name, _emoji in ANIMALS}
-    assert set(S.ANIMAL_CODES.values()) == {i["code"] for i in ITEMS
-                                            if i["kind"] == "animal"}
+    from src.gui.widgets.discharge_sparkline import (ANIMALS, USE_IMAGE_ANIMALS,
+                                                     image_animals)
+    assert USE_IMAGE_ANIMALS is True                     # images are the standard
+    images = {name for name, _path in image_animals()}
+    assert images, "no animal images in assets/ani"
+    # every image and every emoji animal is a Shop item (the mole a reward one)
+    assert images | {name for name, _emoji in ANIMALS} <= set(S.ANIMAL_CODES)
+    # the item codes of migration ..._shop_animals_v2.sql
+    assert set(S.ANIMAL_CODES.values()) == {
+        "trout", "catfish", "clownfish", "otter", "beaver", "octopus", "bottle", "mole"}
+    # code -> the image name the GUI shows (not the old emoji name)
+    assert S.ANIMAL_NAMES["trout"] == "Trout"
+    assert S.ANIMAL_NAMES["octopus"] == "Octopus (Carla)"
+    assert S.ANIMAL_NAMES[S.ANIMAL_CODES[S.MODFLOW_REWARD_ANIMAL]] == "Mole"
+
+
+def test_the_migration_sells_these_animals():
+    """The GUI's codes and the server's price list agree (prices from the request)."""
+    import pathlib
+    import re
+    sql = (pathlib.Path(__file__).resolve().parents[1] / "supabase" / "migrations"
+           / "20261007120000_shop_animals_v2.sql").read_text(encoding="utf-8")
+    prices = {"trout": 10, "catfish": 30, "otter": 20, "clownfish": 30, "beaver": 30,
+              "octopus": 20, "bottle": 2}
+    for code, price in prices.items():
+        # an insert row ('catfish', ..., 30, ...) or an update line naming the code
+        # and 'price = N' (in either order)
+        lines = [ln for ln in sql.splitlines()
+                 if f"'{code}'" in ln and not ln.lstrip().startswith("--")]
+        assert any(re.search(rf"\('{code}',.*\b{price}\b", ln)
+                   or re.search(rf"price = {price}\b", ln) for ln in lines), code
+    assert re.search(r"'mole'.*'modflow_first_run'", sql)
+    assert S.MODFLOW_REWARD == "modflow_first_run"

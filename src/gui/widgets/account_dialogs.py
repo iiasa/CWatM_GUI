@@ -20,7 +20,7 @@ window).
 
 import json
 
-from PySide6.QtCore import Qt, QSize, Signal
+from PySide6.QtCore import Qt, QSize, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QIcon
 from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QLabel, QLineEdit, QPushButton, QCheckBox, QTabWidget,
@@ -267,6 +267,35 @@ class _AccountDialogBase(QDialog):
         w, h = scaled_default_size(self, base_w, base_h)
         hint = self.sizeHint()
         self.resize(max(w, hint.width()), max(h, hint.height()))
+
+    def _grow_to_content(self):
+        """After rows were added: grow the window to its content, word wrap included.
+
+        For a window whose rows change after it is shown (the Shop) the outer layout
+        uses SetNoConstraint: with the default constraint the layout itself forced
+        the window up to its minimum height, which ignores the word-wrapped notes,
+        while Qt's Windows backend corrects every requested height to the wrapped
+        one - Windows answered with a different frame and Qt printed
+        'QWindowsWindow::setGeometry: Unable to set geometry ...'. Instead this
+        grows the window to the wrapped height at its real width, once the new rows
+        are shown (a widget not shown yet does not count in a layout, so it runs
+        from the event loop, after the layout's own pass)."""
+        QTimer.singleShot(0, self._grow_now)
+
+    def _grow_now(self):
+        lay = self.layout()
+        if lay is None:
+            return
+        try:
+            lay.activate()
+            w = max(self.width(), lay.totalMinimumSize().width())
+            need = lay.totalHeightForWidth(w) if lay.hasHeightForWidth() else -1
+            if need <= 0:
+                need = lay.totalSizeHint().height()
+            if self.height() < need or self.width() < w:
+                self.resize(w, max(self.height(), need))
+        except RuntimeError:                      # closed in the meantime
+            log.debug("_grow_now: window gone", exc_info=True)
 
     def _line(self):
         f = QFrame()

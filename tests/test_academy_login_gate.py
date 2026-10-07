@@ -75,3 +75,26 @@ def test_login_box_sets_its_own_colours(qapp, monkeypatch):
     assert f"QMessageBox QLabel {{ color: {text};" in css
     assert f"background-color: {bg};" in css
     assert text.lower() != bg.lower()
+
+
+@pytest.mark.parametrize("level, expected", [
+    (1, "_replay_level1"), (2, "_start_level2_tour"), (3, "go_to_level")])
+def test_a_completed_level_stays_available(qapp, monkeypatch, level, expected):
+    """Completed is not greyed out: Levels 1/2 replay their exercise, a text
+    level moves on - and nothing is marked (or paid) again."""
+    from PySide6.QtWidgets import QPushButton, QLabel, QTextBrowser
+    from src.gui.widgets import academy_window
+    w = _window(_MW(unlocked=True))
+    w.complete_button, w.lesson_title, w.lesson_badge = QPushButton(), QLabel(), QLabel()
+    w.lesson_body = QTextBrowser()
+    monkeypatch.setattr(academy_window.progress, "completed_levels", lambda: {1, 2, 3})
+    monkeypatch.setattr(academy_window.progress, "current_level", lambda: 4)
+    marked, called = [], []
+    monkeypatch.setattr(academy_window.progress, "mark_complete", marked.append)
+    for name in ("_replay_level1", "_start_level2_tour", "go_to_level"):
+        monkeypatch.setattr(w, name, lambda *a, n=name: called.append(n))
+    w._show_level(level)
+    assert w.complete_button.isEnabled()
+    assert w.complete_button.text().startswith("Completed ✓ - ")
+    w._on_complete_clicked()
+    assert called == [expected] and marked == []

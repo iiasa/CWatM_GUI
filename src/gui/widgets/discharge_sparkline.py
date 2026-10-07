@@ -34,11 +34,88 @@ ANIMALS = [
 _ANIMAL_EMOJI = dict(ANIMALS)
 _DEFAULT_ANIMAL = "Fish"     # also the fallback for a stored, no longer offered one
 
+# Cameo drawn as an image (assets/ani/<name>.png, facing left) instead of the emoji.
+# True (the standard) = Preferences ▸ Display ▸ Select animal offers the images found
+# in assets/ani; False = the original emoji animals (ANIMALS). The emoji path is kept
+# intact so this switch alone restores it.
+USE_IMAGE_ANIMALS = True
+_DEFAULT_IMAGE_ANIMAL = "Trout"
+# True = the selected animal is the newest-point marker all the time; False = it
+# appears only now and then (random timer), the dot otherwise.
+animals_always = True
+
+_IMAGE_BASE_SIZE = 32     # <name>_32x32.png is listed as plain '<Name>'
+_image_animals = None     # [(name, file path)], scanned once
+_pixmap_cache = {}
+
+
+def image_animals():
+    """[(name, path)] of the cameo images in assets/ani: '<name>.png' -> '<Name>';
+    '<name>_<N>x<N>.png' -> '<Name>' for N = 32, '<Name> <N>x<N>' for any other size
+    ('mole_64x64.png' -> 'Mole 64x64'). Every image is drawn at the same on-screen
+    size (_ANIMAL_LOOK_IMAGE), whatever its resolution."""
+    global _image_animals
+    if _image_animals is None:
+        import os
+        import re
+        from src.gui.utils.assets import asset_path
+        folder = asset_path("ani")
+        try:
+            files = os.listdir(folder)
+        except OSError:
+            files = []
+        found = []
+        for f in files:
+            m = re.fullmatch(r"(.+?)(?:_(\d+)x(\d+))?\.png", f, re.IGNORECASE)
+            if not m:
+                continue
+            name = m.group(1).replace("_", " ")
+            name = name[:1].upper() + name[1:]          # 'octopus (Carla)' keeps 'C'
+            size = int(m.group(2)) if m.group(2) else 0
+            if size and (size != _IMAGE_BASE_SIZE or int(m.group(3)) != size):
+                name = f"{name} {m.group(2)}x{m.group(3)}"
+            found.append(((m.group(1).lower(), size), name, os.path.join(folder, f)))
+        _image_animals = [(name, path) for _key, name, path in sorted(found)]
+    return _image_animals
+
+
+def shop_name(name):
+    """The Shop's name for an animal (account_shop.ANIMAL_CODES key): an image size
+    variant ('Otter 64x64') is the same Shop animal as its base ('Otter')."""
+    import re
+    return re.sub(r" \d+x\d+$", "", name or "")
+
+
+def animal_names(use_images=None):
+    """The selectable animal names - the images in assets/ani or the emoji ones.
+    `use_images` None = the current USE_IMAGE_ANIMALS."""
+    if USE_IMAGE_ANIMALS if use_images is None else use_images:
+        return [name for name, _path in image_animals()]
+    return [name for name, _emoji in ANIMALS]
+
+
+def default_animal():
+    names = animal_names()
+    preferred = _DEFAULT_IMAGE_ANIMAL if USE_IMAGE_ANIMALS else _DEFAULT_ANIMAL
+    if preferred in names:
+        return preferred
+    return names[0] if names else None
+
+
+def animal_pixmap(name):
+    """The QPixmap of an image animal (cached), None if it has no readable image."""
+    if name not in _pixmap_cache:
+        from PySide6.QtGui import QPixmap
+        path = dict(image_animals()).get(name)
+        pm = QPixmap(path) if path else None
+        _pixmap_cache[name] = pm if pm is not None and not pm.isNull() else None
+    return _pixmap_cache[name]
+
 
 def current_animal():
-    """The animal name selected in Configure ▸ Select animal (default 'Fish')."""
-    name = QSettings("IIASA", "CWatM_GUI").value("display/animal", _DEFAULT_ANIMAL)
-    return name if name in _ANIMAL_EMOJI else _DEFAULT_ANIMAL
+    """The animal name selected in Preferences ▸ Display ▸ Select animal."""
+    name = QSettings("IIASA", "CWatM_GUI").value("display/animal", default_animal())
+    return name if name in animal_names() else default_animal()
 
 
 def parse_progress(text):
@@ -76,6 +153,15 @@ class DischargeSparkline(QWidget):
     # newest → opaque). >1 pushes the left side more transparent so the trace clearly
     # fades out before the clock instead of butting up against it.
     _FADE_GAMMA = 1.5
+    # The animal marker per mode: (half its drawn size in px, (shift x, shift y) from
+    # the newest point; negative x = left, negative y = up) - the emoji and the 32x32
+    # images need different values to sit on the newest point.
+    _ANIMAL_LOOK_EMOJI = (16, (-1, -1))
+    _ANIMAL_LOOK_IMAGE = (12, (-6, -1))
+    # True = the animal is pushed back inside the widget (never cut off, but at the
+    # right edge it then sits behind the newest point); False = centred on the point
+    # + its shift.
+    _ANIMAL_KEEP_INSIDE = False
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,7 +189,7 @@ class DischargeSparkline(QWidget):
             self._animal = None
             self._show_animal = False
         else:
-            self._animal = name if name in _ANIMAL_EMOJI else _DEFAULT_ANIMAL
+            self._animal = name if name in animal_names() else default_animal()
         self.update()
 
     def _tick_animal(self):
@@ -211,7 +297,7 @@ class DischargeSparkline(QWidget):
             painter.drawLine(pts_xy[i - 1], pts_xy[i])
 
         # Latest point marker at full opacity — a dot, or the occasional animal cameo.
-        if self._show_animal and self._animal is not None:
+        if (self._show_animal or animals_always) and self._animal is not None:
             self._draw_animal(painter, pts_xy)
         else:
             painter.setBrush(base)
@@ -229,11 +315,26 @@ class DischargeSparkline(QWidget):
             if dx or dy:
                 # Rising discharge -> dy<0 -> negative angle -> nose tilts up.
                 angle = max(-55.0, min(55.0, math.degrees(math.atan2(dy, dx))))
-        size = 15
+        pm = animal_pixmap(self._animal) if USE_IMAGE_ANIMALS else None
+        size, (shift_x, shift_y) = (self._ANIMAL_LOOK_IMAGE if pm is not None
+                                    else self._ANIMAL_LOOK_EMOJI)
+        cx = p.x() + shift_x
+        cy = p.y() + shift_y
+        if self._ANIMAL_KEEP_INSIDE:
+            cx = min(max(cx, size), self.width() - size)
+            cy = min(max(cy, size), self.height() - size)
         painter.save()
-        painter.translate(p)
+        painter.translate(QPointF(cx, cy))
         painter.rotate(angle)
         painter.scale(-1, 1)                     # face right (forward in time)
+        if pm is not None:
+            # 32x32 source drawn at 2*size, about the emoji's visible size; smooth
+            # scaling so the downsized pixel art stays clean.
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            painter.drawPixmap(QRectF(-size, -size, 2 * size, 2 * size), pm,
+                               QRectF(pm.rect()))
+            painter.restore()
+            return
         f = QFont()
         f.setPixelSize(size)
         painter.setFont(f)

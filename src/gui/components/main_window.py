@@ -222,6 +222,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         lvl = self._settings.value("editor/level", "Expert")
         self._preferred_level = lvl if lvl in _EXPERIENCE_LEVELS else "Expert"
         self._cheat_levels = False          # session only - never persisted
+        self._cheat_animals = False         # session only - never persisted
         self._experience_level = self._effective_level()
         rf = self._settings.value("recent_files", [])
         if isinstance(rf, str):
@@ -1242,21 +1243,6 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         except Exception:
             log.debug("persist load_previous failed", exc_info=True)
 
-    def _on_use_modflow_toggled(self, checked):
-        """Persist the 'Use Modflow' state and pre-warm flopy in the background when on
-        (heavy import kept off the GUI thread). Called at menu build with the persisted
-        value, so 'on from the beginning' warms flopy at startup too."""
-        try:
-            self._settings.setValue("modflow/enabled", bool(checked))
-        except Exception:
-            log.debug("persist modflow/enabled failed", exc_info=True)
-        if checked:
-            try:
-                from src.gui.utils import modflow
-                modflow.warm_flopy()
-            except Exception:
-                log.debug("flopy pre-warm failed", exc_info=True)
-
     def _on_academy_toggled(self, checked):
         """Preferences ▸ CWatM Academy ▸ Enable CWatM Academy: persist the choice
         and, when just turned on, open it right away (cwatm_gui.py handles opening
@@ -1443,7 +1429,8 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         """The animal the sparkline shows: the chosen one if owned, else the first
         owned one, else None (no animal bought - the plain dot)."""
         owned = self.owned_animals()
-        chosen = self._settings.value("display/animal", "Fish")
+        from src.gui.widgets.discharge_sparkline import default_animal
+        chosen = self._settings.value("display/animal", default_animal())
         if chosen in owned:
             return chosen
         return owned[0] if owned else None

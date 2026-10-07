@@ -46,7 +46,7 @@ filled in by IIASA]*.
 | Leaderboard choice | whether your username, country and points are shown to other users (optional and unticked on the Register form - tick it there or later in the account window). The leaderboard shows your actual points (after Shop purchases) and your highest badge - never what you bought | account server |
 | Points and badges | the purpose of the account | account server |
 | When you last used CWatM GUI - the time of your last login - and every point decay (points taken, weeks without use, date) | your actual points shrink while CWatM GUI is not used (-3 % after one week, then -5 % a week, never below 5 points); earned points and badges never shrink | account server |
-| Shop purchases - what you bought (a skill level or an animal for the live discharge plot), when, and the points paid; levels given for free to accounts that existed when the Shop opened are marked as given | so you can use what you bought, on any computer; your actual points are your earned points minus the points paid | account server |
+| Shop purchases - what you bought (a skill level or an animal for the live discharge plot), when, and the points paid; levels given for free to accounts that existed when the Shop opened are marked as given, and so is a reward animal (the mole, given for your first successful run with coupled MODFLOW - which records that such a run happened, and when) | so you can use what you bought, on any computer; your actual points are your earned points minus the points paid | account server |
 | CWatM Academy progress - which Academy levels you finished | so you can continue the Academy on any computer; each finished level earns points. **Only while** *Link CWatM Academy to your login* is ticked (Preferences ▸ CWatM Academy, on by default); unticked, the progress stays on your computer only | account server |
 | Per counted run: a fingerprint of the model settings (SHA-256 one-way hash; Title, PathOut and output settings left out) and the day it was counted - nothing else | one point per distinct model setup (the same settings run again earn no further point); the day for the daily limit of counted runs | account server |
 | Sent with a run but **not stored**: the number of timesteps | checked once against the minimum run length | - |
@@ -100,6 +100,9 @@ Account to stop further reports.
 - A copy of the list of Shop items you own (CWatM GUI settings), so a missing
   connection does not take a bought level away. It is only a copy - the account
   server decides what you own.
+- Whether a reward (the mole) was earned while logged out and still waits to be
+  collected at the next login, and whether you were told about it (CWatM GUI
+  settings) - no details of the run.
 - Runs finished while the server could not be reached, waiting to be sent
   (`account_pending.json` in the Run History folder): a random run number (only on
   your computer, to keep the list in order), the number of timesteps and the settings
@@ -146,10 +149,6 @@ from the Supabase plan]* before they are overwritten.
 | Remove the login from this computer | Log out, or untick *Stay logged in on this computer* |
 | Withdraw your consent | Delete your account |
 | Complain | to the contact above, or to a data protection supervisory authority *[applicable authority - to be confirmed by IIASA]* |
-
-## Age
-
-The CWatM account is meant for people aged **16 or older**.
 
 ## Changes
 

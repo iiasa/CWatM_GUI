@@ -410,6 +410,23 @@ def settings_gauge(content):
     return (lon, lat)
 
 
+def settings_modflow(content):
+    """True when the settings switch coupled MODFLOW on (``modflow_coupling`` - the
+    last such line counts, like CWatM's flat binding; True/1/yes/on, an inline
+    comment ignored). Pure - tested."""
+    if not content:
+        return False
+    value = None
+    for line in content.splitlines():
+        s = line.split("#", 1)[0].strip()
+        if "=" not in s or s.startswith((";", "[")):
+            continue
+        key, val = s.split("=", 1)
+        if key.strip().lower() == "modflow_coupling":
+            value = val.strip().lower()
+    return value in ("true", "1", "yes", "on")
+
+
 def make_entry(settings_path, title, pathout, started_at, success, last_dis,
                kind="run", content=None, log_path=None, batch_id=None):
     """Build a ledger entry dict from the common run facts. When ``content`` (the
@@ -446,6 +463,9 @@ def make_entry(settings_path, title, pathout, started_at, success, last_dis,
     gauge = settings_gauge(content)
     if gauge:
         entry["gauge"] = list(gauge)
+    # Coupled MODFLOW - the first successful one earns the mole (CWatM account).
+    if settings_modflow(content):
+        entry["modflow"] = True
     # Where this run's output was written, so the journal can show *why* it failed
     # instead of only *that* it failed.
     if log_path:

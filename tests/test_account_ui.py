@@ -320,6 +320,12 @@ def _status_owning(*codes, user="Blabla"):
 
 
 class TestShopEntitlements:
+    @pytest.fixture(autouse=True)
+    def emoji_animals(self, monkeypatch):
+        # the Shop's animals are the emoji set (the image set has no Shop items)
+        from src.gui.widgets import discharge_sparkline
+        monkeypatch.setattr(discharge_sparkline, "USE_IMAGE_ANIMALS", False)
+
     @pytest.fixture
     def h(self, host, monkeypatch):
         monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
@@ -373,6 +379,115 @@ class TestShopEntitlements:
         monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: False)
         host._init_account()
         assert host.level_allowed("Expert") and len(host.owned_animals()) == 5
+
+    def test_animal_cheat_opens_every_animal_for_the_session_only(self, h):
+        h._set_cheat_animals(True)
+        assert len(h.owned_animals()) == 5
+        assert not h.level_allowed("Advanced")            # levels stay bought-only
+        assert not any("cheat" in k.lower() for k in h._settings.allKeys())
+        h._set_cheat_animals(False)
+        assert h.owned_animals() == []
+
+    def test_image_animals_need_the_cheat_unless_sold(self, h, monkeypatch):
+        from src.gui.widgets import discharge_sparkline as ds
+        monkeypatch.setattr(ds, "USE_IMAGE_ANIMALS", True)
+        monkeypatch.setattr(ds, "image_animals",
+                            lambda: [("Mole", "m.png"), ("Otter", "o.png"),
+                                     ("Otter 64x64", "o64.png")])
+        h._on_account_succeeded("login", _status_owning("otter"))
+        # Mole has no Shop item; a size variant counts as its base animal
+        assert h.owned_animals() == ["Otter", "Otter 64x64"]
+        h._set_cheat_animals(True)
+        assert h.owned_animals() == ["Mole", "Otter", "Otter 64x64"]
+
+    def test_image_names_map_to_the_shop_animals(self):
+        from src.gui.widgets.discharge_sparkline import shop_name
+        from src.gui.utils.account_shop import ANIMAL_CODES
+        assert shop_name("Otter 64x64") == "Otter"
+        assert ANIMAL_CODES[shop_name("Octopus (Carla)")] == "octopus"
+        assert ANIMAL_CODES["Fish"] == "trout"             # the fish became the trout
+
+
+class TestModflowReward:
+    """The first successful coupled-MODFLOW run earns the mole (claim_reward)."""
+
+    @pytest.fixture
+    def h(self, host, monkeypatch):
+        monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
+        self.shown = []
+        monkeypatch.setattr(account_ui.QTimer, "singleShot",
+                            lambda ms, fn: self.shown.append(fn.__name__))
+        host._init_account()
+        return host
+
+    def _claims(self, h):
+        return [a for op, a, _k in h.fake.sent if op == "claim_reward"]
+
+    def test_logged_in_claims_and_shows_the_mole(self, h):
+        h._on_account_succeeded("login", _status_owning())
+        h._on_run_recorded(dict(_run(), modflow=True))
+        assert self._claims(h) == [("modflow_first_run",)]
+        h._on_account_succeeded("claim_reward", dict(
+            _status_owning("mole"), status="granted", items=["mole"]))
+        assert "mole" in h.owned_items()
+        assert "_show_mole_reward" in self.shown
+        assert any("Mole" in n for n in h.notes)
+
+    def test_no_claim_without_modflow_success_or_when_owned(self, h):
+        h._on_account_succeeded("login", _status_owning())
+        h._on_run_recorded(_run())                             # no MODFLOW
+        h._on_run_recorded(dict(_run(success=False), modflow=True))
+        h._on_account_succeeded("login", _status_owning("mole"))
+        h._on_run_recorded(dict(_run(), modflow=True))         # has it already
+        assert self._claims(h) == []
+
+    def test_already_owned_answer_is_quiet(self, h):
+        h._on_account_succeeded("login", _status_owning())
+        h._on_run_recorded(dict(_run(), modflow=True))
+        h._on_account_succeeded("claim_reward", dict(_status_owning("mole"),
+                                                      status="already_owned"))
+        assert "_show_mole_reward" not in self.shown
+
+    def test_logged_out_waits_for_the_next_login(self, h):
+        h._on_run_recorded(dict(_run(), modflow=True))
+        assert self._claims(h) == []
+        assert self.shown == ["_show_reward_waiting"]        # told once
+        h._on_run_recorded(dict(_run(), modflow=True))
+        assert self.shown == ["_show_reward_waiting"]
+        h._on_account_succeeded("login", _status_owning())
+        assert self._claims(h) == [("modflow_first_run",)]
+        h._on_account_succeeded("claim_reward", dict(
+            _status_owning("mole"), status="granted", items=["mole"]))
+        h.fake.sent.clear()
+        h._on_account_succeeded("login", _status_owning("mole"))
+        assert self._claims(h) == []                         # collected
+
+    def test_reset_takes_the_mole_back_and_it_can_be_earned_again(self, h):
+        h._on_account_succeeded("login", _status_owning("mole"))
+        h.reset_modflow_reward()
+        assert h.fake.sent[-1] == ("reset_reward", ("modflow_first_run",), {})
+        h._on_account_succeeded("reset_reward", dict(
+            _status_owning(), status="reset", items=["mole"]))
+        assert "mole" not in h.owned_items()
+        assert any("reset" in n for n in h.notes)
+        h._on_run_recorded(dict(_run(), modflow=True))
+        assert self._claims(h) == [("modflow_first_run",)]   # earned again
+
+    def test_reset_logged_out_clears_only_the_local_notes(self, h):
+        h._on_run_recorded(dict(_run(), modflow=True))        # pending + hint shown
+        assert h.reset_modflow_reward().startswith("The local reward notes")
+        assert h.fake.sent == []
+        self.shown.clear()
+        h._on_run_recorded(dict(_run(), modflow=True))
+        assert self.shown == ["_show_reward_waiting"]         # told again
+
+    def test_a_failed_claim_is_kept(self, h):
+        h._on_account_succeeded("login", _status_owning())
+        h._on_run_recorded(dict(_run(), modflow=True))
+        h._on_account_failed("claim_reward", "offline", "no connection")
+        h.fake.sent.clear()
+        h._on_account_succeeded("login", _status_owning())
+        assert self._claims(h) == [("modflow_first_run",)]
 
 
 class TestPointDecay:
@@ -591,9 +706,10 @@ def test_same_settings_message():
 
 class TestLeaderboard:
     LADDER = [{"code": "breg", "name": "Breg", "points_required": 1},
-              {"code": "danube", "name": "Danube", "points_required": 200}]
+              # a badge with no image in assets/badges (keeps the emoji fallback tested)
+              {"code": "volga", "name": "Volga", "points_required": 200}]
     ROWS = [{"rank": 1, "username": "Anna", "country": "AT", "total_points": 12,
-             "top_badge": "Danube"},
+             "top_badge": "Volga"},
             {"rank": 2, "username": "Blabla", "country": "Austria", "total_points": 2,
              "top_badge": "Breg"},
             {"rank": 3, "username": "newbie", "country": None, "total_points": 0,
@@ -612,7 +728,7 @@ class TestLeaderboard:
         assert [t.item(1, c).text() for c in range(5)] == \
             ["2", "Blabla", "Austria", "Breg", "2"]
         assert not t.item(1, 3).icon().isNull()            # the medal image
-        assert t.item(0, 3).text() == "🏅 Danube"          # no image yet -> emoji
+        assert t.item(0, 3).text() == "🏅 Volga"           # no image -> emoji
         assert t.item(1, 1).font().bold() and not t.item(0, 1).font().bold()
         assert t.item(2, 3).text() == ""                   # no badge yet
         assert "number 2" in w.lbl_me.text()

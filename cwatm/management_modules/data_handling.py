@@ -15,6 +15,7 @@ import os
 import re
 import warnings
 
+import numpy as np
 from netCDF4 import Dataset, num2date, date2num, date2index
 #from osgeo import gdal
 #from osgeo import gdalconst
@@ -25,9 +26,66 @@ from . import globals
 from cwatm.management_modules.checks import *
 from cwatm.management_modules.dynamicModel import *
 from cwatm.management_modules.messages import *
-from cwatm.management_modules.replace_pcr import *
+from cwatm.management_modules.replace_pcr import (npareatotal, npareaaverage, npareamaximum, npareamajority,
+                                                  AreaIndex)
 from cwatm.management_modules.timestep import *
-from cwatm.management_modules.caching import ncopen, ncclose, ncclose_all, ncstackcache
+from cwatm.management_modules.caching import ncopen, ncclose, ncclose_all, ncstackcache, ncappend, ncwriteclose
+
+
+# output variable names from the settings file: a name, optionally with integer indices e.g. discharge or actualET[1]
+_OUTVARNAME = re.compile(r"([A-Za-z_]\w*)((?:\[-?\d+\])*)")
+
+
+def parseoutvar(name):
+    """
+    Split an output variable name from the settings file into the attribute name and the indices.
+
+    Parameters
+    ----------
+    name : str
+        Output variable name from the settings file e.g. 'discharge' or 'actualET[1]'
+
+    Returns
+    -------
+    tuple
+        (attribute name, tuple of integer indices) e.g. ('actualET', (1,)) or ('discharge', ())
+
+    Notes
+    -----
+    Replaces the former eval of 'self.var.' + name: anything else than a name with integer indices (spaces, calls,
+    attributes, expressions) gives an error, so no code from the settings file is run.
+    """
+    m = _OUTVARNAME.fullmatch(name)
+    if m is None:
+        msg = "Error 135: Output variable \"" + name + "\" is not a valid name\n"
+        msg += "Allowed is a variable name, optionally with integer indices e.g. discharge or actualET[1]"
+        raise CWATMError(msg)
+    return m.group(1), tuple(int(i) for i in re.findall(r"-?\d+", m.group(2)))
+
+
+def getoutvar(var, base, index):
+    """
+    Return var.<base>[i0][i1]... - the same object as the former eval of 'self.var.' + name returned.
+
+    Parameters
+    ----------
+    var : object
+        Model variable container (self.var)
+    base : str
+        Attribute name (from parseoutvar)
+    index : tuple
+        Integer indices (from parseoutvar)
+
+    Returns
+    -------
+    object
+        The model variable or the indexed part of it
+    """
+    value = getattr(var, base)
+    for i in index:
+        value = value[i]
+    return value
+
 
 # -------------------------------------
 def valuecell(coordx, coordstr, returnmap=True):
@@ -309,7 +367,6 @@ def loadsetclone(self, name):
                 t = nf2.transform
                 geotransform = (t.a, t.b, t.c, t.d, t.e, t.f)
 
-                geotrans.append(geotransform)
                 setmaskmapAttr(geotransform[2], geotransform[5], nf2.shape[1], nf2.shape[0], geotransform[0])
                 #setmaskmapAttr( geotransform[0], geotransform[3], nf2.RasterXSize, nf2.RasterYSize, geotransform[1])
                 #band = nf2.GetRasterBand(1)
@@ -615,35 +672,13 @@ def loadmap(name, lddflag=False,compress = True, local = False, cut = True):
                 msg = "Error 202: Latitude is in wrong order\n"
                 raise CWATMFileError(filename, msg)
 
-            if not timestepInit:
-                #with np.errstate(invalid='ignore'):
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    # in order to ignore some invalid value comments
-                    if cut:
-                        mapnp = nf1.variables[value][cut2:cut3, cut0:cut1].astype(np.float64)
-                    else:
-                        mapnp = nf1.variables[value][:]
-            else:
-                if 'time' in nf1.variables:
-                    timestepI = Calendar(timestepInit[0])
-                    if type(timestepI) is datetime.datetime:
-                        timestepI = date2num(timestepI,nf1.variables['time'].units)
-                    else: timestepI = int(timestepI) -1
-
-                    if not(timestepI in nf1.variables['time'][:]):
-                        msg = "Error 105 time step " + str(int(timestepI)+1)+" not stored in "+ filename
-                        raise CWATMError(msg)
-                    itime = np.where(nf1.variables['time'][:] == timestepI)[0][0]
-                    if cut:
-                        mapnp = nf1.variables[value][itime,cut2:cut3, cut0:cut1]
-                    else:
-                        mapnp = nf1.variables[value][itime][:]
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                # in order to ignore some invalid value comments
+                if cut:
+                    mapnp = nf1.variables[value][cut2:cut3, cut0:cut1].astype(np.float64)
                 else:
-                    if cut:
-                        mapnp = nf1.variables[value][cut2:cut3, cut0:cut1]
-                    else:
-                        mapnp = nf1.variables[value][:]
+                    mapnp = nf1.variables[value][:]
 
             try:
                 history = nf1.getncattr('history')
@@ -651,7 +686,7 @@ def loadmap(name, lddflag=False,compress = True, local = False, cut = True):
                 history = ""
             addtoversiondate(filename,history)
 
-        except:
+        except Exception as ncerror:
 
             filename = cbinding(name)
             try:
@@ -667,7 +702,13 @@ def loadmap(name, lddflag=False,compress = True, local = False, cut = True):
                         cut0, cut1, cut2, cut3 = mapattrTiff(nf2)
                         mapnp = mapnp[cut2:cut3, cut0:cut1]
                 addtoversiondate(filename)
-            except:
+            except CWATMError:
+                # e.g. Error 108: cell size of the map is different
+                raise
+            except Exception:
+                if isinstance(ncerror, CWATMError):
+                    # netcdf found but wrong (e.g. Error 202, 107) and not readable by rasterio either
+                    raise ncerror
                 msg = "Error 203: File does not exists"
                 raise CWATMFileError(filename,msg,sname=name)
 
@@ -1567,18 +1608,13 @@ def setmeteochunkcache(ncvar, loc, maxcache=1024 * 1024 * 1024):
 def closemeteofile(name):
     """
     Close the open netCDF handle of one meteo map stack (if any).
-    Called when the run moves on to the next file of the stack, and at the end of a run.
+    Called when the run moves on to the next file of the stack.
+    (At the end of a run caching.ncclose_all closes all files; a handle left in meteohandles is then
+    closed and is opened again by readmeteodata, see isopen())
     """
     handle = meteohandles.pop(name, None)
     if handle is not None:
         ncclose(handle[2])   # handle = [Dataset, file number, filename] - shared with caching.ncopen
-
-def closemeteofiles():
-    """
-    Close all open meteo netCDF handles. Call once after the dynamic loop has finished.
-    """
-    for name in list(meteohandles.keys()):
-        closemeteofile(name)
 
 def readmeteodata(name, date, value='None', addZeros=False, zeros=0.0, mapsscale=True,
                   buffering=False, extendback=False, glacier=False):
@@ -1664,7 +1700,7 @@ def readmeteodata(name, date, value='None', addZeros=False, zeros=0.0, mapsscale
 
     # +++++++++++++++ Netcdf ++++++++++++++++++++++
     # the file handle is kept open across timesteps (opened on first use, closed when the
-    # run moves to the next file of the stack or by closemeteofiles() at the end of the run)
+    # run moves to the next file of the stack or by caching.ncclose_all() at the end of the run)
     fileno = flagmeteo[name]
     handle = meteohandles.get(name)
     if (handle is None) or (handle[1] != fileno) or (not handle[0].isopen()):
@@ -1673,7 +1709,7 @@ def readmeteodata(name, date, value='None', addZeros=False, zeros=0.0, mapsscale
         try:
             nf1 = ncopen(filename)   # shared handle: file was already opened by multinetdf
         except:
-            msg = "Error 211: Netcdf map stacks: \n"
+            msg = "Error 223: Netcdf map stacks: \n"
             raise CWATMFileError(filename, msg, sname=name)
         setmeteochunkcache(nf1.variables[value], loc)
         meteohandles[name] = [nf1, fileno, filename]
@@ -1702,7 +1738,7 @@ def readmeteodata(name, date, value='None', addZeros=False, zeros=0.0, mapsscale
         if maskinfo['shapeflat'][0]!= mapnp.size:
             msg = "Error 109: " + name + " has less or more valid pixels than the mask map \n"
             msg += "if it is the ET maps, it might be from another run with different mask. Please look at the option: calc_evaporation"
-            raise CWATMWarning(msg)
+            raise CWATMError(msg)
 
         mapC = compressArray(mapnp, name=filename,zeros = zeros)
         if Flags['check']:
@@ -1813,10 +1849,12 @@ def readnetcdf2(namebinding, date, useDaily='daily', value='None', addZeros=Fals
             inputcounter[value] += 1
             idx = inputcounter[value]
         else:
+            # look for the record of this year/month: with 1 January / the 1st of the month
+            # 'nearest' finds records dated on the 1st or in the middle of the month/year
             if useDaily == "yearly":
-                date = datetime.datetime(date.year, int(1), int(1))
-#             if useDaily == "monthly":
-                date = datetime.datetime(date.year, date.month, int(1))
+                date = datetime.datetime(date.year, 1, 1)
+            if useDaily == "monthly":
+                date = datetime.datetime(date.year, date.month, 1)
 
             # A netCDF time variable object  - time index (in the netCDF file)
             nctime = nf1.variables['time']
@@ -1833,8 +1871,9 @@ def readnetcdf2(namebinding, date, useDaily='daily', value='None', addZeros=Fals
 
             if meteo: inputcounter[value] = idx
 
-    # if first day store the name and the date
-    if dateVar["curr"] == 0:
+    # store the name and the date when the file is read the first time (files read only later in the run too,
+    # e.g. monthly water demand)
+    if filename not in versioning.get('inputdates', {}):
         try:
             history = nf1.getncattr('history')
         except:
@@ -1881,7 +1920,7 @@ def readnetcdf2(namebinding, date, useDaily='daily', value='None', addZeros=Fals
 
     if maskinfo['shapeflat'][0]!= mapnp.size:
         msg = "Error 110: " + name + " has less or more valid pixels than the mask map \n"
-        raise CWATMWarning(msg)
+        raise CWATMError(msg)
 
     mapC = compressArray(mapnp, name=filename)
     if Flags['check']:
@@ -1986,7 +2025,7 @@ def readnetcdf12month(name, month,value="None"):
     try:
        nf1 = ncopen(filename)   # cached: 12 monthly maps from one file (lapse rate)
     except:
-        msg = "Error 213: Netcdf map stacks: \n"
+        msg = "Error 224: Netcdf map stacks: \n"
         raise CWATMFileError(filename,msg)
     if value == "None":
         value = getvariablename(nf1) # get the last variable name
@@ -1999,7 +2038,7 @@ def readnetcdf12month(name, month,value="None"):
     return mapC
 
 
-def readnetcdfInitial(name, value,default = 0.0):
+def readnetcdfInitial(name, value, default=0.0, warn=True):
     """
     Read initial condition data with fallback defaults.
     
@@ -2015,7 +2054,9 @@ def readnetcdfInitial(name, value,default = 0.0):
         Variable name within the NetCDF file.
     default : float, optional
         Default value to use if file not found. Default is 0.0.
-    
+    warn : bool, optional
+        False: no warning if the variable is not in the file. Default is True.
+
     Returns
     -------
     numpy.ndarray
@@ -2072,7 +2113,10 @@ def readnetcdfInitial(name, value,default = 0.0):
                 msg = "Error 113: map shape is different than mask shape\n"
                 raise CWATMError(msg)
             return mapC
-        except:
+        except CWATMError:
+            # Error 107, 112, 113 are more exact than Error 114
+            raise
+        except Exception:
             #nf1.close()
             msg ="Error 114: ===== Problem reading initial data ====== \n"
             msg += "Initial value: " + value + " is has not the same shape as the mask map\n"
@@ -2080,9 +2124,16 @@ def readnetcdfInitial(name, value,default = 0.0):
             raise CWATMError(msg)
 
     else:
-        msg = "Warning: Initial value: " + value + " is not included in: " + name + " - using default: " + str(default)
-        print(CWATMWarning(msg))
+        if warn:
+            default_text = str(default) if np.ndim(default) == 0 else "map with mean " + str(np.mean(default))
+            msg = "Warning: Initial value: " + value + " is not included in: " + name + " - using default: " + default_text
+            print(CWATMWarning(msg))
         return default
+
+
+def initialIncluded(name, value):
+    """True if the variable value is in the initial condition file name (file opened once, see ncopen)"""
+    return value in ncopen(os.path.normpath(name)).variables
 
 # --------------------------------------------------------------------------------------------
 
@@ -2148,11 +2199,13 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
             row = domain['nrow']
             col = domain['ncol']
             metadataNCDF['modflow_x'] = {}
-            metadataNCDF['modflow_x']['standard_name'] = 'X'
+            metadataNCDF['modflow_x']['standard_name'] = 'projection_x_coordinate'
             metadataNCDF['modflow_x']['units'] = 'm'
+            metadataNCDF['modflow_x']['axis'] = 'X'
             metadataNCDF['modflow_y'] = {}
-            metadataNCDF['modflow_y']['standard_name'] = 'Y'
+            metadataNCDF['modflow_y']['standard_name'] = 'projection_y_coordinate'
             metadataNCDF['modflow_y']['units'] = 'm'
+            metadataNCDF['modflow_y']['axis'] = 'Y'
 
 
     # create real varname with variable name + time depending name e.g. discharge + monthavg
@@ -2166,6 +2219,7 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
 
     if not flag:
         ncclose(netfile)   # in case the file was read before as input (cached handle)
+        ncwriteclose(netfile)   # a new file with the same name in the same run
         nf1 = Dataset(netfile, 'w', format='NETCDF4')
 
         # general Attributes
@@ -2219,12 +2273,11 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
             lon = nf1.createDimension('x', col)  # x 1000
             longitude = nf1.createVariable('x', 'f8', ('x',))
             for i in metadataNCDF['modflow_x']:
-                exec('%s="%s"' % ("longitude." + i, metadataNCDF['modflow_x'][i]))
+                setattr(longitude, i, str(metadataNCDF['modflow_x'][i]))
             lat = nf1.createDimension('y', row)  # x 950
             latitude = nf1.createVariable('y', 'f8', 'y')
             for i in metadataNCDF['modflow_y']:
-                exec('%s="%s"' % ("latitude." + i, metadataNCDF['modflow_y'][i]))
-            latitude.axis ="Y"
+                setattr(latitude, i, str(metadataNCDF['modflow_y'][i]))
 
         else:
 
@@ -2234,13 +2287,13 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
                 longitude = nf1.createVariable('x', 'f8', ('x',))
                 latlon = False
                 for i in metadataNCDF['x']:
-                    exec('%s="%s"' % ("longitude." + i, metadataNCDF['x'][i]))
+                    setattr(longitude, i, str(metadataNCDF['x'][i]))
                 longitude.axis = "X"
             if 'y' in list(metadataNCDF.keys()):
                 lat = nf1.createDimension('y', row)  # x 950
                 latitude = nf1.createVariable('y', 'f8', 'y')
                 for i in metadataNCDF['y']:
-                    exec('%s="%s"' % ("latitude." + i, metadataNCDF['y'][i]))
+                    setattr(latitude, i, str(metadataNCDF['y'][i]))
                 latitude.axis = "Y"
             # SHMI meteorogist have a capital X and Y
             if 'X' in list(metadataNCDF.keys()):
@@ -2248,42 +2301,52 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
                 longitude = nf1.createVariable('x', 'f8', ('x',))
                 latlon = False
                 for i in metadataNCDF['X']:
-                    exec('%s="%s"' % ("longitude." + i, metadataNCDF['X'][i]))
+                    setattr(longitude, i, str(metadataNCDF['X'][i]))
                 longitude.axis = "X"
             if 'Y' in list(metadataNCDF.keys()):
                 lat = nf1.createDimension('y', row)  # x 950
                 latitude = nf1.createVariable('y', 'f8', 'y')
                 for i in metadataNCDF['Y']:
-                    exec('%s="%s"' % ("latitude." + i, metadataNCDF['Y'][i]))
+                    setattr(latitude, i, str(metadataNCDF['Y'][i]))
                 latitude.axis = "Y"
             if latlon:
                 if 'lon' in list(metadataNCDF.keys()):
                     lon = nf1.createDimension('lon', col)
                     longitude = nf1.createVariable('lon', 'f8', ('lon',))
                     for i in metadataNCDF['lon']:
-                        exec('%s="%s"' % ("longitude." + i, metadataNCDF['lon'][i]))
+                        setattr(longitude, i, str(metadataNCDF['lon'][i]))
                     longitude.axis = "X"
                 if 'lat' in list(metadataNCDF.keys()):
                     lat = nf1.createDimension('lat', row)  # x 950
                     latitude = nf1.createVariable('lat', 'f8', 'lat')
                     for i in metadataNCDF['lat']:
-                        exec('%s="%s"' % ("latitude." + i, metadataNCDF['lat'][i]))
+                        setattr(latitude, i, str(metadataNCDF['lat'][i]))
                     latitude.axis = "Y"
 
         # projection -> replace by crs  as in cf1.13
 
-        if projection['crs'] != None:
+        if modflow:
+            # CRS of modflow_basin (e.g. EPSG:3035), not the CWatM one
+            if domain.get('crs') is not None:
+                crs = nf1.createVariable('crs', 'i4', ())
+                crs.crs_wkt = crs.spatial_ref = domain['crs'].to_wkt()
+                try:
+                    # CF attributes (grid_mapping_name ...) for Panoply / netCDF-Java, pyproj is optional
+                    import pyproj
+                    for key, val in pyproj.CRS.from_wkt(crs.crs_wkt).to_cf().items():
+                        setattr(crs, key, val)
+                except ImportError:
+                    pass
+        elif projection['crs'] != None:
             crs = nf1.createVariable('crs', 'i4',())
             for key in projection['crs'].ncattrs():
                 setattr(crs, key, projection['crs'].getncattr(key))
 
         # Fill variables
         if modflow:
-            lats = np.arange(domain['north'], domain['south'] - 1, domain['rowsize'] * -1)
-            lons =  np.arange(domain['west'], domain['east']+1, domain['colsize'])
-            #lons =  np.linspace(domain['north'] , domain['south'], col, endpoint=False)
-            latitude[:] = lats
-            longitude[:] = lons
+            # cell centres (north / west are the edges of modflow_basin)
+            latitude[:] = domain['north'] - (np.arange(row) + 0.5) * domain['rowsize']
+            longitude[:] = domain['west'] + (np.arange(col) + 0.5) * domain['colsize']
 
         else:
             cell = maskmapAttr['cell']
@@ -2384,7 +2447,10 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
         value.long_name = p1 + p2
         value.units= getmeta("unit",prename,varunits)
 
-        if projection['crs'] != None:
+        if modflow:
+            if 'crs' in nf1.variables:
+                value.grid_mapping = "crs"
+        elif projection['crs'] != None:
             value.grid_mapping = "crs"
 
         #for var in list(metadataNCDF.keys()):
@@ -2392,8 +2458,8 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
         #        value.esri_pe_string = metadataNCDF[var]['esri_pe_string']
 
     else:
-        ncclose(netfile)   # in case the file was read before as input (cached handle)
-        nf1 = Dataset(netfile, 'a')
+        # stays open until the end of the run (ncwriteclose_all) - opening on a network drive costs time
+        nf1 = ncappend(netfile)
 
     if flagTime:
         date_time = nf1.variables['time']
@@ -2408,7 +2474,8 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
     if not(hasattr(inputmap, '__len__')):
         date1 = "%02d/%02d/%02d" % (timeStamp.day, timeStamp.month, timeStamp.year)
         msg = "No values in: " + varname + " on date: " + date1 +"\nCould not write: " + netfile
-        nf1.close()
+        if not flag:
+            nf1.close()   # a new file is closed, an appended file stays open (ncappend)
         print(CWATMWarning(msg))
         return False
 
@@ -2420,7 +2487,8 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
         else:
             # without timeflag
             nf1.variables[varname][:] = inputmap
-        nf1.close()
+        if not flag:
+            nf1.close()   # a new file is closed, an appended file stays open (ncappend)
         flag = True
         return flag
 
@@ -2442,7 +2510,8 @@ def writenetcdf(netfile, prename, addname, varunits, inputmap, timeStamp, posCnt
         # without timeflag
         nf1.variables[varname][:, :] = mapnp
 
-    nf1.close()
+    if not flag:
+        nf1.close()   # a new file is closed, an appended file stays open (ncappend)
     flag = True
 
     return flag
@@ -2514,44 +2583,44 @@ def writeIniNetcdf(netfile,varlist, inputlist):
         lon = nf1.createDimension('x', col)  # x 1000
         longitude = nf1.createVariable('x', 'f8', ('x',))
         for i in metadataNCDF['x']:
-            exec('%s="%s"' % ("longitude." + i, metadataNCDF['x'][i]))
+            setattr(longitude, i, str(metadataNCDF['x'][i]))
     if 'y' in list(metadataNCDF.keys()):
         lat = nf1.createDimension('y', row)  # x 950
         latitude = nf1.createVariable('y', 'f8', 'y')
         for i in metadataNCDF['y']:
-            exec('%s="%s"' % ("latitude." + i, metadataNCDF['y'][i]))
+            setattr(latitude, i, str(metadataNCDF['y'][i]))
     if 'X' in list(metadataNCDF.keys()):
         latlon = False
         lon = nf1.createDimension('x', col)  # x 1000
         longitude = nf1.createVariable('x', 'f8', ('x',))
         for i in metadataNCDF['X']:
-            exec('%s="%s"' % ("longitude." + i, metadataNCDF['X'][i]))
+            setattr(longitude, i, str(metadataNCDF['X'][i]))
     if 'Y' in list(metadataNCDF.keys()):
         lat = nf1.createDimension('y', row)  # x 950
         latitude = nf1.createVariable('y', 'f8', 'y')
         for i in metadataNCDF['Y']:
-            exec('%s="%s"' % ("latitude." + i, metadataNCDF['Y'][i]))
+            setattr(latitude, i, str(metadataNCDF['Y'][i]))
     if latlon:
         if 'lon' in list(metadataNCDF.keys()):
             lon = nf1.createDimension('lon', col)
             longitude = nf1.createVariable('lon', 'f8', ('lon',), fill_value=1e20)
             for i in metadataNCDF['lon']:
-                exec('%s="%s"' % ("longitude." + i, metadataNCDF['lon'][i]))
+                setattr(longitude, i, str(metadataNCDF['lon'][i]))
         if 'lat' in list(metadataNCDF.keys()):
             lat = nf1.createDimension('lat', row)  # x 950
             latitude = nf1.createVariable('lat', 'f8', 'lat', fill_value=1e20)
             for i in metadataNCDF['lat']:
-                exec('%s="%s"' % ("latitude." + i, metadataNCDF['lat'][i]))
+                setattr(latitude, i, str(metadataNCDF['lat'][i]))
 
     # projection
     if 'laea' in list(metadataNCDF.keys()):
         proj = nf1.createVariable('laea', 'i4')
         for i in metadataNCDF['laea']:
-            exec('%s="%s"' % ("proj." + i, metadataNCDF['laea'][i]))
+            setattr(proj, i, str(metadataNCDF['laea'][i]))
     if 'lambert_azimuthal_equal_area' in list(metadataNCDF.keys()):
         proj = nf1.createVariable('lambert_azimuthal_equal_area', 'i4')
         for i in metadataNCDF['lambert_azimuthal_equal_area']:
-            exec('%s="%s"' % ("proj." + i, metadataNCDF['lambert_azimuthal_equal_area'][i]))
+            setattr(proj, i, str(metadataNCDF['lambert_azimuthal_equal_area'][i]))
 
     # Fill variables
     cell = maskmapAttr['cell']
@@ -2776,7 +2845,7 @@ def checkOption(inBinding,checkfirst = False):
         else:
             closest = "- no match -"
 
-        msg = "Error 116: No key with the name: \"" + inBinding + "\" in the settings file: \"" + settingsfile[0] + "\"\n"
+        msg = "Error 136: No key with the name: \"" + inBinding + "\" in the settings file: \"" + settingsfile[0] + "\"\n"
         msg += "Closest key to the required one is: \""+ closest + "\""
         msg += lineclosest
         raise CWATMError(msg)
@@ -2866,7 +2935,8 @@ def divideValues(x,y, default = 0.):
     - Used throughout CWatM for ratio and rate calculations
     - Maintains numerical stability in model computations
     """
-    y1 = y.copy()
+    # np.array(copy=True): y can also be a scalar (e.g. a parameter given as a number in the settings)
+    y1 = np.array(y, copy=True)
     y1[y1 == 0.] = 1.0
     z = x / y1
     z[y == 0.] = default

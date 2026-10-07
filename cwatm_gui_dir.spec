@@ -202,9 +202,9 @@ account_hiddenimports += ['keyring.backends.Windows', 'win32ctypes.pywin32',
 # MODFLOW coupling: flopy (CWatM<->MODFLOW) + its matplotlib plotting stack and xmipy.
 # Bundled so a MODFLOW-coupled run works frozen; because flopy imports matplotlib, the
 # whole stack (matplotlib -> contourpy / kiwisolver / cycler / fontTools / PIL) is
-# collected and matplotlib is NO LONGER excluded below. The GUI only *imports* flopy
-# when Configure > Use Modflow is ON (src/gui/utils/modflow.py), and cwatm imports it
-# only when a settings file enables modflow_coupling - so bundling it does not slow a
+# collected and matplotlib is NO LONGER excluded below. The GUI never imports flopy;
+# cwatm imports it (and xmipy) only when a settings file enables modflow_coupling,
+# inside the model process - so bundling it does not slow a
 # normal (non-MODFLOW) start; it just makes the library available when needed.
 modflow_datas, modflow_binaries, modflow_hiddenimports = [], [], []
 for _pkg in ('flopy', 'matplotlib', 'contourpy', 'kiwisolver', 'PIL', 'fontTools'):
@@ -307,6 +307,8 @@ datas = [
     (os.path.join(spec_root, 'assets', '*'), 'assets'),
     # CWatM account river badges (assets/badges/<badge code>.png - badge_images.py)
     (os.path.join(spec_root, 'assets', 'badges', '*.png'), 'assets/badges'),
+    # Sparkline cameo images (assets/ani/*.png - discharge_sparkline.py)
+    (os.path.join(spec_root, 'assets', 'ani', '*.png'), 'assets/ani'),
     # Leaflet for the map windows, shipped + SHA-256-pinned (src/gui/utils/
     # web_assets.py, security.md #2) - nothing is downloaded and run at run time
     (os.path.join(spec_root, 'assets', 'web', '*'), 'assets/web'),

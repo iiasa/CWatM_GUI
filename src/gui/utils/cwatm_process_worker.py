@@ -41,9 +41,13 @@ def _gui_root():
         os.path.dirname(os.path.abspath(__file__)))))
 
 
-def model_command(file_path):
+def model_command(file_path, flags=None):
     """Return (program, arguments, working_dir) that runs the model runner in a
     child process.
+
+    flags: optional CWatM flags appended after the settings file (e.g.
+    ['-lg', '-e'] for RUN CWATM > Run CWatM + error message); None = the runner's
+    default '-lg'.
 
     frozen build: prefer the dedicated CWatM_model.exe (light, console subsystem =
     guaranteed std pipes; QProcess starts it with CREATE_NO_WINDOW so no console
@@ -52,22 +56,26 @@ def model_command(file_path):
     contents_directory='.'), or next to the GUI exe in older builds. Fall back to
     re-entering the GUI exe with --run-cwatm (shows the splash briefly and pays
     the Qt bootstrap, but works).
-    from source: the venv python running cwatm_gui.py --run-cwatm (the dispatch at
-    the top of cwatm_gui.py runs the model before any Qt import).
+    from source: the venv python running cwatm_model.py (the same script the
+    CWatM_model.exe is built from). Not cwatm_gui.py --run-cwatm: CWatM starts
+    MODFLOW in a multiprocessing "spawn" child, which re-imports the main script -
+    cwatm_model.py is a few lines, cwatm_gui.py would pull in Qt and the GUI.
 
     Public (no leading underscore): also used by src/gui/utils/batch_file_creator.py
     (RUN CWATM > Create batch) to build the identical command line for a
     standalone .bat file - one source of truth for "how do we launch the model"."""
+    extra = list(flags or [])
     if getattr(sys, "frozen", False):
         exe_dir = os.path.dirname(sys.executable)
         for model_exe in (os.path.join(exe_dir, "_internal", "CWatM_model.exe"),
                           os.path.join(exe_dir, "CWatM_model.exe")):
             if os.path.isfile(model_exe):
-                return model_exe, [file_path], exe_dir
-        return sys.executable, ["--run-cwatm", file_path], exe_dir
+                return model_exe, [file_path] + extra, exe_dir
+        return sys.executable, ["--run-cwatm", file_path] + extra, exe_dir
     root = _gui_root()
     return (_console_python(),
-            ["-u", os.path.join(root, "cwatm_gui.py"), "--run-cwatm", file_path],
+            ["-u", os.path.join(root, "cwatm_model.py"), file_path]
+            + extra,
             root)
 
 
@@ -93,9 +101,11 @@ class CWatMProcessWorker(QObject):
     progress = Signal(int)           # progress value 0-100
 
     def __init__(self, file_path, gui_window=None, output_sink=None,
-                 working_dir=None):
+                 working_dir=None, flags=None):
         super().__init__(gui_window)
         self.file_path = file_path
+        # flags: CWatM flags for the child (None = the runner's default '-lg').
+        self._flags = flags
         # working_dir: the directory the child process is started in, so relative
         # paths in the settings file resolve from there (File > Change Working Dir).
         # None = model_command's default (the exe/source root).
@@ -131,7 +141,7 @@ class CWatMProcessWorker(QObject):
     # ------------------------------------------------------------- lifecycle
     def start(self):
         """Spawn the model child process."""
-        program, args, workdir = model_command(self.file_path)
+        program, args, workdir = model_command(self.file_path, self._flags)
         if self._working_dir and os.path.isdir(self._working_dir):
             workdir = self._working_dir
         env = QProcessEnvironment.systemEnvironment()

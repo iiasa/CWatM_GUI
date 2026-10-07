@@ -133,7 +133,16 @@ def _dispatch_child_process():
             sys.exit(handler(sys.argv[sys.argv.index(flag) + 1:]))
 
 
-_dispatch_child_process()
+# Only as the real main script. A multiprocessing "spawn" child (CWatM starts
+# MODFLOW in one) re-imports this file as "__mp_main__" with the PARENT's sys.argv,
+# so an unguarded dispatch ran the whole model a second time inside that child and
+# multiprocessing refused it ("start a new process before the current process has
+# finished its bootstrapping phase"). freeze_support(): in a frozen exe such a child
+# is this exe started with --multiprocessing-fork; it runs the child and exits here.
+if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
+    _dispatch_child_process()
 _profile("child-process dispatch checked")
 
 

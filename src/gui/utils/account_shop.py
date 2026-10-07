@@ -12,14 +12,32 @@ Shop has neither field - then balance = earned = ``total_points``.
 
 SHOP_BADGE = "breg"          # = game_config.shop_required_badge
 
-# the sparkline's animal names (discharge_sparkline.ANIMALS) -> Shop item codes
+# the sparkline's animal names -> Shop item codes: first the image animals
+# (assets/ani/<name>.png, discharge_sparkline.image_animals - the names the GUI
+# shows), then the older emoji names (discharge_sparkline.ANIMALS) for the emoji
+# mode; the fish became the trout and the sailboat the bottle (migration
+# ..._shop_animals_v2.sql renamed the items, so their buyers own the new ones).
 ANIMAL_CODES = {
-    "Fish": "fish",
+    "Trout": "trout",
+    "Catfish": "catfish",
+    "Clownfish": "clownfish",
     "Otter": "otter",
     "Beaver": "beaver",
-    "Sailboat": "sailboat",
+    "Octopus (Carla)": "octopus",
+    "Bottle": "bottle",
+    "Mole": "mole",
+    "Fish": "trout",
+    "Sailboat": "bottle",
     "Octopus (for Carla)": "octopus",
 }
+# Shop item code -> the image animal's name (the first name listed above)
+ANIMAL_NAMES = {}
+for _name, _code in ANIMAL_CODES.items():
+    ANIMAL_NAMES.setdefault(_code, _name)
+
+# a reward item is never sold: claim_reward(<reward>) gives it once
+MODFLOW_REWARD = "modflow_first_run"     # -> the mole
+MODFLOW_REWARD_ANIMAL = "Mole"
 LEVEL_CODES = {"Advanced": "advanced", "Expert": "expert"}
 
 # item_state() answers

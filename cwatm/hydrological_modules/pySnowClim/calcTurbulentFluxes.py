@@ -49,10 +49,12 @@ def calc_turbulent_fluxes(parameters, wind_speed, lastsnowtemp, tavg,
     CH = const.K**2 * np.power(np.log(parameters['windHt'] / parameters['z_0']), -1) \
         * np.power(np.log(parameters['tempHt'] / parameters['z_h']), -1)
 
+    # Calculate the bulk Richardson number
+    # (Rib > 0: stable stratification = air warmer than the snow surface)te
+    Rib = (g * parameters['windHt'] * (tavg - lastsnowtemp)) / \
+        ((tavg + const.K_2_C) * wind_speed**2)
+
     if parameters['stability']:
-        # Calculate the bulk Richardson number
-        Rib = (g * parameters['windHt'] * (tavg - lastsnowtemp)) / \
-            ((tavg + const.K_2_C) * wind_speed**2)
 
         # Calculate FH as a function of Rib
         FH = np.full_like(tavg, np.nan)

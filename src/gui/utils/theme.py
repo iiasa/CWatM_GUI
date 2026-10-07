@@ -54,6 +54,7 @@ _THEMES = {
         ini_comment="darkgray", ini_true="blue", ini_false="red",
         changed_line="#dcecff", duplicate_line="#ff8f8f", error_line="#ffd9d9",
         filler_line="#e0e0e0", diff_line="#ffe1c2", current_diff_line="#ffb877",
+        matched_line="#fff4e8",
         inactive_line="#ffddb0", wrongext_line="#ffe8cc",
         # Settings ▸ Compare Tab (F8): lines differing from the neighbouring tab.
         # Drawn at 50% opacity, so this is the FULL-strength colour.
@@ -90,6 +91,7 @@ _THEMES = {
         ini_comment="#8a9199", ini_true="#6cb6ff", ini_false="#ff7b72",
         changed_line="#1f3a5f", duplicate_line="#8a2626", error_line="#5a2323",
         filler_line="#3a3a3a", diff_line="#7d5a2b", current_diff_line="#c08333",
+        matched_line="#4a3a25",
         inactive_line="#4d4030", wrongext_line="#5a4a2e",
         compare_line="#2f7d4f",
         selection_cell="#6a7178", selection_line="#8b9298",
@@ -123,6 +125,7 @@ _THEMES = {
         ini_comment="#8a6a00", ini_true="#ffd24d", ini_false="#ff6a00",
         changed_line="#2e2400", duplicate_line="#6b1e00", error_line="#3d1400",
         filler_line="#2a2a10", diff_line="#6e4a10", current_diff_line="#946313",
+        matched_line="#3a2808",
         inactive_line="#4a3612", wrongext_line="#5e4514",
         compare_line="#2f6b23",
         selection_cell="#5c4d19", selection_line="#8a7426",

@@ -147,6 +147,9 @@ class SettingsEditor(QPlainTextEdit):
         self._diff_rows = set()
         # Row(s) of the currently jumped-to difference (darker orange).
         self._current_diff_rows = set()
+        # Rows edited (since the last Save) into the same text as the other side
+        # (lighter orange - Compare settings).
+        self._matched_rows = set()
         # Rows differing from the neighbouring TAB (Settings ▸ Compare Tab, F8):
         # light green at 50% opacity, on top of everything else.
         self._compare_rows = set()
@@ -236,6 +239,13 @@ class SettingsEditor(QPlainTextEdit):
         """Mark these row numbers with a **darker** orange background (the Compare
         settings difference you just jumped to). Pass an empty set to clear."""
         self._current_diff_rows = set(int(r) for r in rows)
+        self._recompute_change_highlights()
+
+    def set_matched_rows(self, rows):
+        """Mark these row numbers with a **lighter** orange background (Compare
+        settings: a line edited so it now equals the other side; cleared when the
+        save re-diffs). Pass an empty set to clear."""
+        self._matched_rows = set(int(r) for r in rows)
         self._recompute_change_highlights()
 
     def set_compare_rows(self, rows):
@@ -500,6 +510,9 @@ class SettingsEditor(QPlainTextEdit):
             _add(self._diff_rows, theme.qcolor("diff_line"))
             _add(self._filler_rows, theme.qcolor("filler_line"))
             _add(self._current_diff_rows, theme.qcolor("current_diff_line"))
+            # An edited line that now equals the other side: lighter orange, over
+            # the (stale) jumped-to mark.
+            _add(self._matched_rows, theme.qcolor("matched_line"))
             # Compare Tab (F8): light green at 50% opacity, drawn last so it is
             # visible over every other mark - it is a deliberate, temporary overlay
             # the user switches on and off, and the alpha lets the colour underneath
@@ -525,6 +538,7 @@ class SettingsEditor(QPlainTextEdit):
         self._filler_rows = set()  # and any Compare-settings alignment filler
         self._diff_rows = set()    # and any Compare-settings diff marks
         self._current_diff_rows = set()
+        self._matched_rows = set()
         self._compare_rows = set()   # and any Compare-Tab (F8) green marks
         self._saved_text = text
         self.setPlainText(text)   # recreates blocks -> bookmarks/marks cleared

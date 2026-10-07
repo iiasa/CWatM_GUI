@@ -4,12 +4,12 @@ NetCDF analysis widget (Analyse ▸ NetCDF) - the NetCDF viewer on a **folium**
 
 Draws the variable as a Leaflet **ImageOverlay** over an OSM **WMS** basemap
 (EPSG:4326, like Show Basin), with a timestep slider + Play, Speed and Log-scale
-toggle inline; File (Save HTML / Load JSON / Load shape) and Action (Fast Display
+toggle inline and the OSM-transparency slider in the row below Play; File (Save HTML / Load JSON / Load Shapefile) and Action (Fast Display
 Timeserie / Total Timeseries / Compare A-B / Flow duration / Flow regime / Calculate
 mean / Calculate percentile - the last two write a new one-map NetCDF via
 ``netcdf_stats`` and show it in place of the original, ``_show_file``) menus; and
 a top-level Display action that opens a small window (colour-scale selector,
-OSM-transparency slider, basemap selector). Load JSON/Load shape are the same
+basemap selector). Load JSON/Load shape are the same
 feature as Show Basin's (shared readers + shared window.addGeoJson JS helper from
 ``basin_viewer2.py``) - draws a GeoJSON or ESRI shapefile overlay on the map. A left
 click on the map (or on a gauge pin) **toggles** that cell: a new cell is added to
@@ -82,6 +82,38 @@ from src.gui.widgets.basin_viewer2 import (
     _read_geojson_file, _read_shapefile,
 )
 from src.gui.widgets.basin_viewer import grid_is_latlon
+
+
+def _geojson_points(obj):
+    """Every point of a GeoJSON dict (FeatureCollection / Feature / bare geometry,
+    Point and MultiPoint, also inside a GeometryCollection) as (lon, lat), in
+    file order - what a point popup's *Make all points to gauges* writes."""
+    out = []
+
+    def geom(g):
+        if not isinstance(g, dict):
+            return
+        t, c = g.get("type"), g.get("coordinates")
+        try:
+            if t == "Point":
+                out.append((float(c[0]), float(c[1])))
+            elif t == "MultiPoint":
+                out.extend((float(p[0]), float(p[1])) for p in c)
+            elif t == "GeometryCollection":
+                for sub in g.get("geometries") or []:
+                    geom(sub)
+        except (TypeError, ValueError, IndexError):
+            log.debug("_geojson_points: skipped a malformed %s", t, exc_info=True)
+
+    if isinstance(obj, dict):
+        if obj.get("type") == "FeatureCollection":
+            for f in obj.get("features") or []:
+                geom((f or {}).get("geometry"))
+        elif obj.get("type") == "Feature":
+            geom(obj.get("geometry"))
+        else:
+            geom(obj)
+    return out
 
 
 class _PointSeriesWorker(QThread):
@@ -202,6 +234,7 @@ class NetcdfWindow(NetcdfDataBase):
         self._ts_next = None                  # latest (pts, open_if_closed, full) request
         self._ts_full = True                  # current mode: True=Total, False=Fast
         self._displayed_points = []           # [(lon, lat, colour)]
+        self._geo_points = []   # per loaded shape/GeoJSON: its points [(lon, lat)]
         self._colorscale_name = _DEFAULT_COLORSCALE
         self._compare_mode = False            # showing an A−B difference?
         self._orig = None                     # saved A state while comparing
@@ -459,22 +492,33 @@ class NetcdfWindow(NetcdfDataBase):
         self._ts_elapsed_timer.setInterval(1000)
         self._ts_elapsed_timer.timeout.connect(self._update_ts_elapsed_label)
 
-        # Colour scale / OSM transparency / Basemap - live map-appearance controls,
-        # moved out of the button row into their own Display window (Menu ▸ Display)
-        # so this row stays uncluttered; not added to `layout`.
-        self.colorscale_combo = QComboBox()
-        for name in _COLORSCALES:
-            self.colorscale_combo.addItem(name)
-        self.colorscale_combo.setCurrentText(_DEFAULT_COLORSCALE)
-        self.colorscale_combo.currentTextChanged.connect(self._on_colorscale)
-
+        # Row 2: OSM transparency, directly below Play - the control used most
+        # while looking at a map, so it stays inline (not in the Display window).
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        self.opacity_label = QLabel("OSM transparency:")
+        self.opacity_label.setStyleSheet(_lbl)
+        row2.addWidget(self.opacity_label)
         self.opacity_slider = QSlider(Qt.Horizontal)
         self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setFixedWidth(220)
         self.opacity_slider.setToolTip(
             "0% = OSM hidden + NetCDF fully opaque (only the NetCDF, on white); "
             "100% = OSM fully visible + NetCDF 50% opaque on top")
         self.opacity_slider.setValue(int(self._base_opacity * 100))
         self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        row2.addWidget(self.opacity_slider)
+        row2.addStretch(1)
+        layout.addLayout(row2)
+
+        # Colour scale / Basemap - live map-appearance controls in their own
+        # Display window (Menu ▸ Display) so the rows stay uncluttered; not added
+        # to `layout`.
+        self.colorscale_combo = QComboBox()
+        for name in _COLORSCALES:
+            self.colorscale_combo.addItem(name)
+        self.colorscale_combo.setCurrentText(_DEFAULT_COLORSCALE)
+        self.colorscale_combo.currentTextChanged.connect(self._on_colorscale)
 
         self.basemap_combo = QComboBox()
         for label, key in _B2_PROVIDERS:
@@ -512,7 +556,7 @@ class NetcdfWindow(NetcdfDataBase):
             "Save the map as a self-contained HTML file (opens in any browser)")
         act_load_json = file_menu.addAction("Load JSON", self._load_json)
         act_load_json.setToolTip("Load a GeoJSON file and display it on the map")
-        act_load_shape = file_menu.addAction("Load shape", self._load_shape)
+        act_load_shape = file_menu.addAction("Load Shapefile", self._load_shape)
         act_load_shape.setToolTip("Load shapefile .shp")
 
         action_menu = mbar.addMenu("Action")
@@ -535,6 +579,9 @@ class NetcdfWindow(NetcdfDataBase):
         self.flowregime_action = action_menu.addAction("Flow regime", self._show_flow_regime)
         self.flowregime_action.setToolTip("Displays a flow regime curve")
         self.flowregime_action.setVisible(self._multi)
+        self.remove_gauges_action = action_menu.addAction(
+            "Remove gauges", self._remove_all_points)
+        self.remove_gauges_action.setToolTip("Remove all gauges (selected points) from the map")
         action_menu.addSeparator()
         self.mean_action = action_menu.addAction("Calculate mean", self._calculate_mean)
         self.mean_action.setToolTip("Calculates the mean of the given netcdf")
@@ -544,12 +591,15 @@ class NetcdfWindow(NetcdfDataBase):
         self.percentile_action.setToolTip(
             "Select a percentile and it calculates this percentile from the given netcdf")
         self.percentile_action.setVisible(self._multi)
+        self.save_tif_action = action_menu.addAction("Save as a .tif", self._save_tif)
+        self.save_tif_action.setToolTip(
+            "Save the map of the shown day (or month/year) as a GeoTIFF")
 
         # "Display" - a clickable menu-bar button (a top-level QAction fires on click
         # instead of opening a dropdown), same pattern as the main window's CWatM AI.
         self._display_action = mbar.addAction("Display")
         self._display_action.setToolTip(
-            "Colour scale, OSM transparency and Basemap for this map")
+            "Colour scale and Basemap for this map")
         self._display_action.triggered.connect(self._open_display_dialog)
 
         self._menus = [file_menu, action_menu]  # GC guard
@@ -557,7 +607,7 @@ class NetcdfWindow(NetcdfDataBase):
 
     def _build_display_dialog(self, lbl_style):
         """Menu ▸ Display: a small non-modal window (like Preferences) holding the
-        map-appearance controls - Colour scale, OSM transparency, Basemap - built
+        map-appearance controls - Colour scale, Basemap - built
         once here and reopened by _open_display_dialog. The controls apply live to
         the map, same as when they were inline."""
         win = QDialog(self)
@@ -572,11 +622,6 @@ class NetcdfWindow(NetcdfDataBase):
         cs.setStyleSheet(lbl_style)
         vlayout.addWidget(cs)
         vlayout.addWidget(self.colorscale_combo)
-
-        tl = QLabel("OSM transparency:")
-        tl.setStyleSheet(lbl_style)
-        vlayout.addWidget(tl)
-        vlayout.addWidget(self.opacity_slider)
 
         bl = QLabel("Basemap:")
         bl.setStyleSheet(lbl_style)
@@ -646,6 +691,13 @@ class NetcdfWindow(NetcdfDataBase):
                "align-items:center;justify-content:center;}"
                ".nc-gauge span{transform:rotate(45deg);color:#fff;"
                "font:bold 9px 'Segoe UI',Arial,sans-serif;line-height:1;}"
+               # shape/GeoJSON popups 2px smaller than Leaflet's 13px default
+               ".leaflet-popup-content{font-size:11px!important;line-height:1.35;}"
+               ".nc-geo-btns{margin-top:6px;display:flex;flex-direction:column;gap:4px;}"
+               ".nc-geo-btns button{font:11px 'Segoe UI',Arial,sans-serif;"
+               "padding:3px 8px;border:1px solid #3498db;border-radius:4px;"
+               "background:#eaf4fc;color:#1d5f8a;cursor:pointer;text-align:left;}"
+               ".nc-geo-btns button:hover{background:#d4eafb;}"
                "#nc-cbar{position:absolute;right:12px;top:60px;z-index:1000;"
                "background:rgba(255,255,255,.85);border:1px solid #999;border-radius:5px;"
                "padding:6px 8px;font:11px 'Segoe UI',Arial,sans-serif;color:#222;"
@@ -759,15 +811,38 @@ class NetcdfWindow(NetcdfDataBase):
             var a=document.getElementById('nc-cbar-max');if(a)a.textContent=mx;
             var b=document.getElementById('nc-cbar-min');if(b)b.textContent=mn;};
           window.geoGroup=L.layerGroup().addTo(MAP);
-          window.addGeoJson=function(obj){try{
+          // Popup of a loaded shape/GeoJSON feature: its attributes as text
+          // (textContent - a value can never inject HTML) and, for a point, two
+          // buttons that make it / all points of this file the Gauges.
+          function geoPopup(props, ll, layerIdx){
+            var box=L.DomUtil.create('div','nc-geo-pop');
+            Object.keys(props||{}).forEach(function(k){
+              var r=L.DomUtil.create('div','',box);
+              r.textContent=k+': '+props[k];});
+            if(ll){
+              var bar=L.DomUtil.create('div','nc-geo-btns',box);
+              [['Make this point a gauge','NC2GAUGE '+ll.lng+'|'+ll.lat],
+               ['Make all points to gauges','NC2GAUGEALL '+layerIdx]]
+              .forEach(function(b){
+                var a=L.DomUtil.create('button','',bar); a.textContent=b[0];
+                L.DomEvent.on(a,'click',function(ev){L.DomEvent.stop(ev);
+                  MAP.closePopup(); document.title=b[1]+'|'+Date.now();});});
+            }
+            return box;}
+          window.addGeoJson=function(obj,layerIdx){try{
             var gj=L.geoJSON(obj,{style:{color:'#ff7800',weight:2,
                 fillColor:'#ffb347',fillOpacity:0.25},
               pointToLayer:function(f,ll){return L.circleMarker(ll,{radius:5,
-                color:'#ff7800',fillColor:'#ffb347',fillOpacity:0.7,weight:2});},
-              onEachFeature:function(f,layer){if(f.properties){
-                var t=Object.keys(f.properties).map(function(k){
-                  return k+': '+f.properties[k];}).join('<br>');
-                if(t)layer.bindPopup(t);}}}).addTo(window.geoGroup);
+                color:'#ff7800',fillColor:'#ffb347',fillOpacity:0.7,weight:2,
+                // the click only opens the popup; its buttons select the point
+                bubblingMouseEvents:false})
+                .bindPopup(function(){return geoPopup(f.properties,ll,layerIdx);});},
+              onEachFeature:function(f,layer){
+                var gt=f.geometry&&f.geometry.type;
+                if(gt==='Point'||gt==='MultiPoint')return;  // popup set above
+                if(f.properties&&Object.keys(f.properties).length)
+                  layer.bindPopup(function(){return geoPopup(f.properties,null);});
+              }}).addTo(window.geoGroup);
             try{MAP.fitBounds(gj.getBounds());}catch(e){}
             }catch(e){document.title='NC2ERR geojson '+e;}};
           // the trailing timestamp makes every click a new title, so clicking the
@@ -803,8 +878,8 @@ class NetcdfWindow(NetcdfDataBase):
         on the map as small red numbered reference pins."""
         try:
             from src.gui.widgets.basin_viewer import _parse_coord_pairs
-            mw = self.parent()
-            if mw is not None and hasattr(mw, "gauges_field"):
+            mw = self._gauges_main_window()
+            if mw is not None:
                 return _parse_coord_pairs(mw.gauges_field.text()) or []
         except Exception:
             log.debug("netcdf: reading gauges failed", exc_info=True)
@@ -1013,6 +1088,23 @@ class NetcdfWindow(NetcdfDataBase):
         if title.startswith("NC2ERR"):
             print(f"NetCDF map error: {title[7:]}", file=sys.stderr)
             return
+        if title.startswith("NC2GAUGEALL "):
+            # popup button: every point of that loaded shape/GeoJSON file
+            try:
+                pts = self._geo_points[int(title.split()[1].split("|")[0])]
+            except Exception:
+                return
+            self._select_points(pts, "all points of the file")
+            return
+        if title.startswith("NC2GAUGE "):
+            # popup button: only the clicked point ("NC2GAUGE lon|lat|stamp")
+            try:
+                lon_s, lat_s = title[9:].split("|")[:2]
+                pt = (float(lon_s), float(lat_s))
+            except Exception:
+                return
+            self._select_points([pt], "this point")
+            return
         if title.startswith("NC2DEL "):
             # A confirmed point pin was clicked -> remove it (map + timeseries).
             try:
@@ -1108,11 +1200,40 @@ class NetcdfWindow(NetcdfDataBase):
         _mirror(self.compare_action, self._toggle_compare)
         _mirror(self.flowdur_action, self._show_flow_duration)
         _mirror(self.flowregime_action, self._show_flow_regime)
+        _mirror(self.remove_gauges_action, self._remove_all_points)
         if self.mean_action.isVisible():
             menu.addSeparator()
             _mirror(self.mean_action, self._calculate_mean)
             _mirror(self.percentile_action, self._calculate_percentile)
+        else:
+            menu.addSeparator()
+        _mirror(self.save_tif_action, self._save_tif)
         menu.exec(global_pos)
+
+    def _save_tif(self):
+        """Action ▸ Save as a .tif: the map of the shown timestep as a GeoTIFF,
+        named <netcdf name>_<ddmmyyyy>.tif (netcdf_tif.tif_name), saved next to the
+        NetCDF by default."""
+        from src.gui.utils import netcdf_tif
+        ti = min(self._ti, len(self.frames) - 1)
+        label = self.time_labels[ti] if self.time_labels else ""
+        name = netcdf_tif.tif_name(self.nc_path, label)
+        if self._compare_mode:
+            name = name[:-4] + "_AminusB.tif"
+        default = os.path.join(os.path.dirname(self.nc_path), name)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save as a .tif", default, "GeoTIFF (*.tif *.tiff)")
+        if not path:
+            return
+        crs = "EPSG:4326" if not self._projected else netcdf_tif.file_crs_wkt(self.nc_path)
+        try:
+            netcdf_tif.write_geotiff(path, self.frames[ti], self.lons, self.lats, crs)
+        except Exception as e:
+            log.debug("_save_tif failed", exc_info=True)
+            QMessageBox.warning(self, "Save as a .tif",
+                                f"Could not save the GeoTIFF:\n{type(e).__name__}: {e}")
+            return
+        self.info_label.setText(f"Saved {os.path.basename(path)}")
 
     # ------------------------------------------------ mean / percentile over time
     def _calculate_mean(self):
@@ -1658,6 +1779,15 @@ class NetcdfWindow(NetcdfDataBase):
         self._update_map_markers()
         self._open_or_refresh_timeseries(open_if_closed=False)
 
+    def _remove_all_points(self):
+        """Action ▸ Remove gauges: drop every selected point (all pins) from the map
+        and close the Timeseries window that plots them."""
+        self._displayed_points = []
+        self._clicked = None
+        self._update_map_markers()
+        self._close_ts_window()
+        self.info_label.setText("All gauges removed")
+
     def _update_map_markers(self):
         """Redraw the selected points as NUMBERED pin icons (colour = Timeseries line
         colour, by index)."""
@@ -1700,7 +1830,58 @@ class NetcdfWindow(NetcdfDataBase):
                                  f"Could not read/parse the file:\n{e}")
             return
         self.info_label.setText(f"Loaded GeoJSON: {os.path.basename(path)}")
-        self._js("if(window.addGeoJson) addGeoJson(%s);" % json.dumps(obj))
+        self._add_geojson(obj)
+
+    def _add_geojson(self, obj):
+        """Draw a loaded shape/GeoJSON and remember its points, so a point popup's
+        *Make all points to gauges* can use them (by the index sent to the JS)."""
+        self._geo_points.append(_geojson_points(obj))
+        self._js("if(window.addGeoJson) addGeoJson(%s,%d);"
+                 % (json.dumps(obj), len(self._geo_points) - 1))
+
+    def _gauges_main_window(self):
+        """The main window (owner of the Gauges box) up the parent chain - the
+        viewer may also be opened from Output Explorer."""
+        w = self.parent()
+        while w is not None and not hasattr(w, "gauges_field"):
+            w = w.parent()
+        return w
+
+    def _inside_grid(self, lon, lat):
+        """Whether (lon, lat) lies on the NetCDF grid (half a cell of slack at the
+        edges) - a shape point outside would otherwise snap to an edge cell."""
+        lons = np.asarray(self.lons, dtype=float)
+        lats = np.asarray(self.lats, dtype=float)
+        hx = abs(float(lons[1] - lons[0])) / 2 if lons.size > 1 else 0.0
+        hy = abs(float(lats[1] - lats[0])) / 2 if lats.size > 1 else 0.0
+        return (lons.min() - hx <= lon <= lons.max() + hx
+                and lats.min() - hy <= lat <= lats.max() + hy)
+
+    def _select_points(self, points, what):
+        """Point popup ▸ Make this point a gauge / Make all points to gauges: the
+        points become selected points exactly like mouse-clicked ones - numbered
+        pins (click one to remove it) that the Timeseries / Flow duration / Flow
+        regime actions use. Added to the current selection; a cell that is
+        already selected, or a point off the grid, is skipped."""
+        added = skipped_off = 0
+        last = None
+        for lon, lat in points:
+            if not self._inside_grid(lon, lat):
+                skipped_off += 1
+                continue
+            cell, _lati, _loni = self._cell_of(lon, lat)
+            last = cell
+            if cell not in self._displayed_points:
+                self._displayed_points.append(cell)
+                added += 1
+        if last is not None:
+            self._mark_clicked_cell(*last)
+        self._update_map_markers()
+        self._open_or_refresh_timeseries(open_if_closed=False)
+        msg = f"{what}: {added} point(s) added"
+        if skipped_off:
+            msg += f", {skipped_off} outside the NetCDF grid skipped"
+        self.info_label.setText(msg[0].upper() + msg[1:])
 
     def _load_shape(self):
         """File > Load shape: open an ESRI shapefile and draw it on the map exactly
@@ -1718,7 +1899,7 @@ class NetcdfWindow(NetcdfDataBase):
                                  f"Could not read the shapefile:\n{e}")
             return
         self.info_label.setText(f"Loaded shapefile: {os.path.basename(path)}")
-        self._js("if(window.addGeoJson) addGeoJson(%s);" % json.dumps(obj))
+        self._add_geojson(obj)
 
     def closeEvent(self, event):
         try:

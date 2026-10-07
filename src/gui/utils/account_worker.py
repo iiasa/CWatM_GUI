@@ -30,7 +30,8 @@ OPS = frozenset({
     "export_data", "delete_account", "set_remember", "record_location",
     "get_run_locations", "get_user_locations",
     "academy_complete_level", "academy_reset",
-    "get_shop_items", "buy", "touch_activity",
+    "get_shop_items", "buy", "touch_activity", "claim_reward",
+    "reset_reward",
 })
 
 
