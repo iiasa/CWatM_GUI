@@ -64,6 +64,38 @@ supabase/
                                                an Academy level only the level; meta +
                                                created_at dropped; masked email in the
                                                export
+    20261007140000_field_test_highscore.sql    profiles.field_test_highscore (Academy
+                                               Field Test best score, rpc-only, only
+                                               goes up, no points):
+                                               get_field_test_highscore(),
+                                               field_test_submit_score(p_score)
+    20261007150000_field_test_initials.sql     profiles.field_test_initials (2-3
+                                               capitals, set only with a new
+                                               highscore); field_test_submit_score
+                                               (p_score, p_initials)
+    20261007160000_field_test_record.sql       field_test_record: ONE row, the best
+                                               score of all users + initials, no user
+                                               column; get_field_test_record() public;
+                                               field_test_submit_score also replaces
+                                               it when beaten (row lock)
+    20261008120000_moleflow_badges.sql         profiles.modflow_runs (rpc-only; seeded
+                                               1 for mole owners); record_modflow_run
+                                               (p_runs 1..100), get_moleflow(); tier
+                                               bronze 1 / silver 20 / gold 50, computed
+                                               by _moleflow_tier, each replacing the last
+    20261008130000_feature_badges.sql          profiles.pysnowclim_runs + glacier_runs;
+                                               record_feature_run(p_feature modflow |
+                                               pysnowclim | glacier, p_runs),
+                                               get_feature_badges() - the GUI uses these
+                                               for all three (record_modflow_run /
+                                               get_moleflow stay for older GUIs)
+    20261009120000_feature_runs_distinct.sql   feature badge runs under the point rules:
+                                               feature_run_settings (user, feature,
+                                               fingerprint, day); record_feature_run
+                                               (p_feature, p_meta) - fingerprint,
+                                               min_timesteps, once per setup, daily cap;
+                                               record_modflow_run closed; export adds
+                                               feature_runs
   functions/
     login-with-username/index.ts   username + password -> session
     delete-account/index.ts        delete the caller's account (password re-check)

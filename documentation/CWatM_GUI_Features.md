@@ -467,13 +467,21 @@ percentile bands, save the per-year table as csv, or save the plot as HTML.
 ### Watercycle (Analyse ▸ Watercycle)
 The water balance of a `WaterCycle_areasum_monthtot.csv` as a **sunburst**, over a
 month range slider. **Save CSV** (lower left) stores the numbers behind the plot
-(suggested name `watercycle.csv`), **Save HTML** the plot itself.
+(suggested name `watercycle.csv`), **Save HTML** the plot itself. **Right-click a
+sector** (e.g. Rain, Outputs, Balance) ▸ **Timeseries** to plot that sector month by
+month over the whole file — fluxes in mm/month, storage in mm, river discharge in m³/s.
+**Add to timeseries** (same menu) draws another sector into the last opened one; it is
+greyed out while no Timeseries is open or when that sector is already shown. River
+discharge stays in m³/s only while it is alone — once a second sector joins, it is
+converted to mm/month.
 
 ![Watercycle](figures/screenshot_watercycle.png)
 
 ### Flow Diagram (Analyse ▸ Flow Diagram)
 The same water balance as a **Sankey** flow diagram. **Save CSV** stores one row per
-flow in mm/year (suggested name `flowdiagram.csv`).
+flow in mm/year (suggested name `flowdiagram.csv`). **Right-click a node or a flow** ▸
+**Timeseries** / **Add to timeseries** works as in Watercycle: the monthly series of
+that node or flow in mm/month (the Discharge node in m³/s while it is shown alone).
 
 ![Flow Diagram](figures/screenshot_flowdiagram.png)
 

@@ -1256,12 +1256,34 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             self.open_academy()
 
     def open_academy(self):
-        """Open (or reuse) the CWatM Academy window."""
+        """Open (or reuse) the CWatM Academy window - only with a CWatM account
+        login. Every way in (the menu-bar button, Preferences ▸ Enable CWatM
+        Academy, the start-up auto-open) passes here. ``levels_unlocked`` is the
+        login check: a stored login still being restored counts, and without an
+        account server (no key configured) nobody could log in, so it is open."""
+        if not self.levels_unlocked():
+            self._explain_academy_login()
+            return
         try:
             from src.gui.widgets.academy_window import open_academy
             open_academy(parent=self)
         except Exception as e:
             print(f"Error opening CWatM Academy: {str(e)}", file=sys.stderr)
+
+    def _explain_academy_login(self):
+        """CWatM Academy without a login: say so and offer the login dialog."""
+        answer = QMessageBox.question(
+            self, "CWatM Academy",
+            "CWatM Academy can only be started when you are logged in to your "
+            "CWatM account.\n\nLog in (or register - it is free), then start "
+            "CWatM Academy again.\n\nLog in now?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if answer == QMessageBox.Yes:
+            try:
+                self.open_account()
+            except Exception:
+                log.debug("open_account from the Academy login box failed",
+                          exc_info=True)
 
     def _on_use_tabs_toggled(self, checked):
         """Preferences ▸ Editor & Dates ▸ Use Tabs: persist the choice and show or

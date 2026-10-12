@@ -53,6 +53,20 @@ except Exception as _wc_err:  # pragma: no cover - import guard
     print(f"Watercycle analysis unavailable: {_WC_IMPORT_ERROR}", file=sys.stderr)
 
 
+# Runs after the sunburst is drawn: remembers the wedge under the mouse, so the
+# Qt-native right-click menu (WatercycleWindow._on_web_context_menu) knows which
+# sector was clicked. Plotly replaces {plot_id} with the div id.
+_HOVER_JS = """
+var gd = document.getElementById('{plot_id}');
+window._wcHover = null;
+gd.on('plotly_hover', function (e) {
+    var p = e && e.points && e.points[0];
+    window._wcHover = p ? {label: p.label, parent: p.parent || ''} : null;
+});
+gd.on('plotly_unhover', function () { window._wcHover = null; });
+"""
+
+
 def open_watercycle(parent=None):
     """Prompt for a WaterCycle result .csv file and open the sunburst window.
 
@@ -490,8 +504,13 @@ class WatercycleWindow(PlotlyWindowBase):
         slider_row.addWidget(self.end_lbl)
         layout.addLayout(slider_row)
 
-        # Plot area
+        # Plot area. Right-click is Qt-native (like the NetCDF map): the page only
+        # remembers the wedge under the mouse (_HOVER_JS), _on_web_context_menu asks
+        # for it and offers its Timeseries.
         self.web_view = QWebEngineView()
+        self.web_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.web_view.customContextMenuRequested.connect(self._on_web_context_menu)
+        self._ts_windows = []
         layout.addWidget(self.web_view, 1)
 
         btn_style = """
@@ -550,6 +569,192 @@ class WatercycleWindow(PlotlyWindowBase):
             f"\n{self._date_range_text()}")
         self._rebuild_timer.start()
 
+    # ------------------------------------------------- right-click ▸ Timeseries
+    def _on_web_context_menu(self, pos):
+        """Right-click on the sunburst: ask the page which wedge is under the mouse,
+        then show the menu (asynchronous - runJavaScript answers via a callback)."""
+        global_pos = self.web_view.mapToGlobal(pos)
+        self.web_view.page().runJavaScript(
+            "JSON.stringify(window._wcHover || null)", 0,
+            lambda res: self._show_sector_menu(res, global_pos))
+
+    def _show_sector_menu(self, result, global_pos):
+        import json
+        try:
+            hit = json.loads(result) if result else None
+        except (TypeError, ValueError):
+            hit = None
+        label = hit.get("label") if isinstance(hit, dict) else None
+        sector = None
+        if label is not None and hit.get("parent"):      # the root wedge has no parent
+            if label in getattr(self, "_sectors", {}):
+                sector = label
+        self._sector_menu(sector, global_pos)
+
+    def _sector_menu(self, sector, global_pos):
+        """The right-click menu (Timeseries / Add to timeseries) for ``sector``, or
+        both greyed out when ``sector`` is None. Shared with the Flow Diagram, which
+        supplies its own sectors, _sector_name and _sector_series."""
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        act = menu.addAction("Timeseries", lambda: self._open_sector_timeseries(sector))
+        if sector is None:
+            act.setEnabled(False)
+            act.setToolTip("Right-click on a sector (e.g. Rain) to see its timeseries")
+        else:
+            act.setToolTip(f"Monthly timeseries of '{self._sector_name(sector)}'")
+        target = self._ts_windows[-1] if self._ts_windows else None
+        add = menu.addAction("Add to timeseries",
+                             lambda: self._add_sector_timeseries(sector, target))
+        if target is None:
+            add.setEnabled(False)
+            add.setToolTip("Open a Timeseries of a sector first")
+        elif sector is None:
+            add.setEnabled(False)
+            add.setToolTip("Right-click on a sector (e.g. Rain) to add it")
+        elif self._sector_key(sector) in target._wc_keys:
+            add.setEnabled(False)
+            add.setToolTip(f"'{self._sector_name(sector)}' is already in the timeseries")
+        else:
+            add.setToolTip(f"Add '{self._sector_name(sector)}' to the last opened "
+                           "Timeseries window")
+        menu.setToolTipsVisible(True)
+        menu.exec(global_pos)
+
+    def _sector_name(self, sector):
+        """Legend name of a sector; with several stations it names the station too,
+        so the same sector of two stations can be compared."""
+        name = "Storage" if sector == "" else sector
+        if getattr(self, "_nstations", 1) > 1:
+            name += f" (station {self._station_idx + 1})"
+        return name
+
+    def _sector_key(self, sector):
+        """Identity of a plotted sector: the same wedge of another station is a
+        different series."""
+        return (self._station_idx, sector)
+
+    def _sector_series(self, sector, discharge_mm=False):
+        """(values, unit) - the monthly series behind a sunburst wedge over every
+        month of the csv: fluxes in mm per month, storage as the stored water in mm
+        at the end of the month, the discharge leaf as the monthly mean m³/s (or,
+        with ``discharge_mm``, in mm per month like the fluxes), and Balance =
+        inputs - outputs - storage change (mm per month)."""
+        df = self._df
+        days = self._days_in_month.astype(float)
+        to_mm = 1000.0 / self._cellAreaSum if self._cellAreaSum else 0.0
+        n = len(df)
+
+        def total(comps, kinds):
+            out = np.zeros(n)
+            for col, kind in comps:
+                if kind not in kinds:
+                    continue
+                v = df[col].to_numpy(dtype=float)
+                # Discharge is a monthly total of daily m³/s -> m³, as in the sunburst.
+                out = out + (v * 86400.0 if kind == 'dis' else v)
+            return out * to_mm
+
+        spec = self._sectors[sector]
+        if spec == 'balance':
+            store = total(self._sectors.get("", []), ('store',))
+            dstore = np.diff(store, prepend=np.nan)
+            values = (total(self._sectors.get('Inputs', []), ('flux', 'dis'))
+                      - total(self._sectors.get('Outputs', []), ('flux', 'dis'))
+                      - dstore)
+            return values, "mm/month"
+        kinds = {kind for _col, kind in spec}
+        if kinds == {'dis'} and not discharge_mm:
+            values = sum(df[col].to_numpy(dtype=float) for col, _k in spec) / days
+            return values, "m3/s"
+        if kinds == {'store'}:
+            return total(spec, ('store',)), "mm"
+        return total(spec, ('flux', 'dis')), "mm/month"
+
+    def _open_sector_timeseries(self, sector):
+        if sector is None:
+            return
+        try:
+            from src.gui.widgets.analysis_timeseries import TimeseriesWindow
+            values, unit = self._sector_series(sector)
+            name = self._sector_name(sector)
+            stem = os.path.splitext(os.path.basename(str(self.csv_path)))[0]
+            preloaded = dict(
+                label=f"{stem}_{name}",
+                dates=self._month_strings(),
+                series=[(name, self._as_list(values))],
+                xlocs=[self.lon], ylocs=[self.lat],
+                varname=name, unit=unit, long_name=name, main_legend=name,
+                settings_title=self.settings_title or "",
+            )
+            win = TimeseriesWindow(None, parent=self, preloaded=preloaded)
+        except Exception as e:
+            log.debug("_open_sector_timeseries failed", exc_info=True)
+            QMessageBox.warning(self, "Timeseries",
+                                f"Could not build the timeseries:\n{type(e).__name__}: {e}")
+            return
+        # What "Add to timeseries" needs: the sectors shown (no duplicates), and the
+        # main sector + its station so a lone m³/s discharge can be redone in mm.
+        win._wc_keys = [self._sector_key(sector)]
+        win._wc_names = [name]
+        win._wc_main = (self._station_idx, sector)
+        win.setModal(False)
+        win.setAttribute(Qt.WA_DeleteOnClose)
+        self._ts_windows.append(win)
+        win.finished.connect(lambda _r, w=win: self._ts_windows.remove(w)
+                             if w in self._ts_windows else None)
+        win.show()
+        win.raise_()
+
+    def _month_strings(self):
+        return [d.strftime("%d/%m/%Y") for d in self._month_dates]
+
+    @staticmethod
+    def _as_list(values):
+        return [None if not np.isfinite(v) else float(v) for v in values]
+
+    def _add_sector_timeseries(self, sector, win):
+        """Right-click ▸ Add to timeseries: overlay another sector on the last opened
+        sector Timeseries window. A sector already shown is refused. Discharge is
+        shown in m³/s only while it is alone: added to a window, or a window it
+        started gets a second sector, it is converted to mm/month like the rest."""
+        if sector is None or win is None or win not in self._ts_windows:
+            return
+        key = self._sector_key(sector)
+        if key in win._wc_keys:
+            return
+        try:
+            name = self._sector_name(sector)
+            if win.unit == "m3/s":
+                # The window started with discharge alone: redo it in mm/month.
+                cur = self._station_idx
+                main_station, main_sector = win._wc_main
+                try:
+                    self._select_station(main_station)
+                    main_vals, _u = self._sector_series(main_sector, discharge_mm=True)
+                finally:
+                    self._select_station(cur)
+                main_name = win.series[0][0]
+                win.series = [(main_name, self._as_list(main_vals))]
+                win.unit = "mm/month"
+            values, _unit = self._sector_series(sector, discharge_mm=True)
+            win.compare.append({
+                "name": name,
+                "label": name,
+                "x": win._parse_dates(self._month_strings()),
+                "series": [(name, self._as_list(values))],
+            })
+            win._wc_keys.append(key)
+            win._wc_names.append(name)
+            win.long_name = ", ".join(win._wc_names)
+            win._show_current()
+        except Exception as e:
+            log.debug("_add_sector_timeseries failed", exc_info=True)
+            QMessageBox.warning(self, "Add to timeseries",
+                                f"Could not add the sector:\n{type(e).__name__}: {e}")
+            return
+        win.raise_()
+
     # ------------------------------------------------------ sunburst computation
     def _show_sunburst(self):
         fig = self._build_figure()
@@ -559,7 +764,7 @@ class WatercycleWindow(PlotlyWindowBase):
                 f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
                 f"\n{self._date_range_str}")
         html = fig.to_html(include_plotlyjs=True, full_html=True,
-                           config={"responsive": True})
+                           config={"responsive": True}, post_script=_HOVER_JS)
         # Make the plot fill the whole page so it always matches the web view height
         # exactly (no internal scrollbar, no empty band under the sunburst).
         fill = ("<style>html,body{height:100%;margin:0;padding:0;overflow:hidden;}"
@@ -627,10 +832,15 @@ class WatercycleWindow(PlotlyWindowBase):
         WB = {key: [] for key in keys}
         storeall = 0.0
         discharge = 0.0
+        # Right-click ▸ Timeseries: the csv columns behind each wedge, as
+        # [(column, kind)] with kind 'flux' / 'store' / 'dis' (see _sector_series).
+        sectors = {'Inputs': [], 'Outputs': []}
+        store_comps = []
 
         for var in Vars:
             temp = 0.
             missing = False
+            comps = []
             for ii in range(len(var[0])):
                 unit = var[2][ii]
                 if unit == 'M':
@@ -645,6 +855,7 @@ class WatercycleWindow(PlotlyWindowBase):
                     if col not in df.columns:
                         missing = True
                         break
+                    comps.append((col, 'dis'))
                     tmp = df[col].to_numpy()[flux_start:end_idx + 1]
                     discharge = np.mean(tmp)
                     temp = np.sum(tmp * 86400)
@@ -653,8 +864,9 @@ class WatercycleWindow(PlotlyWindowBase):
                     if col not in df.columns:
                         missing = True
                         break
+                    comps.append((col, var[3]))
                     if var[3] == 'store':
-                        temp = temp + (df[col].to_numpy()[end_idx]
+                        temp = temp +(df[col].to_numpy()[end_idx]
                                        - df[col].to_numpy()[baseline_idx])
                     else:
                         temp1 = df[col].to_numpy()[flux_start:end_idx + 1]
@@ -664,8 +876,14 @@ class WatercycleWindow(PlotlyWindowBase):
 
             if var[3] == 'store':
                 storeall = storeall + temp
+                store_comps.extend(comps)
             else:
                 WB[var[4]].append([var[1], temp, var[3]])
+                # A wedge that is also a parent ('Evapotranspiration', 'Transpiration')
+                # keeps its own columns, exactly like its value in the sunburst.
+                sectors[var[1]] = comps
+                if var[4] in ('Input', 'Output'):
+                    sectors[var[4] + 's'].extend(comps)
 
         WB['Storage'].append(["", storeall, "Storage"])
 
@@ -706,6 +924,10 @@ class WatercycleWindow(PlotlyWindowBase):
         else:
             balance = total_input - (total_output + total_store)
             storetext = "Storage (into)"
+        sectors[storetext] = store_comps
+        sectors[""] = store_comps          # the storage leaf has no label
+        sectors['Balance'] = 'balance'
+        self._sectors = sectors
 
         total_total = total_input + total_output + total_store + abs(balance)
         values_out = [total_total, total_input, total_output, abs(balance), total_store] + values

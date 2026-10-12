@@ -21,6 +21,8 @@ supabase at startup for users who never logged in), ``account/count_runs``
 (Preferences: count my runs, used by the run hook).
 """
 
+import json
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QToolButton, QMessageBox
 
@@ -389,6 +391,7 @@ class AccountMixin:
     def _on_run_recorded(self, entry):
         """run_ledger listener: a run was recorded in the Journal of Runs."""
         self._check_modflow_reward(entry)
+        self._check_feature_runs(entry)
         if not account_runs.qualifies(entry):
             return
         if not self.account_count_runs():
@@ -436,9 +439,158 @@ class AccountMixin:
             QTimer.singleShot(300, self._show_reward_waiting)
 
     def _claim_pending_reward(self):
-        """After a login: claim a reward earned while logged out / offline."""
+        """After a login: claim a reward earned while logged out / offline, and send
+        the feature runs counted meanwhile."""
         if self._settings.value(self._REWARD_PENDING_KEY, False, type=bool):
             self.account_worker().submit("claim_reward", account_shop.MODFLOW_REWARD)
+        self._send_pending_feature_runs()
+
+    # ---- the feature badges: MoleFlow (coupled MODFLOW - bronze comes with the
+    # mole), pySnowClim, Glacier OGGM. Bronze at the first counted run with the
+    # feature on, silver at account_shop.MOLEFLOW_SILVER, gold at MOLEFLOW_GOLD - each
+    # tier replaces the one before. A run counts under the SAME rules as a point for
+    # a run (the server's record_feature_run): it qualifies like one (account_runs),
+    # carries its settings fingerprint and enough timesteps, a setup counts once per
+    # feature, and there is a daily cap. -------------------------------------------
+    _FEATURE_QUEUE_KEY = "account/feature_runs_queue"     # [[feature, meta], ...]
+    _OLD_PENDING_KEYS = ("account/modflow_runs_pending",  # counts without a fingerprint
+                         "account/feature_runs_pending/")
+    _FEATURE_QUEUE_MAX = 200
+
+    def _check_feature_runs(self, entry):
+        """A run with a feature on: sent like a run for points - only a qualifying
+        one, only while "Count my full CWatM runs" is on; logged out / offline it is
+        kept here (with its fingerprint) for the next login."""
+        if not account_config.is_configured() or not account_runs.qualifies(entry):
+            return
+        if not self.account_count_runs():
+            return
+        meta = account_runs.run_meta(entry, GUI_VERSION)
+        for feature in account_shop.FEATURE_BADGES:
+            if not entry.get(feature):
+                continue
+            if self._account_state == "logged_in":
+                self._submit_feature_run(feature, meta)
+            else:
+                self._queue_feature_runs([(feature, meta)])
+
+    def _feature_queue(self):
+        try:
+            data = json.loads(self._settings.value(self._FEATURE_QUEUE_KEY, "[]") or "[]")
+        except (TypeError, ValueError):
+            data = []
+        return [(f, m) for f, m in data
+                if f in account_shop.FEATURE_BADGES and isinstance(m, dict)]
+
+    def _queue_feature_runs(self, items):
+        queue = (self._feature_queue() + list(items))[-self._FEATURE_QUEUE_MAX:]
+        self._settings.setValue(self._FEATURE_QUEUE_KEY,
+                                json.dumps([[f, m] for f, m in queue]))
+
+    def _submit_feature_run(self, feature, meta):
+        # the worker answers in submit order: the first in flight is the next answer
+        if not hasattr(self, "_feature_in_flight"):
+            self._feature_in_flight = []
+        self._feature_in_flight.append((feature, meta))
+        self.account_worker().submit("record_feature_run", feature, meta)
+
+    def _recover_old_pending(self):
+        """Runs kept as bare counts (before the fingerprint rule) are looked up in the
+        Journal of Runs - the newest qualifying runs with that feature - and queued
+        with their fingerprints; the server then applies the rules to them."""
+        counts = {}
+        old = self._settings.value(self._OLD_PENDING_KEYS[0], 0, type=int)
+        if old > 0:
+            counts["modflow"] = old
+        self._settings.remove(self._OLD_PENDING_KEYS[0])
+        for feature in account_shop.FEATURE_BADGES:
+            key = self._OLD_PENDING_KEYS[1] + feature
+            n = self._settings.value(key, 0, type=int)
+            if n > 0:
+                counts[feature] = counts.get(feature, 0) + n
+            self._settings.remove(key)
+        if not counts:
+            return
+        entries = run_ledger.load_entries()            # newest first
+        items = []
+        for feature, n in counts.items():
+            runs = [e for e in entries if e.get(feature) and account_runs.qualifies(e)]
+            items += [(feature, account_runs.run_meta(e, GUI_VERSION)) for e in runs[:n]]
+        log.info("feature runs from the old pending counts: %s -> %d queued",
+                 counts, len(items))
+        if items:
+            self._queue_feature_runs(items)
+
+    def _send_pending_feature_runs(self):
+        self._recover_old_pending()
+        queue = self._feature_queue()
+        self._settings.remove(self._FEATURE_QUEUE_KEY)
+        for feature, meta in queue:
+            self._submit_feature_run(feature, meta)
+
+    # why a run did not count - the same reasons as for a point
+    _FEATURE_NOT_COUNTED = {
+        "same_settings": "these settings were counted for it already - change "
+                         "something in the setup to count a run again",
+        "too_short": "the run was too short",
+        "daily_limit": "the daily limit of counted runs is reached",
+        "no_settings_hash": "the run has no settings fingerprint",
+    }
+
+    def _on_feature_run_answer(self, result):
+        if getattr(self, "_feature_in_flight", None):
+            self._feature_in_flight.pop(0)
+        result = result or {}
+        feature, tier = result.get("feature"), result.get("tier")
+        if feature not in account_shop.FEATURE_BADGES:
+            return
+        name, _prefix, needs = account_shop.FEATURE_BADGES[feature]
+        reason = self._FEATURE_NOT_COUNTED.get(result.get("status"))
+        if reason:
+            self._account_note(f"CWatM account: this run with {needs} did not count "
+                               f"for the {name} badge - {reason}.")
+            return
+        if not (result.get("new_tier") and tier):
+            return
+        runs = result.get("runs")
+        self._account_note(f"CWatM account: the {tier} {name} badge is yours "
+                           f"({runs} runs with {needs})!")
+        # the MoleFlow bronze is announced together with the mole
+        if not (feature == "modflow" and tier == "bronze"):
+            QTimer.singleShot(300, lambda f=feature, t=tier, n=runs:
+                              self._show_feature_badge(f, t, n))
+
+    def _on_feature_run_failed(self, code):
+        # not counted: kept on this computer, sent again at the next login
+        in_flight = getattr(self, "_feature_in_flight", None)
+        if in_flight:
+            self._queue_feature_runs([in_flight.pop(0)])
+        log.info("feature run not recorded: %s", code)
+
+    def _show_feature_badge(self, feature, tier, runs):
+        from src.gui.utils.badge_images import badge_pixmap
+        name, _prefix, needs = account_shop.FEATURE_BADGES[feature]
+        if tier == "bronze":
+            text = (f"Congratulations on your first successful run with {needs}!\n\n"
+                    f"You earned the bronze {name} badge. With "
+                    f"{account_shop.MOLEFLOW_SILVER} such runs it turns silver, with "
+                    f"{account_shop.MOLEFLOW_GOLD} gold.")
+        else:
+            text = (f"Congratulations - {runs} successful runs with {needs}!\n\n"
+                    f"You earned the {tier} {name} badge. It replaces your "
+                    f"{'bronze' if tier == 'silver' else 'silver'} one"
+                    + (f" - the gold badge comes at {account_shop.MOLEFLOW_GOLD} runs."
+                       if tier == "silver" else f" - the highest {name} badge."))
+        box = QMessageBox(self)
+        box.setWindowTitle(f"The {tier} {name} badge")
+        box.setText(text + "\n\nSee it in the account window ▸ Addition.")
+        pm = badge_pixmap(account_shop.feature_badge_image(feature, tier), 128,
+                          dpr=self.devicePixelRatioF())
+        if pm is not None:
+            box.setIconPixmap(pm)
+        else:
+            box.setIcon(QMessageBox.Information)
+        box.exec()
 
     def _on_reward_answer(self, result):
         result = result or {}
@@ -502,6 +654,10 @@ class AccountMixin:
             "As a reward you get the Mole. Like MODFLOW, it lives below the surface "
             "and knows every groundwater layer - it cannot be bought in the Shop, "
             "only this run earns it.\n\n"
+            f"You also get the bronze MoleFlow badge. With "
+            f"{account_shop.MOLEFLOW_SILVER} runs with coupled MODFLOW it turns "
+            f"silver, with {account_shop.MOLEFLOW_GOLD} gold (account window ▸ "
+            "Addition).\n\n"
             "The Mole now runs along your live discharge plot. You can change the "
             "animal in Preferences ▸ Display ▸ Select animal.")
 
@@ -747,6 +903,8 @@ class AccountMixin:
             self._on_reward_answer(result)
         elif op == "reset_reward":
             self._on_reward_reset(result)
+        elif op == "record_feature_run":
+            self._on_feature_run_answer(result)
         elif op in _STATUS_OPS and isinstance(result, dict) and "profile" in result:
             self._set_account_status(result)
             if op in _LOGIN_OPS:
@@ -788,6 +946,11 @@ class AccountMixin:
             return
         if op == "record_location":
             log.info("run location not recorded: %s", code)   # best-effort, no retry
+            return
+        if op == "record_feature_run":
+            self._on_feature_run_failed(code)
+            if code in ("session_expired", "not_logged_in"):
+                self._clear_account()
             return
         if op in ("academy_complete_level", "academy_reset"):
             self._account_note(f"CWatM Academy: the progress could not be saved to "

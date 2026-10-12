@@ -38,6 +38,69 @@ for _name, _code in ANIMAL_CODES.items():
 # a reward item is never sold: claim_reward(<reward>) gives it once
 MODFLOW_REWARD = "modflow_first_run"     # -> the mole
 MODFLOW_REWARD_ANIMAL = "Mole"
+# The feature badges for successful runs with a model feature on - bronze at the
+# first run, silver at MOLEFLOW_SILVER, gold at MOLEFLOW_GOLD; must match the server's
+# _moleflow_tier (migration ..._moleflow_badges.sql). One tier replaces the other.
+MOLEFLOW_SILVER = 20
+MOLEFLOW_GOLD = 50
+MOLEFLOW_TIERS = ("bronze", "silver", "gold")
+# feature (= run_ledger entry flag = server p_feature) -> (badge name, image prefix
+# in assets/badges: <prefix>_<tier>_badge.png, what a run needs)
+FEATURE_BADGES = {
+    "modflow":    ("MoleFlow", "moleflow", "coupled MODFLOW"),
+    "pysnowclim": ("pySnowClim", "pysnowclim", "pySnowClim"),
+    "glacier":    ("Glacier OGGM", "glacier_oggm", "glaciers"),
+}
+
+
+# The CWatM Academy Field Test badge - computed from the scores alone, nothing extra
+# is stored: bronze = played (a best above 0), silver = a best above
+# FIELD_TEST_SILVER points, gold = holding the record of all users (the own best is
+# the record) - lost again when someone beats it.
+FIELD_TEST_SILVER = 10000
+
+
+def field_test_tier(best, record):
+    """bronze | silver | gold | None from the own best and the record of all users."""
+    best, record = int(best or 0), int(record or 0)
+    if best <= 0:
+        return None
+    if record > 0 and best >= record:
+        return "gold"
+    if best > FIELD_TEST_SILVER:
+        return "silver"
+    return "bronze"
+
+
+def field_test_badge_image(tier):
+    """assets/badges/<code>.png of a Field Test badge tier."""
+    return f"cwatm_fieldtest_{tier}_badge"
+
+
+def feature_badge_image(feature, tier):
+    """The image code (assets/badges/<code>.png) of a feature badge tier."""
+    return f"{FEATURE_BADGES[feature][1]}_{tier}_badge"
+
+
+def moleflow_tier(runs):
+    """bronze (1 run, with the mole) | silver | gold | None for a run count."""
+    runs = int(runs or 0)
+    if runs >= MOLEFLOW_GOLD:
+        return "gold"
+    if runs >= MOLEFLOW_SILVER:
+        return "silver"
+    return "bronze" if runs >= 1 else None
+
+
+def moleflow_next(runs):
+    """(next tier, runs still needed) - (None, 0) at gold."""
+    runs = int(runs or 0)
+    for tier, need in (("bronze", 1), ("silver", MOLEFLOW_SILVER), ("gold", MOLEFLOW_GOLD)):
+        if runs < need:
+            return tier, need - runs
+    return None, 0
+
+
 LEVEL_CODES = {"Advanced": "advanced", "Expert": "expert"}
 
 # item_state() answers

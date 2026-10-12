@@ -98,3 +98,52 @@ def test_a_completed_level_stays_available(qapp, monkeypatch, level, expected):
     assert w.complete_button.text().startswith("Completed ✓ - ")
     w._on_complete_clicked()
     assert called == [expected] and marked == []
+
+
+# ---- the Academy as a whole needs a login --------------------------------------------
+
+class _Host:
+    """The bits of the main window open_academy touches."""
+
+    def __init__(self, unlocked):
+        self._unlocked = unlocked
+        self.login_opened = 0
+        self.explained = 0
+
+    def levels_unlocked(self):
+        return self._unlocked
+
+    def open_account(self):
+        self.login_opened += 1
+
+
+@pytest.mark.parametrize("answer, login_opened", [("Yes", 1), ("No", 0)])
+def test_academy_without_login_shows_a_box_and_does_not_open(
+        qapp, monkeypatch, answer, login_opened):
+    from src.gui.components import main_window as mwm
+    from src.gui.widgets import academy_window
+    asked, opened = [], []
+    monkeypatch.setattr(mwm.QMessageBox, "question",
+                        lambda *a, **k: (asked.append(a[2]),
+                                         getattr(mwm.QMessageBox, answer))[1])
+    monkeypatch.setattr(academy_window, "open_academy",
+                        lambda parent=None: opened.append(parent))
+    host = _Host(unlocked=False)
+    host._explain_academy_login = lambda: mwm.CWatMMainWindow._explain_academy_login(host)
+    mwm.CWatMMainWindow.open_academy(host)
+    assert opened == []
+    assert len(asked) == 1 and "only be started when you are logged in" in asked[0]
+    assert host.login_opened == login_opened
+
+
+def test_academy_with_login_opens(qapp, monkeypatch):
+    from src.gui.components import main_window as mwm
+    from src.gui.widgets import academy_window
+    opened = []
+    monkeypatch.setattr(mwm.QMessageBox, "question",
+                        lambda *a, **k: pytest.fail("no box when logged in"))
+    monkeypatch.setattr(academy_window, "open_academy",
+                        lambda parent=None: opened.append(parent))
+    host = _Host(unlocked=True)
+    mwm.CWatMMainWindow.open_academy(host)
+    assert opened == [host]

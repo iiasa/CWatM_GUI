@@ -119,6 +119,14 @@ class _CheckWorker(QThread):
             if self._netcdf:
                 args.append(self._netcdf)
             import cwatm.run_cwatm as run_cwatm      # lazy (§4.1)
+            # run_cwatm.main clears CWatM's globals but not its Flags (only mainwarm
+            # does, via calibclear). An earlier in-process `mainwarm -vgm` (coordinate
+            # MaskMap: gauge check / Show Basin) leaves Flags['maskmap'] set, so the
+            # model's initial() returns before readmeteo.initial and dynamic() fails
+            # with "'Variables' object has no attribute 'preMaps'".
+            from cwatm.management_modules.globals import Flags
+            for key in Flags:
+                Flags[key] = False
             success, checkinfo = run_cwatm.main(self._settings, args)
         except SystemExit as e:
             error = f"CWatM exited early (code {e.code})"

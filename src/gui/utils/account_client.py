@@ -520,6 +520,51 @@ class AccountClient:
         self._session()
         return self._rpc("academy_reset") or {}
 
+    def get_moleflow(self):
+        """The MoleFlow badge: {modflow_runs, tier: bronze | silver | gold | None}."""
+        self._session()
+        return self._rpc("get_moleflow") or {}
+
+    def record_modflow_run(self, runs=1):
+        """Count successful coupled-MODFLOW runs (``runs`` > 1 for runs kept while
+        logged out). {modflow_runs, tier, previous_tier, new_tier}."""
+        self._session()
+        return self._rpc("record_modflow_run", {"p_runs": int(runs)}) or {}
+
+    def get_feature_badges(self):
+        """The feature badges: {modflow|pysnowclim|glacier: {runs, tier}}."""
+        self._session()
+        return self._rpc("get_feature_badges") or {}
+
+    def record_feature_run(self, feature, meta):
+        """A successful run with a feature on (modflow / pysnowclim / glacier), with
+        the same ``meta`` as award_run ({settings_hash, timesteps}) - it counts under
+        the same rules: new settings only, long enough, a daily cap.
+        {status, feature, runs, tier, previous_tier, new_tier}."""
+        self._session()
+        return self._rpc("record_feature_run",
+                         {"p_feature": str(feature), "p_meta": dict(meta or {})}) or {}
+
+    def get_field_test_record(self):
+        """The CWatM Academy Field Test record of all users (public - no login
+        needed). {record_score, record_initials}."""
+        return self._rpc("get_field_test_record") or {}
+
+    def get_field_test_highscore(self):
+        """The own Field Test best kept in the profile, plus the record of all
+        users. {highscore, initials, record_score, record_initials}."""
+        self._session()
+        return self._rpc("get_field_test_highscore") or {}
+
+    def field_test_submit_score(self, score, initials=None):
+        """A Field Test score -> the profile keeps the better one, and the record of
+        all users is replaced when beaten - both with the 2-3 initials typed for it.
+        {status: new_highscore | kept | invalid_score, highscore, initials,
+        record_status: new_record | kept, record_score, record_initials}."""
+        self._session()
+        return self._rpc("field_test_submit_score",
+                         {"p_score": int(score), "p_initials": initials or None}) or {}
+
     def touch_activity(self):
         """A login = CWatM GUI was used: the server records the point decay due
         since the last use, then restarts the clock. Returns the status (get_status

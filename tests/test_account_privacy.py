@@ -126,6 +126,46 @@ def test_notice_describes_the_point_decay(notice):
     assert "time of your last login" in notice
 
 
+def test_notice_describes_the_field_test_highscore(notice):
+    from src.gui.widgets import academy_field_test as ft
+    assert "field_test_submit_score" in ft._HIGHSCORE_OPS
+    # the public record names no account: its table has no user column
+    sql = open(os.path.join(ROOT, "supabase", "migrations",
+                            "20261007160000_field_test_record.sql"),
+               encoding="utf-8").read()
+    table = sql.split("create table public.field_test_record")[1].split(");")[0]
+    assert "user" not in table
+    for phrase in ("Field Test highscore", "it earns no points",
+                   "the 2 to 3 initials you typed for it",
+                   "The Field Test record of all users",
+                   "without your name or username",
+                   "also after your account is deleted",
+                   "the highscore stays on your computer only"):
+        assert phrase in notice, phrase
+
+
+def test_notice_describes_the_moleflow_count(notice):
+    from src.gui.utils import account_shop
+    assert (account_shop.MOLEFLOW_SILVER, account_shop.MOLEFLOW_GOLD) == (20, 50)
+    for phrase in ("successful runs with coupled MODFLOW, with pySnowClim and with "
+                   "glaciers (one number each)",
+                   "silver at 20, gold at 50", "sent at your next login"):
+        assert phrase in notice, phrase
+    # every feature that is counted is named in the notice
+    assert set(account_shop.FEATURE_BADGES) == {"modflow", "pysnowclim", "glacier"}
+    # what a feature run stores: the feature, the fingerprint, the day
+    assert ("which feature (MODFLOW, pySnowClim or glaciers), the fingerprint of the "
+            "model settings") in notice
+    assert "the same settings count once per feature" in notice
+    sql = open(os.path.join(ROOT, "supabase", "migrations",
+                            "20261009120000_feature_runs_distinct.sql"),
+               encoding="utf-8").read()
+    table = sql.split("create table public.feature_run_settings")[1].split(");")[0]
+    columns = {line.split()[0] for line in table.strip("( \n").splitlines()
+               if line.strip() and not line.strip().startswith("primary key")}
+    assert columns == {"user_id", "feature", "settings_hash", "counted_on"}
+
+
 def test_notice_describes_the_run_locations(notice):
     for phrase in ("first gauge", "0.001°", "anonymous", "cannot be shown, exported or "
                    "deleted per person", "Record the location of my runs",

@@ -333,13 +333,21 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         self.stack.setCurrentIndex(_PAGE_BROWSER)
 
     def _replay_level1(self):
-        """Level 1 again: the outlet-picker map (needs a loaded settings file, like
-        the first time). Picking an outlet saves it and returns to the browser."""
-        if self.mw is not None and not self.mw.file_manager.has_file_loaded():
-            self._show_load_settings_prompt()
-            return
-        self.outlet_map.reset()
-        self.stack.setCurrentIndex(_PAGE_MAP)
+        """Level 1 again: it was done before, so its first steps - loading a
+        settings file, the Danube outlet map, the Torus guide and the mission
+        briefing - are skipped and the learner is straight in the Field Test. It
+        never touches the settings file; the learner stays in the level browser."""
+        from src.gui.widgets.academy_field_test import BasinFieldTestWindow
+        old = getattr(self, "_replay_field_test", None)
+        if old is not None:
+            try:
+                old.close()
+            except RuntimeError:
+                log.debug("previous Field Test already gone", exc_info=True)
+        self._replay_field_test = BasinFieldTestWindow(main_window=self.mw)
+        self._replay_field_test.show()
+        self._replay_field_test.raise_()
+        self._replay_field_test.activateWindow()
 
     def _show_load_settings_prompt(self):
         """Level 1's actual first step: there is nothing to pick an outlet
@@ -500,7 +508,8 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
             self.complete_button.setEnabled(True)
             self.complete_button.setText("Log in to continue")
         elif already and level_id in (1, 2):
-            # the interactive levels (outlet map, walkthrough) can be replayed
+            # the interactive levels can be replayed (Level 1 straight into its
+            # Field Test, Level 2 the walkthrough)
             self.complete_button.setText("Completed ✓ - do it again")
         elif already:
             self.complete_button.setText("Completed ✓ - next level")

@@ -244,6 +244,22 @@ _GRADIENT_JS = """
 """
 
 
+# Right-click hit test (FlowDiagramWindow._on_web_context_menu): the node or link
+# under the click point (CSS px), read from plotly's element data like onClick above.
+_HIT_JS = """
+(function () {
+  var el = document.elementFromPoint(%f, %f);
+  if (!el || !el.closest) return null;
+  var n = el.closest('g.sankey-node'), l = el.closest('path.sankey-link');
+  if (n && n.__data__ && n.__data__.node)
+    return JSON.stringify({kind: 'node', i: n.__data__.node.pointNumber});
+  if (l && l.__data__ && l.__data__.link)
+    return JSON.stringify({kind: 'link', i: l.__data__.link.pointNumber});
+  return null;
+})();
+"""
+
+
 def build_sankey(nodes, links, valueformat=".1f", lightness_override=None):
     """Build the Sankey figure and the per-link gradient stop pairs.
 
@@ -452,6 +468,15 @@ class FlowDiagramWindow(PlotlyWindowBase):
     _prev_station = WatercycleWindow._prev_station
     _next_station = WatercycleWindow._next_station
     _update_station_nav = WatercycleWindow._update_station_nav
+    # Right-click ▸ Timeseries / Add to timeseries - the same menu and Timeseries
+    # handling as the sunburst; only the sectors (nodes + links) and their series
+    # are the Sankey's own (_sector_from_hit, _sector_name, _sector_series).
+    _sector_menu = WatercycleWindow._sector_menu
+    _sector_key = WatercycleWindow._sector_key
+    _open_sector_timeseries = WatercycleWindow._open_sector_timeseries
+    _add_sector_timeseries = WatercycleWindow._add_sector_timeseries
+    _month_strings = WatercycleWindow._month_strings
+    _as_list = staticmethod(WatercycleWindow._as_list)
 
     def __init__(self, csv_path, parent=None):
         super().__init__(parent)
@@ -529,8 +554,12 @@ class FlowDiagramWindow(PlotlyWindowBase):
         slider_row.addWidget(self.end_lbl)
         layout.addLayout(slider_row)
 
-        # Plot area
+        # Plot area. Right-click is Qt-native (like the Watercycle sunburst); the
+        # page is asked which node / link sits under the click (_on_web_context_menu).
         self.web_view = QWebEngineView()
+        self.web_view.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.web_view.customContextMenuRequested.connect(self._on_web_context_menu)
+        self._ts_windows = []
         layout.addWidget(self.web_view, 1)
 
         # Save HTML button (same style/behaviour as the Watercycle window)
@@ -593,6 +622,75 @@ class FlowDiagramWindow(PlotlyWindowBase):
             f"\n{self._date_range_text()}")
         self._rebuild_timer.start()
 
+    # ------------------------------------------------- right-click ▸ Timeseries
+    def _on_web_context_menu(self, pos):
+        """Right-click: hit-test the page at the click (the node / link element's
+        plotly data, as the click-to-focus script does), then show the menu."""
+        global_pos = self.web_view.mapToGlobal(pos)
+        zoom = self.web_view.zoomFactor() or 1.0
+        js = _HIT_JS % (pos.x() / zoom, pos.y() / zoom)
+        self.web_view.page().runJavaScript(
+            js, 0, lambda res: self._sector_menu(self._sector_from_hit(res), global_pos))
+
+    def _sector_from_hit(self, result):
+        """('node', name) / ('link', name, source, target) for the element hit, or
+        None. Indices are mapped through the figure on screen (_fig_nodes/_fig_links)."""
+        try:
+            hit = json.loads(result) if result else None
+            if not isinstance(hit, dict):
+                return None
+            i = int(hit["i"])
+            if hit.get("kind") == "node":
+                return ("node", self._fig_nodes[i])
+            if hit.get("kind") == "link":
+                return ("link",) + tuple(self._fig_links[i])
+        except (TypeError, ValueError, KeyError, IndexError):
+            log.debug("_sector_from_hit: no sector", exc_info=True)
+        return None
+
+    def _sector_name(self, sector):
+        if sector[0] == "node":
+            name = sector[1]
+        else:
+            name = f"{sector[1]} ({sector[2]} → {sector[3]})"
+        if getattr(self, "_nstations", 1) > 1:
+            name += f" (station {self._station_idx + 1})"
+        return name
+
+    def _sector_series(self, sector, discharge_mm=False):
+        """(values, unit): the monthly series of a Sankey node or link over every
+        month of the csv, in mm/month - the diagram's own formulas
+        (_build_balance_links) evaluated month by month. A node is its incoming sum,
+        or its outgoing sum for a pure source, as in build_sankey. The Discharge
+        node is shown in m³/s while it is alone (``discharge_mm`` False)."""
+        df = self._df
+        cell_area = self._cellAreaSum
+        cols = list(df.columns[1:])
+        data = {c: pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
+                for c in cols}
+        to_mm = 1000.0 / cell_area if cell_area else 0.0
+        values = np.zeros(self._n)
+        for m in range(self._n):
+            bal = defaultdict(float)
+            for c in cols:
+                bal[c] = data[c][m] * to_mm
+            bal["discharge_m3s-1"] *= 86400.0
+            bal["avgdischarge_m3s-1"] *= 86400.0
+            _nodes, links = _build_balance_links(bal)
+            if sector[0] == "link":
+                values[m] = sum(lk[3] for lk in links
+                                if (lk[0], lk[1], lk[2]) == sector[1:])
+            else:
+                node = sector[1]
+                inc = sum(lk[3] for lk in links if lk[2] == node)
+                out = sum(lk[3] for lk in links if lk[1] == node)
+                values[m] = inc if inc > 0 else out
+        if sector == ("node", "Discharge") and not discharge_mm:
+            # mm over the basin per month -> mean m³/s of that month
+            secs = self._days_in_month.astype(float) * 86400.0
+            return values / to_mm / secs if to_mm else values, "m3/s"
+        return values, "mm/month"
+
     # -------------------------------------------------------- Sankey computation
     def _show_sankey(self):
         fig, grad_pairs = self._build_figure()
@@ -638,6 +736,9 @@ class FlowDiagramWindow(PlotlyWindowBase):
         bal["avgdischarge_m3s-1"] *= 86400.0
 
         nodes, links = _build_balance_links(bal)
+        # Right-click: plotly's node / link pointNumber -> sector (_sector_from_hit)
+        self._fig_nodes = [n["name"] for n in nodes]
+        self._fig_links = [(lk[0], lk[1], lk[2]) for lk in links]
         # Save CSV: one row per flow of the diagram, long-term mm/yr
         name = self.settings_title or os.path.basename(str(self.csv_path))
         self._csv_data = (

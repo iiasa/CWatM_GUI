@@ -410,21 +410,34 @@ def settings_gauge(content):
     return (lon, lat)
 
 
-def settings_modflow(content):
-    """True when the settings switch coupled MODFLOW on (``modflow_coupling`` - the
-    last such line counts, like CWatM's flat binding; True/1/yes/on, an inline
-    comment ignored). Pure - tested."""
+def settings_option_on(content, option):
+    """True when the settings switch ``option`` on (the last such line counts, like
+    CWatM's flat binding; True/1/yes/on, an inline comment ignored, the key compared
+    case-insensitively). Pure - tested."""
     if not content:
         return False
+    option = option.lower()
     value = None
     for line in content.splitlines():
         s = line.split("#", 1)[0].strip()
         if "=" not in s or s.startswith((";", "[")):
             continue
         key, val = s.split("=", 1)
-        if key.strip().lower() == "modflow_coupling":
+        if key.strip().lower() == option:
             value = val.strip().lower()
     return value in ("true", "1", "yes", "on")
+
+
+def settings_modflow(content):
+    """True when the settings switch coupled MODFLOW on (``modflow_coupling``)."""
+    return settings_option_on(content, "modflow_coupling")
+
+
+# entry flag -> the [OPTIONS] switch: a successful run with it on counts for that
+# feature's badge (CWatM account - account_ui._check_feature_runs)
+FEATURE_OPTIONS = {"modflow": "modflow_coupling",
+                   "pysnowclim": "usepySnowClim",
+                   "glacier": "includeGlaciers"}
 
 
 def make_entry(settings_path, title, pathout, started_at, success, last_dis,
@@ -463,9 +476,11 @@ def make_entry(settings_path, title, pathout, started_at, success, last_dis,
     gauge = settings_gauge(content)
     if gauge:
         entry["gauge"] = list(gauge)
-    # Coupled MODFLOW - the first successful one earns the mole (CWatM account).
-    if settings_modflow(content):
-        entry["modflow"] = True
+    # Coupled MODFLOW (the first successful one earns the mole), pySnowClim, glaciers:
+    # their successful runs count for the feature badges (CWatM account).
+    for flag, option in FEATURE_OPTIONS.items():
+        if settings_option_on(content, option):
+            entry[flag] = True
     # Where this run's output was written, so the journal can show *why* it failed
     # instead of only *that* it failed.
     if log_path:

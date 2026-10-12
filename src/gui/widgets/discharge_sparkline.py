@@ -42,7 +42,7 @@ USE_IMAGE_ANIMALS = True
 _DEFAULT_IMAGE_ANIMAL = "Trout"
 # True = the selected animal is the newest-point marker all the time; False = it
 # appears only now and then (random timer), the dot otherwise.
-animals_always = True
+animals_always = False
 
 _IMAGE_BASE_SIZE = 32     # <name>_32x32.png is listed as plain '<Name>'
 _image_animals = None     # [(name, file path)], scanned once

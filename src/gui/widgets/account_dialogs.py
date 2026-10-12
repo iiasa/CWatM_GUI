@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QForm
                                QStackedWidget, QProgressBar, QFrame, QMessageBox,
                                QInputDialog, QFileDialog, QTableWidget,
                                QTableWidgetItem, QHeaderView, QAbstractItemView,
-                               QGridLayout)
+                               QGridLayout, QScrollArea)
 
 from src.gui.utils import theme, account_config, i18n, account_validation as V
 from src.gui.utils.gui_log import get_logger
@@ -113,12 +113,15 @@ def badge_tile(parent, code, name, size, faded=False, caption=None, on_click=Non
 
 
 class BadgeViewer(QDialog):
-    """An earned badge, large: the medal at BIG px, its name, when it was earned and
-    how many points it needed. A click anywhere or Esc closes it."""
+    """A badge, large: the medal at BIG px, its name, when it was earned and how
+    many points it needed - or, for the additional badges, ``lines`` of text (its
+    tier and run count, how it is earned); ``faded`` for one not earned yet. A
+    click anywhere or Esc closes it."""
 
     BIG = 320            # px - the source pictures are 350 px, so it stays sharp
 
-    def __init__(self, parent, code, name, awarded_at=None, points_required=None):
+    def __init__(self, parent, code, name, awarded_at=None, points_required=None,
+                 lines=(), faded=False):
         super().__init__(parent)
         self.setWindowTitle(name)
         self.setAttribute(Qt.WA_DeleteOnClose)
@@ -126,13 +129,22 @@ class BadgeViewer(QDialog):
         lay.setContentsMargins(24, 20, 24, 18)
         lay.setSpacing(8)
         self.code = code
-        self.medal = _medal_label(self, code, self.BIG)
+        self.medal = _medal_label(self, code, self.BIG, faded=faded)
         lay.addWidget(self.medal, 0, Qt.AlignHCenter)
         title = QLabel(name)
         title.setAlignment(Qt.AlignCenter)
         title.setStyleSheet(f"color: {theme.c('accent')}; font-size: 22px; "
                             "font-weight: 700;")
         lay.addWidget(title)
+        for line in lines:
+            if not line:
+                continue
+            text = QLabel(line)
+            text.setAlignment(Qt.AlignCenter)
+            text.setWordWrap(True)
+            text.setMaximumWidth(self.BIG + 40)
+            text.setStyleSheet(f"color: {theme.c('text_gray')};")
+            lay.addWidget(text, 0, Qt.AlignHCenter)
         when = _format_date(awarded_at)
         if when:
             note = QLabel(f"Earned on {when}")
@@ -637,25 +649,36 @@ class AccountWindow(_AccountDialogBase):
         super().__init__(mw, "CWatM account")
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 14, 16, 12)
+        # everything above the status line scrolls, so the window can be shorter
+        # than its content; the status, privacy link and buttons stay in view
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        content = QWidget()
+        body = QVBoxLayout(content)
+        body.setContentsMargins(0, 0, 8, 0)      # room for the scroll bar
+        self._scroll.setWidget(content)
+        outer.addWidget(self._scroll, 1)
 
         self.lbl_name = QLabel("")
         self.lbl_name.setObjectName("accHead")
         self.lbl_email = self._note("")
-        outer.addWidget(self.lbl_name)
-        outer.addWidget(self.lbl_email)
+        body.addWidget(self.lbl_name)
+        body.addWidget(self.lbl_email)
 
         self.lbl_points = QLabel("")
-        outer.addWidget(self.lbl_points)
+        body.addWidget(self.lbl_points)
         self.progress = QProgressBar()
         self.progress.setTextVisible(True)
-        outer.addWidget(self.progress)
+        body.addWidget(self.progress)
         # point decay: the rule, and the last decay if there was one
         self.lbl_decay = self._note("")
-        outer.addWidget(self.lbl_decay)
+        body.addWidget(self.lbl_decay)
         self.lbl_badges = QLabel("")
         self.lbl_badges.setObjectName("accBadges")
         self.lbl_badges.setWordWrap(True)
-        outer.addWidget(self.lbl_badges)
+        body.addWidget(self.lbl_badges)
         # the earned badges as medal images (+ the next one, faded)
         self.badge_host = QWidget()
         self.badge_grid = QGridLayout(self.badge_host)
@@ -663,8 +686,18 @@ class AccountWindow(_AccountDialogBase):
         self.badge_grid.setHorizontalSpacing(10)
         self.badge_grid.setVerticalSpacing(8)
         self.badge_grid.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        outer.addWidget(self.badge_host)
-        outer.addWidget(self._line())
+        body.addWidget(self.badge_host)
+        # the additional badges + the Field Test scoring, in a window of their own
+        addition_row = QHBoxLayout()
+        self.addition_button = QPushButton("Addition")
+        self.addition_button.setAutoDefault(False)
+        self.addition_button.setToolTip(
+            "Additional badges and your scoring in the CWatM Academy Field Test")
+        self.addition_button.clicked.connect(self._open_additions)
+        addition_row.addWidget(self.addition_button)
+        addition_row.addStretch(1)
+        body.addLayout(addition_row)
+        body.addWidget(self._line())
 
         form = QFormLayout()
         self.ed_username = QLineEdit()
@@ -681,29 +714,29 @@ class AccountWindow(_AccountDialogBase):
         form.addRow("Institute:", self.ed_institute)
         form.addRow("Your location - latitude:", self.ed_lat)
         form.addRow("Your location - longitude:", self.ed_lon)
-        outer.addLayout(form)
+        body.addLayout(form)
         self.cb_leaderboard = QCheckBox(
             "Show me on the leaderboard (username, country and points only)")
-        outer.addWidget(self.cb_leaderboard)
+        body.addWidget(self.cb_leaderboard)
         self.cb_locations = QCheckBox(
             "Record the location of my runs anonymously (first gauge, ~100 m)")
         self.cb_locations.setToolTip(LOCATION_TEXT)
-        outer.addWidget(self.cb_locations)
+        body.addWidget(self.cb_locations)
         self.cb_map = QCheckBox(
             "Show my location on the world map (without name, ~50 km)")
         self.cb_map.setToolTip(
             "Info ▸ World Map ▸ User location shows the locations of the users who "
             "ticked this - as points without names, rounded to about 50 km. Needs "
             "your location (latitude/longitude) above.")
-        outer.addWidget(self.cb_map)
+        body.addWidget(self.cb_map)
         save_row = QHBoxLayout()
         save_row.addStretch(1)
         save_row.addWidget(self._button("Save changes", self._do_save))
-        outer.addLayout(save_row)
-        outer.addWidget(self._line())
+        body.addLayout(save_row)
+        body.addStretch(1)
 
+        outer.addWidget(self._line())
         outer.addWidget(self.status)
-        outer.addStretch(1)
         outer.addWidget(self._privacy_link())
         row = QHBoxLayout()
         row.addWidget(self._button("Export my data…", self._do_export))
@@ -716,10 +749,21 @@ class AccountWindow(_AccountDialogBase):
         row.addWidget(close)
         outer.addLayout(row)
         self._apply_style()
-        self._fit(520, 600)
+        # shorter than the content (it scrolls), as wide as the badge rows need
+        w, h = scaled_default_size(self, 560, 470)
+        need_w = content.sizeHint().width() + outer.contentsMargins().left() \
+            + outer.contentsMargins().right() + 24
+        self.resize(max(w, need_w), h)
 
         self._fill(mw.account_status() or {})
         self._run("get_status")                   # refresh from the server
+
+    def _open_additions(self):
+        """Account ▸ Addition: the additional badges and the Field Test scoring."""
+        win = AdditionsWindow(self.mw)
+        self._additions = win
+        win.show()
+        return win
 
     def _fill(self, status):
         self._status = status
@@ -904,6 +948,192 @@ class AccountWindow(_AccountDialogBase):
             self._say(f"Saved to {path}", "ok_color")
         except OSError as e:
             self._say(f"Could not save: {e}", "warn_color")
+
+
+class AdditionsWindow(_AccountDialogBase):
+    """Account ▸ Addition: the additional badges (special achievements - none can
+    be earned yet, they are shown as what is to come) and the user's scoring in
+    the CWatM Academy Field Test (own best + the record of all users)."""
+
+    # The feature badges (account_shop.FEATURE_BADGES: MoleFlow, pySnowClim, Glacier
+    # OGGM) are real: bronze / silver / gold for successful runs with that feature
+    # on, the highest replacing the others (_set_feature); then the Field Test badge
+    # (_set_field_test). Tooltips are whole sentences - one translation-table row each.
+    NOT_EARNED_TIPS = {
+        "modflow": "MoleFlow: the bronze badge comes with the mole for your first "
+                   "successful run with coupled MODFLOW, silver for 20 runs, gold for "
+                   "50 - not earned yet",
+        "pysnowclim": "pySnowClim: the bronze badge for your first successful run with "
+                      "usepySnowClim = True, silver for 20 runs, gold for 50 - not "
+                      "earned yet",
+        "glacier": "Glacier OGGM: the bronze badge for your first successful run with "
+                   "includeGlaciers = True, silver for 20 runs, gold for 50 - not "
+                   "earned yet",
+    }
+    COMING_BADGES = ()                # (code, name, tooltip) of badges still to come
+    # the Field Test badge (account_shop.field_test_tier): from the own best and the
+    # record of all users - gold only while the user holds the record
+    FIELD_TEST_TIPS = {
+        None: "Field Test: the bronze badge for playing the CWatM Academy Field Test, "
+              "silver for more than 10000 points, gold while you hold the highscore - "
+              "not earned yet",
+        "bronze": "You played the CWatM Academy Field Test - more than 10000 points "
+                  "give the silver badge",
+        "silver": "More than 10000 points in the CWatM Academy Field Test - the "
+                  "highscore of all users gives the gold badge",
+        "gold": "You hold the highscore of all users in the CWatM Academy Field Test - "
+                "gold until someone beats it",
+    }
+    BADGE_SIZE = 72
+
+    def __init__(self, mw):
+        super().__init__(mw, "CWatM account - Addition")
+        from src.gui.utils import account_shop
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 14, 16, 12)
+
+        head = QLabel("Additional badges")
+        head.setObjectName("accHead")
+        outer.addWidget(head)
+        outer.addWidget(self._note(
+            "Badges for special achievements, beside the river badges for points. "
+            "MoleFlow, pySnowClim and Glacier OGGM grow with your successful runs with "
+            "coupled MODFLOW, pySnowClim or glaciers: bronze, then silver, then gold - "
+            "each one replaces the one before."))
+        grid_host = QWidget()
+        self._extra_grid = grid = QGridLayout(grid_host)
+        grid.setContentsMargins(0, 4, 0, 4)
+        grid.setHorizontalSpacing(14)
+        grid.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        self._feature_tiles = {}
+        self._feature_column = {f: i for i, f in enumerate(account_shop.FEATURE_BADGES)}
+        for feature in account_shop.FEATURE_BADGES:
+            self._set_feature(feature, None)         # until the server answers
+        self._field_test_tile = None
+        self._field_test_column = len(account_shop.FEATURE_BADGES)
+        self._set_field_test(None)
+        for i, (code, name, tip) in enumerate(self.COMING_BADGES,
+                                              start=self._field_test_column + 1):
+            grid.addWidget(self._badge(code, name, "coming", tip, faded=True), 0, i)
+        outer.addWidget(grid_host)
+        outer.addWidget(self._line())
+
+        head2 = QLabel("Your scoring of the Field Test game")
+        head2.setObjectName("accHead")
+        outer.addWidget(head2)
+        self.lbl_best = QLabel("Your best: …")
+        self.lbl_best.setObjectName("accBadges")
+        outer.addWidget(self.lbl_best)
+        self.lbl_record = QLabel("Highscore of all users: …")
+        outer.addWidget(self.lbl_record)
+        outer.addWidget(self._note(
+            "The Field Test is in CWatM Academy, Level 1: +1000 for every basin found, "
+            "a miss costs the distance (at most 1000, then 500, then 250). From 10000 "
+            "points on, Level 2 shows the shape of a basin instead of its name."))
+
+        outer.addWidget(self.status)
+        outer.addStretch(1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        close = QPushButton("Close")
+        close.setAutoDefault(False)
+        close.clicked.connect(self.reject)
+        row.addWidget(close)
+        outer.addLayout(row)
+        self._apply_style()
+        self._fit(520, 420)
+        self._run("get_feature_badges")              # then the Field Test scoring
+
+    @staticmethod
+    def _tip(tile, text):
+        for child in [tile] + tile.findChildren(QLabel):
+            child.setToolTip(text)
+
+    def _badge(self, code, name, caption, tip, faded=False):
+        """A tile whose medal enlarges on a click (BadgeViewer, like the river
+        badges in the account window) - with its caption and tooltip as the text."""
+        tile = badge_tile(self, code, name, self.BADGE_SIZE, faded=faded, caption=caption,
+                          on_click=lambda: self._enlarge(code, name, (caption, tip), faded))
+        self._tip(tile, tip)
+        return tile
+
+    def _enlarge(self, code, name, lines, faded):
+        viewer = BadgeViewer(self, code, name, lines=lines, faded=faded)
+        self._badge_viewer = viewer
+        viewer.show()
+        return viewer
+
+    def _set_feature(self, feature, runs):
+        """A feature badge tile: the highest tier reached (only that one - silver
+        replaces bronze, gold replaces silver), or bronze faded when none yet.
+        ``runs`` None = not known (yet)."""
+        from src.gui.utils import account_shop
+        name, _prefix, needs = account_shop.FEATURE_BADGES[feature]
+        tier = account_shop.moleflow_tier(runs) if runs is not None else None
+        nxt, more = account_shop.moleflow_next(runs or 0)
+        if tier is None:
+            code, caption, faded = (account_shop.feature_badge_image(feature, "bronze"),
+                                    "not earned yet", True)
+            tip = self.NOT_EARNED_TIPS[feature]
+        else:
+            s = "" if runs == 1 else "s"
+            code, caption, faded = (account_shop.feature_badge_image(feature, tier),
+                                    f"{tier.capitalize()} - {runs} run{s}", False)
+            tip = (f"{runs} successful run{s} with {needs} - "
+                   + (f"{more} more to the {nxt} badge" if nxt
+                      else f"the highest {name} badge"))
+        tile = self._badge(code, name, caption, tip, faded=faded)
+        old = self._feature_tiles.get(feature)
+        if old is not None:
+            self._extra_grid.removeWidget(old)
+            old.deleteLater()
+        self._feature_tiles[feature] = tile
+        self._extra_grid.addWidget(tile, 0, self._feature_column[feature])
+
+    def _set_field_test(self, tier):
+        """The Field Test tile: its tier (bronze / silver / gold), or bronze faded."""
+        from src.gui.utils import account_shop
+        if tier is None:
+            tile = self._badge(account_shop.field_test_badge_image("bronze"),
+                               "Field Test", "not earned yet", self.FIELD_TEST_TIPS[None],
+                               faded=True)
+        else:
+            tile = self._badge(account_shop.field_test_badge_image(tier), "Field Test",
+                               tier.capitalize(), self.FIELD_TEST_TIPS[tier])
+        if self._field_test_tile is not None:
+            self._extra_grid.removeWidget(self._field_test_tile)
+            self._field_test_tile.deleteLater()
+        self._field_test_tile = tile
+        self._extra_grid.addWidget(tile, 0, self._field_test_column)
+
+    def handle_result(self, op, result):
+        if op == "get_feature_badges":
+            if isinstance(result, dict):
+                for feature in self._feature_tiles:
+                    info = result.get(feature) or {}
+                    self._set_feature(feature, int(info.get("runs") or 0))
+            self._run("get_field_test_highscore")
+            return
+        if op != "get_field_test_highscore" or not isinstance(result, dict):
+            return
+        from src.gui.widgets.academy_field_test import clean_initials
+        best = int(result.get("highscore") or 0)
+        mine = clean_initials(str(result.get("initials") or ""))
+        record = int(result.get("record_score") or 0)
+        holder = clean_initials(str(result.get("record_initials") or ""))
+        from src.gui.utils import account_shop
+        self._set_field_test(account_shop.field_test_tier(best, record))
+        self.lbl_best.setText(f"Your best: {best}" + (f"  ({mine})" if mine else "")
+                              if best else "Your best: not played yet")
+        self.lbl_record.setText(f"Highscore of all users: {record} {holder}".rstrip()
+                                if record else "Highscore of all users: none yet")
+
+    def handle_error(self, op, code, message):
+        if op == "get_feature_badges":
+            self._run("get_field_test_highscore")     # the scoring still shows
+            return
+        self.lbl_best.setText("Your best: not available")
+        self.lbl_record.setText("Highscore of all users: not available")
 
 
 class LeaderboardWindow(_AccountDialogBase):

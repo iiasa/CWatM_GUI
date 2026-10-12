@@ -421,6 +421,9 @@ class PreferencesWindow(QDialog):
             "buying it in the Shop - for this session only: it is off again the "
             "next time CWatM GUI starts. Works without a login.")
         self.cb_cheat_animals.toggled.connect(self._on_cheat_animals_ticked)
+        # Not shown: animals are bought in the Shop. The control stays (unticked, it
+        # applies nothing), so showing it again is this one line.
+        self.cb_cheat_animals.setVisible(False)
         # an action, not a setting: acts at once (after a question), not on Apply
         self.btn_reset_reward = QPushButton("Reset MODFLOW reward (the mole)")
         self.btn_reset_reward.setAutoDefault(False)

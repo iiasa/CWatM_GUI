@@ -133,6 +133,9 @@ class TimeseriesWindow(PlotlyWindowBase):
         # When set (in-memory construction, e.g. a NetCDF grid point via from_point),
         # the figure shows a legend labelled with this name.
         self._legend_name = None
+        # Legend entry of the main series once others are overlaid (default: "<file> -
+        # <column>"); a Watercycle sector window uses the sector name.
+        self._main_legend = preloaded.get("main_legend") if preloaded else None
         if preloaded is not None:
             # Build directly from in-memory data instead of a CSV.
             self.csv_path = preloaded["label"]
@@ -163,6 +166,11 @@ class TimeseriesWindow(PlotlyWindowBase):
 
         # Unit / long name / description from cwatm/metaNetcdf.xml (axis + figure title).
         self.unit, self.long_name, self.description = self._lookup_meta(self.varname)
+        if preloaded is not None and preloaded.get("unit") is not None:
+            # In-memory series that is not a metaNetcdf variable (e.g. a Watercycle
+            # sector) brings its own unit / long name.
+            self.unit = preloaded["unit"]
+            self.long_name = preloaded.get("long_name") or self.long_name
 
         self.setWindowTitle(f"\U0001F4C8 Timeseries: {os.path.basename(str(self.csv_path))}")
         self.setModal(True)
@@ -881,7 +889,7 @@ class TimeseriesWindow(PlotlyWindowBase):
         if self._legend_name:
             main_name = str(self.csv_path)
         elif comparing:
-            main_name = f"{os.path.basename(self.csv_path)} - {name}"
+            main_name = self._main_legend or f"{os.path.basename(self.csv_path)} - {name}"
         else:
             main_name = name
         fig.add_trace(go.Scatter(
