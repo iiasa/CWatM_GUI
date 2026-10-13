@@ -11,7 +11,7 @@ Developer reference for producing `CWatM_GUI.exe`, `CWatM_model.exe` and
 - **dask** (`xr.open_dataset(path, chunks={})` in the NetCDF viewer) — parallelises
   chunked point-series reads for Total Timeseries / Flow duration / Flow regime on a
   large `.nc`; trimmed in the frozen build (below).
-- **notebooklm-py[cookies]** (+ `rookiepy`) — CWatM AI (needs Python ≥ 3.10).
+- **notebooklm-py** + **playwright** — CWatM AI and its login (needs Python ≥ 3.10).
 - **supabase** (supabase-py 2.31, reuses httpx) + **keyring** (+ `pywin32-ctypes` on
   Windows, `SecretStorage`/`jeepney` on Linux) — the optional CWatM account; imported
   lazily by `account_client.py` / `account_store.py` only. Bundled into the **GUI exe
@@ -54,12 +54,12 @@ The **one-folder** build (faster startup, easier debugging than a single-file ex
   `osmtile://` tile/WMS fetching.
 - **CWatM AI** (GUI exe only): `collect_all` for `notebooklm`,
   `httpx`/`httpcore`/`h11`/`anyio`/`sniffio`, `rich`, `markdown_it`/`mdurl`/`pygments`,
-  `filelock`, `rookiepy` (+ `copy_metadata` for the version-reading ones). The
-  **Login…** browser-cookie paths work frozen (the exe's `--notebooklm-login`
-  self-dispatch + bundled `rookiepy`); the interactive Google-login window needs
-  `playwright`, which is **not** bundled (source-run only; the button is hidden when
-  frozen).
-- **MODFLOW coupling** (`flopy` + its `matplotlib` stack — `contourpy`/`kiwisolver`/
+  `filelock`, `playwright`/`greenlet`/`pyee` (+ `copy_metadata` for the version-reading
+  ones). playwright has **no PyInstaller hook**: `collect_all` brings its driver
+  (`node.exe` + package, ~105 MB) as data. **Login** works frozen through the exe's
+  `--notebooklm-browser-login <browser>`
+  self-dispatch, opening the **installed** browser — nothing downloaded. `rookiepy` is
+  excluded (no browser cookies are read).- **MODFLOW coupling** (`flopy` + its `matplotlib` stack — `contourpy`/`kiwisolver`/
   `cycler`/`fontTools`/`PIL`) is `collect_all`-ed into **both** exes (`modflow_*`);
   `matplotlib` is not excluded. `xmipy` + `bmipy` are hidden imports **only if `xmipy`
   is installed** (guarded by a real import in the spec). `black` (a `bmipy` dependency,

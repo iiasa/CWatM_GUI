@@ -901,23 +901,37 @@ See `ai.md` for the full plan/history.
     question. `NotebookLMClientWrapper._prefetch_source_ids()` fetches them once at
     connect and `ask()` passes `source_ids=self._source_ids`, removing that per-question
     round-trip (best-effort: an empty/failed fetch falls back to `None` so correctness
-    wins). A shorter **answer length** (the Short/Medium/Long selector) also cuts
+    wins). A shorter **answer length** (the Short/Long selector) also cuts
     generation time.
 - **Window** (`src/gui/widgets/notebooklm_window.py`, `NotebookLMWindow` =
-  `GeometryMemoryMixin` + non-modal `QDialog`, geometry key `cwatm_ai`, themed like the
-  NetCDF window — every colour a `theme.c(token)`): header + a centred login-state line,
-  a `QTextBrowser` transcript (You / Gemini / status / error colours), a multi-line
-  input (Enter sends, Shift+Enter = newline) + **Send** (blue), and **Login… /
-  Choose browser… / Notebook… / Clear / Exit** (all but Login grey). **Gemini answers are
-  rendered as markdown** (`markdown-it-py` "gfm-like": bold/lists/tables/code —
-  `_render_markdown`), each answer followed by an `<hr>` **separator** before the next
-  question; the *Explaining settings line: …* notice (Explain button / phrase) is shown
+  `GeometryMemoryMixin` + non-modal `QDialog`, geometry key `cwatm_ai`, flat, rounded, every colour a 
+  `theme.c(token)` — hover/tint shades are blends of two tokens, `_mix`): a **header card**
+  (CWatM icon, title, notebook line, a coloured **status pill** and the Login/Logout
+  button), the `QTextBrowser` **transcript card**, a tools row (*Explain current line*
+  **chip**, the **Answer length** segmented control, ghost *Notebook…* / *Clear*) and the
+  **composer** (a rounded card holding the input — Enter sends, Shift+Enter = newline —
+  and the accent **Send** button). Buttons are styled by objectName (`primary` /
+  `secondary` / `ghost` / `chip` / `segFirst|Mid|Last`) in one window stylesheet;
+  a state change swaps the objectName and re-polishes. Qt rich text has no
+  border-radius, so a message is a one-row table (`_block`): **your question** a tinted
+  block on the right, **the answer** a soft block with a thin accent bar, errors with an
+  error-colour bar, status lines centred and small. **Answers are rendered as markdown**
+  (`markdown-it-py` "gfm-like": bold/lists/tables/code — `_render_markdown`); the *Explaining settings line: …* notice (Explain button / phrase) is shown
   **bold blue** (`_append_action`).
-- **Answer-length selector** (compact Short / Medium / Long exclusive toggle buttons
+- **Clickable follow-up offer**: when an answer ends with a question sentence
+  ("Would you like to review how to set up the SpinUp?" - `_split_followup`: the
+  answer's last sentence, ends in `?`, starts with would/do/shall/can/…, also at the
+  end of a paragraph, after the pictogram NotebookLM usually puts in front of it;
+  emphasis and citation marks stripped - `_split_followup_icon`) it is shown on its
+  own line as a clickable pictogram - the answer's own, else 💬 (link
+  `cwatmai:ask?q=<question>`) - + the question as plain text (`_followup_html`). A click asks "Yes, please. <question>"
+  (`_on_followup_link`, the `intercept` of `make_links_safe`; ignored while a question
+  is in flight). The question travels in the URL, so a restored transcript still works.
+- **Answer-length selector** (compact Short / Long exclusive toggle buttons
   in the bottom row, right of **Notebook…**; selected = blue, persisted
-  `notebooklm/response_length`, default Medium):
+  `notebooklm/response_length`, default Short):
   sets NotebookLM verbosity via `chat.configure(notebook_id, response_length=…)`
-  (`ChatResponseLength` SHORTER/DEFAULT/LONGER). The wrapper applies it on its asyncio
+  (`ChatResponseLength` SHORTER/LONGER; a stored older `medium` falls back to Short). The wrapper applies it on its asyncio
   loop from `connect`/`ask`; the worker pushes the current choice on the worker thread
   before each ask. (It is a NotebookLM **server-side** per-notebook setting.)
 - **Transcript + question history persist** across close/open (QSettings
@@ -928,32 +942,39 @@ See `ai.md` for the full plan/history.
 - **Login state is verified, not assumed**: a stored session **file** existing does
   not mean it still works, so on open (and after a login) a background `_AuthCheckWorker`
   (QThread) calls `notebooklm_client.check_connection()` — a real `notebooks.list()`
-  probe — off the GUI thread. `_refresh_login_state()` then colours the Login button
-  **blue "✓ Logged in"** only when *confirmed* (`_auth_verified is True`), **"Checking…"
-  (blue)** while the probe runs, and **red "Login required"** when the session is
-  **expired/invalid** (`check_connection` → `"auth"`, detected via `is_auth_error`:
+  probe — off the GUI thread. `_refresh_login_state()` then gives the one Login button
+  three faces: **"Checking…"** (blue, **disabled**) while the probe runs, **blue
+  "Logout"** only when *confirmed* (`_auth_verified is True`) — a click asks and runs
+  `notebooklm_client.logout()` = notebooklm's own `execute_logout` (session file, the
+  login window's browser profile, context cache) — and **red "Login"** otherwise, e.g.
+  no session or one that is **expired/invalid** (`check_connection` → `"auth"`, detected via `is_auth_error`:
   "Authentication expired or invalid", a Google-accounts redirect, "Run 'notebooklm
   login'"…). On an expired session (also if a **question** fails with an auth error —
   `_on_worker_error`) it drops the dead worker and **prompts to re-authenticate**
-  (`_prompt_reauth` → the Google login window). A transient network/proxy error leaves
-  the state unchanged (just a note). `playwright` (pinned) drives that Google-login
-  re-auth path. **Login…** is now **one click, auto-detect**
-  (`_start_auto_login`): it walks a browser list **Firefox → Chrome → Edge → Opera**
-  (`_auto_try_next`), for each runs `notebooklm login --browser-cookies <browser>`
-  (`QProcess`) and — because a written cookie file does not prove a working session —
-  **verifies each** with a background `_AuthCheckWorker` (`_auto_verify` →
-  `_auto_on_verify`), **stopping at the first browser whose `check_connection()`
-  returns `"ok"`** (transcript shows "Trying Firefox… / Chrome: no valid session… /
-  Logged in via Chrome"). A `"error"` (network/proxy) stops the run and reports it
-  (other browsers can't help); `"auth"`/`"no_session"` moves to the next. If none work
-  (`_auto_login_failed`) it explains why — noting the **Windows app-bound cookie
-  encryption** admin caveat when a Chrome/Edge/Opera decrypt error was seen
-  (`_auto_saw_decrypt`) — and offers the manual picker. **Choose browser…**
-  (`_on_choose_browser`, the former per-browser dialog) is the fallback: pick a
-  specific browser or the interactive **Google login window** (Playwright, source-run;
-  system Chrome via `--browser chrome`, no download; bundled-Chromium fallback offered
-  on failure). Cookies are read via **`rookiepy`** (`notebooklm-py[cookies]`); Firefox
-  is tried first as its store is readable without elevation.
+  (`_prompt_reauth` → the browser picker). A transient network/proxy error sets
+  `_auth_unverifiable`, so the button leaves "Checking…" for "Login" (just a note). **Login** (`_on_login` →
+  `_choose_browser_and_login`): a one-time consent (`_window_login_agreed`, key
+  `notebooklm/window_login_agreed`, default **No**), then a picker of
+  `LOGIN_BROWSERS` — **Microsoft Edge / Google Chrome** — `BrowserPickerDialog`: one card
+  per browser with the icon of its installed exe (`browser_executable` +
+  `QFileIconProvider`), a missing one greyed *not installed*, the last choice focused
+  (`notebooklm/login_browser`) — and `_start_window_login` runs the
+  login in a `QProcess` child that opens **Google's sign-in page in the installed
+  browser** (Playwright; nothing downloaded, **no browser cookies read**). One script
+  for both, `src/gui/utils/notebooklm_browser_login.py <msedge|chrome>`
+  (frozen: `--notebooklm-browser-login <browser>`, `cwatm_gui.py`; the spec bundles
+  playwright, ~105 MB): a **plain launch + fresh private context** (`chromium_sandbox=True`, since
+  Playwright's default `--no-sandbox` shows Chrome's "unsupported command-line flag"
+  bar, plus notebooklm's anti-automation flags), opened on
+  `accounts.google.com/ServiceLogin?continue=<NotebookLM>`. **The login is detected by
+  Google's sign-in cookies** (`SID` / `__Secure-1PSID`, `signed_in`), polled every
+  second — **not by the URL**: after sign-in Google may leave the tab on an account or
+  NotebookLM start page, and notebooklm's own `wait_for_url(notebooklm…)` then waited
+  forever with Chrome. Then it opens NotebookLM, pins the `.google.com` cookies and
+  stores the session with notebooklm's own cookie allowlist + atomic writer.
+  `_on_login_finished`: success → `_AuthCheckWorker` verification; "<label> not found"
+  → offer another browser; "browser window was closed" → cancelled; "login not
+  detected" → 5-min timeout.
 - **Notebook selection**: `notebooklm/notebook_id` (a bare id or a NotebookLM URL;
   `Notebook…` sets/persists it); if unset the wrapper auto-picks a notebook whose title
   contains "cwat", else the only one, else raises listing the choices.

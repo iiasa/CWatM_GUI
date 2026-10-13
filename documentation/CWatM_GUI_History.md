@@ -46,6 +46,19 @@ are persisted keys or file names.
   created standalone (`_init_configure_state`, default ON, persisted `run/subprocess`).
 - **Skill-level menu radios** — `_sync_level_menu` / `_level_menu_actions` are the
   leftover, now a guarded no-op kept for a future menu.
+- **CWatM AI browser-cookie login** (2026-10-13) — the one-click auto-detect
+  (Firefox → Chrome → Edge → Opera via `notebooklm login --browser-cookies` +
+  `rookiepy`), its *Choose browser…* button and the Playwright-Chromium download
+  fallback. Reading a browser's Google cookies was invasive, and on Windows
+  Chrome/Edge/Opera needed "Run as administrator" (app-bound encryption). Replaced by
+  **Login → choose Edge / Chrome → Google's sign-in page in that browser**;
+  both through our own `notebooklm_browser_login.py` (notebooklm's login knows
+  only Chromium, and with Chrome it waited forever for a NotebookLM URL Google did not
+  always land on — ours detects the sign-in cookies). playwright moved from "source only" into the exe (~105 MB).
+- **CWatM AI Firefox login + old window look** (2026-10-13) — the Firefox choice
+  (Playwright `moz-firefox` over WebDriver BiDi) was dropped from the browser picker;
+  the window was redesigned flat (header card, chat blocks, composer) and its **Exit**
+  button removed (the window's close button does the same).
 - **Single-file `cwatm_gui.spec`** — only the one-folder `cwatm_gui_dir.spec` remains.
 - **`build_env/`** — a copied venv, deprecated; the project venv is `venv/`.
 - **`cwatm`/`src` trees as PyInstaller datas** — code ships only in the PYZ (report §4.2).

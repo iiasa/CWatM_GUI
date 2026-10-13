@@ -86,11 +86,18 @@ def open_link(url, browser=None):
     return False
 
 
-def make_links_safe(browser):
-    """Route every link of a QTextBrowser through open_link()."""
+def make_links_safe(browser, intercept=None):
+    """Route every link of a QTextBrowser through open_link(). ``intercept(url)``
+    (optional) sees each link first - the view's own in-app links; returning True
+    means it handled the link and open_link() is skipped."""
     browser.setOpenExternalLinks(False)
     browser.setOpenLinks(False)
-    browser.anchorClicked.connect(lambda url, b=browser: open_link(url, b))
+
+    def _clicked(url, b=browser):
+        if intercept is not None and intercept(url):
+            return
+        open_link(url, b)
+    browser.anchorClicked.connect(_clicked)
 
 
 def open_path(path):

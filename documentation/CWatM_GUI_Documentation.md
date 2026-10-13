@@ -58,8 +58,8 @@ period, and switches processes on/off. This GUI wraps the whole workflow:
 
 **Requirements**: Python 3.10+ (3.12 recommended), PySide6 (incl. QtWebEngine), NumPy,
 pandas, xarray, rasterio, netCDF4, folium, plotly, openpyxl, requests, and the CWatM
-model package. The optional **CWatM AI** chat needs `notebooklm-py[cookies]` (+
-`rookiepy`); the optional **MODFLOW** coupling needs `flopy` + `xmipy` (and the
+model package. The optional **CWatM AI** chat needs `notebooklm-py` (+
+`playwright` for the login); the optional **MODFLOW** coupling needs `flopy` + `xmipy` (and the
 MODFLOW 6 `libmf6` library). All pinned versions are in `requirements.txt`.
 
 ```bash
@@ -670,46 +670,34 @@ Do this once in your browser at **notebooklm.google.com**:
 > from the browser and paste it into **Notebook…** in the CWatM AI window (or leave it
 > on *auto* and rely on the "CWatM" title match).
 
-### 14.2 Sign in from CWatM (one click)
+### 14.2 Sign in from CWatM
 
-Open **CWatM AI** and click **Login…**. CWatM AI **auto-detects** the browser you are
-signed in to Google with — it tries **Firefox → Chrome → Edge → Opera** in turn,
-verifies each session against NotebookLM, and stops at the first one that works:
+Open **CWatM AI**, click **Login** and choose a browser — **Microsoft Edge**, or **Google
+Chrome** (the installed one; your last choice is remembered). A separate
+window of that browser opens on **Google's own sign-in page**; sign in there and it
+closes by itself. Your password goes only to Google, none of your browsers' cookies or
+data are read, and no administrator rights are needed. If the chosen browser is not
+installed, CWatM says so and lets you choose another.
 
-```
-Looking for a signed-in Google session in your browsers…
-Trying Firefox…      ✗
-Trying Chrome…       ✓  Logged in via Chrome.
-```
-
-- The login-state line at the top of the window shows **✓ Logged in** (blue) once a
-  working session is confirmed, **Checking…** while it verifies, or **Login required**
+- The login-state line at the top of the window shows **Logout** (blue) once a
+  working session is confirmed, **Checking…** while it verifies, or **Login**
   (red) when you need to sign in.
-- **On Windows, Chrome / Edge / Opera encrypt their cookie store** (app-bound
-  encryption), so CWatM can only read them when it is **run as administrator**.
-  **Firefox** works without elevation and is tried first — the easiest path is to be
-  signed in to Google in Firefox.
-- If auto-detect can't find a working session it explains why and offers **Choose
-  browser…**, the manual fallback: pick a specific browser, or (running from source
-  only, with `playwright` installed) the interactive **Google login window**.
 - After a successful login the session is **stored and reused automatically** on later
   runs — you normally sign in only once, until Google expires it.
-- **What the login reads and stores.** Before the first login CWatM AI asks once, and
-  explains it: it **reads your Google login cookies** from your browsers, and it
-  **stores the Google session in a file on this computer** —
+- **What the login stores.** Before the first login CWatM AI asks once, and explains it:
+  it **stores the Google session in a file on this computer** —
   `%USERPROFILE%\.notebooklm\profiles\…\storage_state.json`. Anyone, or any program,
   with access to your Windows account could use that file to act as your Google
   account, so treat it like a password. **Delete the file (or the `.notebooklm`
   folder) to remove the session.** It is used only to ask NotebookLM and is never sent
   to the CWatM account server.
-
 ### 14.3 Using the chat
 
 - **Ask a question:** type in the input box and press **Enter** (**Shift+Enter** for a
   new line) or click **Send**. Answers stream back and are rendered as **Markdown**
   (bold, lists, tables, code). While a question is in flight, **Send** becomes **Stop
   thinking** to cancel it.
-- **Answer length:** the **Short / Medium / Long** toggle sets how detailed replies are
+- **Answer length:** the **Short / Long** toggle sets how detailed replies are
   (Short is fastest). Your choice is remembered.
 - **Question history:** press **Up / Down** in the input box to recall previous
   questions. The transcript and history are **kept across close/open**.
@@ -873,7 +861,7 @@ The result is `dist/CWatM_GUI/CWatM_GUI.exe` (plus an `_internal/` folder that a
 contains the lightweight `CWatM_model.exe` child process used for model runs). The
 spec collects rasterio + GDAL data, xarray backends, folium/plotly, **openpyxl**,
 requests, QtWebEngine, the **MODFLOW** stack (flopy + matplotlib + xmipy), the CWatM AI
-libraries (`notebooklm` + `rookiepy`), the `cwatm`/`src` code and the documentation.
+libraries (`notebooklm` + `playwright`), the `cwatm`/`src` code and the documentation.
 
 To wrap that folder into a **per-user installer** (no administrator rights), compile the
 Inno Setup script:
@@ -904,9 +892,8 @@ current user's locations. Reference: `installer/CWatM_GUI.iss`.
 - **The run stops early with a date/time error** — the run window is likely past your
   forcing data; run **Check settingsfile** (F4), which warns when `StepEnd` is after the
   meteo forcing ends.
-- **CWatM AI says "Login required"** — the Google session expired, or none was found.
-  Click **Login…** (Firefox needs no admin; for Chrome/Edge/Opera run CWatM as
-  administrator). Make sure your NotebookLM notebook (title contains "CWatM") has its
+- **CWatM AI says "Login"** — the Google session expired, or none was found.
+  Click **Login**, choose Edge or Chrome and sign in. Make sure your NotebookLM notebook (title contains "CWatM") has its
   CWatM sources uploaded — see [§14.1](#141-prepare-a-notebooklm-notebook-with-cwatm-sources-one-time).
 - **A MODFLOW run fails** — it needs `xmipy` + `flopy` installed and the `libmf6`
   library path set in the settings.

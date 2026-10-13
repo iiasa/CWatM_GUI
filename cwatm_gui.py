@@ -26,7 +26,7 @@ import time
 # data rather than re-guessed after every dependency added. Off by default, and the
 # gui_log import/logger it needs is deferred INSIDE _profile() (not a module-level
 # `log = get_logger(...)` here) so a plain, unprofiled start - GUI or the
-# --run-cwatm/--notebooklm-login child process dispatched a few lines down, which
+# --run-cwatm/--notebooklm-browser-login child process dispatched a few lines down, which
 # must stay minimal - never touches gui_log at all, exactly as before this feature.
 # Always goes to gui.log at DEBUG, never the console or the CWatM output box:
 # profiling must never become one more thing a user sees.
@@ -95,10 +95,10 @@ def _splash(action, text=None):
 
 # --- Child-process dispatch (subprocess run, report §3.1) --------------------
 # "CWatM_GUI.exe --run-cwatm <settings.ini>" runs ONLY the model runner and exits;
-# "CWatM_GUI.exe --notebooklm-login <args...>" runs ONLY the bundled notebooklm
-# CLI (the frozen build has no "python -m notebooklm", and the CWatM AI Login flow
-# needs a fresh child process that can open a browser / write the session file and
-# exit without touching the running GUI).
+# "CWatM_GUI.exe --notebooklm-browser-login <browser>" runs ONLY the CWatM AI login
+# (src/gui/utils/notebooklm_browser_login.py: Google's sign-in page in the installed
+# Edge / Chrome / Firefox) - a fresh child process that opens the browser, writes
+# the session file and exits without touching the running GUI.
 #
 # Both are dispatched BEFORE any Qt import so the child process stays light. Each
 # handler keeps its own imports inside itself for the same reason.
@@ -109,18 +109,15 @@ def _run_model_child(args):
     return _model_runner_main(args)
 
 
-def _run_notebooklm_child(args):
-    """--notebooklm-login: everything after the flag goes to notebooklm's click CLI."""
-    # click reads sys.argv[1:]; argv[0] is just the program name.
-    sys.argv = ["notebooklm"] + args
-    from notebooklm.notebooklm_cli import main as _nlm_cli_main
-    _nlm_cli_main()   # click runs the command and calls sys.exit itself
-    return 0          # reached only if click returns without exiting
+def _run_notebooklm_login_child(args):
+    """--notebooklm-browser-login <browser>: the CWatM AI login."""
+    from src.gui.utils.notebooklm_browser_login import main as _login_main
+    return _login_main(args)
 
 
 _CHILD_DISPATCH = (
     ("--run-cwatm", _run_model_child),
-    ("--notebooklm-login", _run_notebooklm_child),
+    ("--notebooklm-browser-login", _run_notebooklm_login_child),
 )
 
 

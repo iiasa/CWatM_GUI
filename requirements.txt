@@ -99,11 +99,8 @@ platformdirs==4.10.0
 pytokens==0.4.1
 
 # ---- CWatM AI (NotebookLM chat + login) ----
-# notebooklm-py drives the Gemini/NotebookLM chat; rookiepy reads the Google session
-# cookie for the "From Firefox / Chrome / Edge / Opera" login (bundled in the exe so
-# login works there too - see CWatM_AI_NotebookLM.md).
+# notebooklm-py drives the Gemini/NotebookLM chat (see CWatM_AI_NotebookLM.md).
 notebooklm-py==0.7.3
-rookiepy==0.5.6
 httpx==0.28.1
 httpcore==1.0.9
 h11==0.16.0
@@ -115,10 +112,8 @@ mdurl==0.1.2
 Pygments==2.20.0
 filelock==3.29.7
 
-# ---- CWatM AI Google-login WINDOW (optional, source-run only; NOT bundled in the exe).
-# Only needed for the interactive "Google login window" login option. After installing,
-# run once:  playwright install chromium   (or use system Chrome). The browser-cookie
-# login options do not need this.
+# ---- CWatM AI login: Playwright opens Google's sign-in page in the INSTALLED Edge /
+# Chrome / Firefox (no browser download needed; bundled in the exe).
 playwright==1.61.0
 greenlet==3.5.3
 pyee==13.0.1

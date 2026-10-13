@@ -71,6 +71,22 @@ def is_authenticated(profile=None):
         return False
 
 
+def logout():
+    """Log out: notebooklm's own ``auth logout`` - removes the stored session file,
+    the login window's browser profile (so the next login asks for the password
+    again) and the context cache. Returns None on success, else an error message."""
+    try:
+        from notebooklm.cli.services.session_context import execute_logout
+        outcome = execute_logout(None)
+    except Exception as e:  # noqa: BLE001 - reported to the user
+        log.debug("logout failed", exc_info=True)
+        return str(e)
+    failure = getattr(outcome, "failure", None)
+    if failure is not None:
+        return f"Could not remove {failure.path}: {failure.error_message}"
+    return None
+
+
 def storage_state_path(profile=None):
     """Path of the stored session file (for messages), or '' on failure."""
     try:
@@ -82,11 +98,15 @@ def storage_state_path(profile=None):
 
 # Substrings that identify an expired/invalid-session error (the message the user
 # reported: "ValueError: Authentication expired or invalid ... Run 'notebooklm login'
-# to re-authenticate", plus a Google-accounts redirect).
+# to re-authenticate", plus a Google-accounts redirect). "CSRF token not found" is
+# what notebooklm raises when a stale session is redirected to Google's public
+# landing page instead of the app ("Final URL: https://notebook.google.com/"), and
+# "not logged in" is AuthRequired's own no-session message.
 _AUTH_ERROR_HINTS = (
     "authentication expired", "auth expired", "expired or invalid",
     "re-authenticate", "reauthenticate", "not authenticated", "unauthenticated",
     "notebooklm login", "accounts.google.com", "sign in", "login required",
+    "csrf token not found", "not logged in",
 )
 
 
@@ -204,7 +224,7 @@ class NotebookLMClientWrapper:
             return
         if not is_authenticated(self._profile):
             raise AuthRequired(
-                "Not logged in to NotebookLM. Use the 'Login…' button once to "
+                "Not logged in to NotebookLM. Use the 'Login' button once to "
                 "store a Google session, then ask again.")
         from notebooklm import NotebookLMClient
 
@@ -360,7 +380,7 @@ class NotebookLMClientWrapper:
         if (AuthError and isinstance(exc, AuthError)) or is_auth_error(exc):
             return AuthRequired(
                 "The stored NotebookLM session is invalid or expired. Use "
-                "'Login…' to sign in again.")
+                "'Login' to sign in again.")
         if NotebookNotFoundError and isinstance(exc, NotebookNotFoundError):
             return NotebookSelectionError(
                 "The configured notebook was not found. Set another one with the "

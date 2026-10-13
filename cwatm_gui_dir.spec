@@ -143,18 +143,15 @@ requests_hiddenimports = ['requests', 'certifi', 'urllib3', 'charset_normalizer'
 # - notebooklm-py is a fully ASYNC httpx RPC client (no Playwright at runtime); it
 #   reads its own version from dist metadata and pulls anyio/httpcore/h11/rich lazily.
 # - markdown_it (markdown-it-py) renders the answers; rich also depends on it.
-# NOTE (source-run only, degrades gracefully when frozen): the **Login…** flow shells
-# out to `python -m notebooklm` / `playwright` / rookiepy via QProcess - that is NOT
-# bundled (the window shows a manual-command message when frozen). Asking questions
-# with an already-stored session and markdown rendering both work frozen.
+# The **Login** opens Google's sign-in page in the installed Edge / Chrome / Firefox,
+# driven by Playwright in a child process: the exe re-invokes itself with
+# --notebooklm-browser-login <browser> (src/gui/utils/notebooklm_browser_login.py). playwright has no PyInstaller hook, so
+# collect_all brings its driver (node.exe + package, ~105 MB) as data; greenlet and
+# pyee are its runtime deps. No browser cookies are read, so rookiepy is not bundled.
 ai_datas, ai_binaries, ai_hiddenimports = [], [], []
-# rookiepy = the browser-cookie reader used by `notebooklm login --browser-cookies`;
-# bundling it lets the CWatM AI Login… work from the frozen exe (via the exe's own
-# --notebooklm-login self-dispatch), reading the Google session from Firefox/Chrome/
-# Edge without needing a Python install. (The Google-login *window* still needs
-# Playwright, which is not bundled - that path stays source-only.)
 for _pkg in ('notebooklm', 'httpx', 'httpcore', 'h11', 'anyio', 'sniffio',
-             'rich', 'markdown_it', 'mdurl', 'pygments', 'filelock', 'rookiepy'):
+             'rich', 'markdown_it', 'mdurl', 'pygments', 'filelock',
+             'playwright', 'greenlet', 'pyee'):
     try:
         _d, _b, _h = collect_all(_pkg)
         ai_datas += _d
@@ -168,9 +165,11 @@ for _meta in ('notebooklm-py', 'httpx', 'anyio', 'rich', 'markdown-it-py'):
         ai_datas += copy_metadata(_meta)
     except Exception as _e:
         print(f"[spec] metadata not copied: {_meta} ({_e})")
-# notebooklm's CLI (run in-process by the frozen exe for Login…) is built on click;
-# make sure it and rookiepy are in the graph even if static analysis misses them.
-ai_hiddenimports += ['click', 'rookiepy']
+# The login script and the notebooklm/Playwright parts it uses are imported lazily;
+# make sure they are in the graph even if static analysis misses them.
+ai_hiddenimports += ['click', 'src.gui.utils.notebooklm_browser_login',
+                     'notebooklm.cli.services.playwright_login',
+                     'playwright.sync_api']
 
 # CWatM account (optional login, points, badges - src/gui/utils/account_*.py, GUI exe
 # only). supabase-py and its sub-clients import statically, but account_client.py
@@ -343,7 +342,7 @@ datas += account_datas
 # Binary files to include (DLLs and shared libraries)
 binaries = list(folium_binaries)
 binaries += dask_binaries
-# CWatM AI binaries (e.g. rookiepy's compiled cookie reader).
+# CWatM AI binaries (e.g. greenlet's compiled extension for playwright).
 binaries += ai_binaries
 # rasterio's bundled GDAL stack (rasterio.libs/*.dll -> _internal/rasterio.libs/).
 # Shared by both exes: the model child also imports rasterio (cwatm reads .map/.tif).
@@ -406,12 +405,9 @@ a = Analysis(
         # black is only bmipy's code-render CLI formatter (not used at runtime); keep it
         # and its deps out of the bundle (bmipy imports it lazily, so this is safe).
         'black',
-        # notebooklm pulls in `playwright` (a ~101 MB
-        # node driver) via its login CLI, but playwright is only ever imported lazily
-        # inside the interactive Google-login window - a source-only path (the window
-        # button is hidden when frozen). Asking questions (httpx) and the browser-cookie
-        # login (rookiepy) never touch it, so exclude it to drop the 101 MB of waste.
-        'playwright',
+        # playwright is NOT excluded: the CWatM AI Login… needs it (see the AI block).
+        # rookiepy (browser-cookie reading) is no longer used - keep a stray install out.
+        'rookiepy',
         # The CWatM AI 🎤 Voice dictation feature was removed, so its libraries are no
         # longer used or bundled - exclude them so a stray install can't re-add them.
         'speech_recognition', 'pyaudio', '_portaudio',

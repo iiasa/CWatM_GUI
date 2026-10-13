@@ -488,16 +488,15 @@ that node or flow in mm/month (the Discharge node in m³/s while it is shown alo
 ### CWatM AI (CWatM AI button)
 Ask questions about CWatM in a chat window answered by Google **NotebookLM** (Gemini),
 grounded on a notebook that holds the CWatM documentation. Answers are formatted, the
-transcript/history persist between sessions, and a **Short / Medium / Long** selector
+transcript/history persist between sessions, and a **Short / Long** selector
 sets the answer length (Short = fastest).
 
 - **Prepare once:** at *notebooklm.google.com* create a notebook whose title contains
   **"CWatM"** and upload the CWatM docs as sources (the GUI ships
   `documentation/CWATM_shorter.pdf`); CWatM AI auto-selects that notebook.
-- **Login is one click:** **Login…** auto-detects the browser you're signed in to Google
-  with (Firefox → Chrome → Edge → Opera) and verifies the session. Firefox needs no admin;
-  Chrome/Edge/Opera need CWatM **run as administrator** (Windows encrypts their cookies).
-  **Choose browser…** is the manual fallback (and the source-only Google login window).
+- **Login:** **Login** → choose **Edge or Chrome** → Google's own sign-in page
+  opens in that (installed) browser; sign in there and it closes by itself. No browser
+  cookies are read, no admin rights needed, and the session is verified afterwards.
 - **Explain current line** asks NotebookLM to explain the settings line at the cursor.
 
 Full guide: `documentation/CWatM_AI_NotebookLM.md`.

@@ -842,7 +842,8 @@ The application is structured with a modular architecture for better maintainabi
 - **`src/gui/widgets/line_number_gutter.py`**: Line-number gutter widget for the settings editor
 - **`src/gui/widgets/notebooklm_window.py`**: CWatM AI — `NotebookLMWindow` (Gemini/NotebookLM chat: persistent transcript + question history, Up/Down recall, login-state colouring; see CWatM AI section)
 - **`src/gui/utils/notebooklm_worker.py`**: `NotebookLMWorker(QThread)` — off-thread NotebookLM questions (queue, lazy connect, `status/reply/error/busy` signals)
-- **`src/gui/utils/notebooklm_client.py`**: The **only** importer of `notebooklm` — `NotebookLMClientWrapper` (async→sync over one asyncio loop; `connect/ask/close`, `is_authenticated`, notebook auto-resolve)
+- **`src/gui/utils/notebooklm_client.py`**: The **only** importer of `notebooklm` in the GUI process (bar `notebooklm.paths` for the session-file path) — `NotebookLMClientWrapper` (async→sync over one asyncio loop; `connect/ask/close`, `is_authenticated`, notebook auto-resolve)
+- **`src/gui/utils/notebooklm_browser_login.py`**: CWatM AI **Login ▸ Edge / Chrome** — a no-Qt child process (`python <file> <browser>` / frozen `--notebooklm-browser-login <browser>`) that opens Google's sign-in page in the **installed** browser via Playwright in a fresh private session, detects the login by Google's sign-in **cookies** (not the URL — Google may leave the tab elsewhere) and writes notebooklm's `storage_state.json`. **No browser cookies are ever read** from the user's own profiles
 - **`src/gui/widgets/compare_settings_window.py`**: Tools ▸ Compare settings — `CompareSettingsWindow` (two side-by-side `SettingsEditor` panes; left preloaded from the main window, right has a Load button; differing lines marked red via `diff_rows` + `set_error_rows`)
 - **`src/gui/widgets/restore_settings_window.py`**: Tools ▸ Restore settingsfile — `RestoreSettingsWindow` (summary card + NetCDF metadata table + Preview / Compare / Restore / Show Inputfiles / Export, each enabled by what the file actually holds), `SettingsPreviewWindow` and `InputFilesWindow`. Invariant: `read_netcdf_attrs` reads **all** globals in **one** file open, and because CWatM records only an input file's **base name**, existence is resolved through the stored settings file's folders (`candidate_dirs`) — see `CWatM_GUI_Internals.md`
 
@@ -958,7 +959,7 @@ rpc / setup in [`supabase/README.md`](supabase/README.md). The invariants:
 - **PySide6 QtWebEngine** (basin viewer OpenStreetMap view + Timeseries plot)
 - **folium** (basin viewer OSM map) and **plotly** (Analyse ▸ Timeseries line chart)
 - **requests** (fetching OSM tiles / downloading Leaflet through Python)
-- **pyshp**, **dask**, **notebooklm-py[cookies]** (+ `rookiepy`, Python ≥ 3.10),
+- **pyshp**, **dask**, **notebooklm-py** + **playwright** (CWatM AI login; Python ≥ 3.10),
   **supabase** + **keyring** — all imported lazily at their call sites; packaging
   notes (keyring backends, the dask trim, GUI-exe-only bundles) in
   [`documentation/CWatM_GUI_Build.md`](documentation/CWatM_GUI_Build.md)

@@ -29,8 +29,8 @@ will only answer from what is in the CWatM sources.
 ### Why a login is needed
 
 CWatM AI talks to **your own** NotebookLM account, so it needs a **Google session**.
-It does not ask for your password inside CWatM — instead it reuses the sign-in you
-already have in a browser (via cookies). The result is a small session file stored on
+It does not ask for your password inside CWatM — you sign in on Google's own page in
+a browser window CWatM opens (Edge or Chrome). The result is a small session file stored on
 your machine that the GUI reads on every later run.
 
 ### Account prerequisites (one-time)
@@ -74,51 +74,34 @@ Do this once in your browser at **notebooklm.google.com**. The goal is a noteboo
 
 ---
 
-## 3. Logging in — one click
+## 3. Logging in
 
-Click **Login…** in the CWatM AI window. CWatM AI **auto-detects** the browser you are
-signed in to Google with: it tries **Firefox → Chrome → Edge → Opera** in turn,
-verifies each candidate session against NotebookLM, and stops at the first that works.
+Click **Login** in the CWatM AI window and choose a browser — **Microsoft Edge**,
+or **Google Chrome** — each shown as a card with its icon; one that is not installed is
+greyed out (the last choice is pre-selected). A separate window of that browser opens on **Google's own sign-in page**; sign in there and the window
+closes by itself.
 
-```
-Looking for a signed-in Google session in your browsers…
-Trying Firefox…      ✗
-Trying Chrome…       ✓  Logged in via Chrome.
-```
+- It uses the browser **installed** on your computer — nothing is downloaded.
+- It reads **none** of your browsers' cookies, passwords or data, and needs **no
+  administrator rights**. Your password goes only to Google.
+- The Google session is stored in a file on this computer
+  (`%USERPROFILE%\.notebooklm\…\storage_state.json`) and used only to ask NotebookLM.
+  Delete the `.notebooklm` folder to remove it. The first login explains this once and
+  asks you to agree.
+- Every login starts a fresh private browser session, so you type your password each
+  time.
 
-The login-state line at the top of the window shows **✓ Logged in** (blue) when a
-working session is confirmed, **Checking…** while it verifies, or **Login required**
-(red) when you need to sign in.
-
-### Which browser works
-
-- **Firefox — easiest, no admin.** Its cookie store is readable without elevation, so
-  it is tried first. If you are signed in to Google in Firefox, one **Login…** click is
-  all you need.
-- **Chrome / Edge / Opera — need "Run as administrator".** On current Windows these
-  browsers **app-bound-encrypt** their cookies, so CWatM can only read them when
-  **elevated**:
-  1. Close CWatM.
-  2. **Right-click `CWatM_GUI.exe` → *Run as administrator*.**
-  3. Open **CWatM AI → Login…** (or **Choose browser… → From Chrome/Edge/Opera**).
-
-  After the session is stored you can go back to running CWatM **normally
-  (non-elevated)** — the elevation is only needed for the one-time cookie read.
-
-### Choose browser… (manual fallback)
-
-If auto-detect can't find a working session, CWatM AI explains why and offers **Choose
-browser…** — pick a specific browser to read cookies from, or (running **from source**
-only, with the optional `playwright` package installed) the interactive **Google login
-window**, which signs in through a real browser with no cookie decryption or admin
-rights.
+The header shows the state as a small pill next to the button: **Checking session…**
+(button *Checking…*), **Logged in** (button **Logout** — click it to log out, which
+removes the stored session), or **Not logged in** / **Session expired** (button
+**Login**).
 
 ### After you log in
 
 - CWatM verifies the new session in the background and the login line turns
-  **✓ Logged in** (blue).
+  **Logout** (blue).
 - The session **persists across restarts** — you normally log in only once, until
-  Google expires it (then the window says *Login required* again and offers to
+  Google expires it (then the window says *Login* again and offers to
   re-authenticate).
 
 ---
@@ -129,7 +112,7 @@ rights.
   new line) or click **Send**. Answers stream back from Gemini and are shown as
   formatted **Markdown** (bold, lists, tables, code). While a question is running,
   **Send** becomes **Stop thinking** and cancels it.
-- **Answer length:** the **Short / Medium / Long** toggle (bottom row) sets how detailed
+- **Answer length:** the **Short / Long** toggle (bottom row) sets how detailed
   replies are — **Short** is the fastest. Your choice is remembered.
 - **Question history:** press **Up / Down** in the input box to recall previous
   questions. The whole transcript and your question history are **kept across
@@ -177,13 +160,12 @@ over the CWatM notebook, not the full NotebookLM studio.
 
 | Symptom | Cause / fix |
 |---|---|
-| **"Login required"** (red) after it worked before | The Google session expired. Click **Login…** and sign in again (Firefox = no admin; Chrome/Edge/Opera = run CWatM as administrator). |
-| **Login can't find any session** | You are not signed in to Google in Firefox/Chrome/Edge/Opera, or (Chromium browsers) CWatM is not elevated. Sign in to Google in Firefox, or run CWatM **as administrator** and retry. |
-| **"…can be decrypted only when running as admin…"** | App-bound encryption on Chrome/Edge/Opera. **Run CWatM as administrator**, then retry that browser — or use Firefox. |
+| **"Login"** (red) after it worked before | The Google session expired. Click **Login**, choose a browser and sign in again. |
 | **Answers say "not found" / off-topic** | The notebook is missing CWatM sources, or the question is outside them. Check the notebook has `CWATM_shorter.pdf` (and other CWatM docs) as **ready** sources — see [§2](#2-prepare-a-notebooklm-notebook). |
+| **"<browser> is not installed"** | Choose another browser in the **Login** dialog. |
+| **The login window closes / nothing happens** | Closing the window cancels the login - press **Login** again and finish signing in within 5 minutes. |
 | **Wrong notebook is used** | Several notebooks match. Set the exact one with **Notebook…** (paste its id or URL), or rename the intended one so only it contains "CWatM". |
-| **No "Google login window" option** | It needs Playwright and appears **only when running from source**; install with `pip install playwright`. |
-| **CWatM AI button does nothing / import error** | The NotebookLM libraries are unavailable in this build. Asking questions with a stored session works in the packaged exe; if it degrades, run from source with `pip install "notebooklm-py[cookies]"`. |
+| **CWatM AI button does nothing / import error** | The NotebookLM libraries are unavailable in this build. Asking questions with a stored session works in the packaged exe; if it degrades, run from source with `pip install notebooklm-py playwright`. |
 
 ---
 

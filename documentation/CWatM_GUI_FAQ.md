@@ -414,16 +414,13 @@ installed version too); the GUI never loads them, so its startup is not affected
 
 ## CWatM AI (NotebookLM chat)
 
-**Login…**
-- **From Firefox** works without special rights.
-- **From Chrome / Edge / Opera**: run CWatM GUI **as administrator** once first —
-  Windows encrypts those browsers' cookies.
-- The interactive **Google login window** is available only when running from source.
-
-**"Login required" even though I signed in.**
+**How do I log in?**
+Click **Login**, choose Microsoft Edge or Google Chrome, and sign in on
+Google's page that opens in that browser. No browser cookies are read and no
+administrator rights are needed.
+**"Login" even though I signed in.**
 The session expired; the GUI verifies the login in the background and prompts you to
-re-authenticate. This feature is source-run only; a frozen build shows a friendly message
-instead of crashing.
+re-authenticate - click **Login** and sign in again.
 
 ---
 

@@ -16,9 +16,9 @@ import sys
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextBrowser,
-    QPlainTextEdit, QMessageBox, QInputDialog, QButtonGroup,
+    QPlainTextEdit, QMessageBox, QInputDialog, QButtonGroup, QFrame, QToolButton,
 )
-from PySide6.QtCore import Qt, QSettings, QProcess, QThread, Signal
+from PySide6.QtCore import Qt, QSettings, QProcess, QThread, Signal, QSize
 from PySide6.QtGui import QIcon
 
 from src.gui.utils import theme
@@ -68,6 +68,106 @@ def open_cwatm_ai(parent=None):
     return win
 
 
+class BrowserPickerDialog(QDialog):
+    """'Sign in to NotebookLM': one card per browser, with the browser's own icon
+    (read from its installed exe); a browser that is not installed is shown
+    greyed out. Click a card to choose it (``choice`` = its key)."""
+
+    def __init__(self, browsers, last, parent=None):
+        super().__init__(parent)
+        from src.gui.utils.notebooklm_browser_login import browser_executable
+        self.choice = None
+        self.setWindowTitle("Sign in to NotebookLM")
+        self.setModal(True)
+        c = theme.c
+        mix = NotebookLMWindow._mix
+        font = "font-family: 'Segoe UI', sans-serif;"
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {c('window_bg')}; }}
+            QLabel#title {{ {font} font-size: 17px; font-weight: 700; color: {c('text')}; }}
+            QLabel#text {{ {font} font-size: 12px; color: {c('text_muted')}; }}
+            QLabel#note {{ {font} font-size: 11px; color: {c('text_gray')}; }}
+            QToolButton#card {{
+                {font} font-size: 9pt; font-weight: 600; color: {c('text')};
+                background-color: {c('panel_bg')};
+                border: 1px solid {c('border')}; border-radius: 14px;
+                padding: 14px 10px 10px 10px;
+            }}
+            QToolButton#card:hover {{
+                border: 2px solid {c('accent')};
+                background-color: {mix('panel_bg', 'accent', 0.06)};
+            }}
+            QToolButton#card:focus {{ border: 2px solid {c('accent')}; }}
+            QToolButton#card:disabled {{
+                color: {c('text_gray')}; background-color: {c('surface_bg')};
+            }}
+            QPushButton#ghost {{
+                {font} font-size: 12px; color: {c('text_muted')};
+                background: transparent; border: none; border-radius: 8px;
+                padding: 6px 14px;
+            }}
+            QPushButton#ghost:hover {{
+                background-color: {mix('window_bg', 'accent', 0.12)}; color: {c('text')};
+            }}
+        """)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(24, 20, 24, 16)
+        lay.setSpacing(10)
+        title = QLabel("Sign in to NotebookLM")
+        title.setObjectName("title")
+        lay.addWidget(title)
+        text = QLabel("Choose the browser for Google's sign-in page. A separate window "
+                      "opens - sign in there and it closes by itself.")
+        text.setObjectName("text")
+        text.setWordWrap(True)
+        lay.addWidget(text)
+
+        row = QHBoxLayout()
+        row.setSpacing(14)
+        first = None
+        for key, (name, _label) in browsers.items():
+            exe = browser_executable(key)
+            btn = QToolButton()
+            btn.setObjectName("card")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+            btn.setIconSize(QSize(48, 48))
+            btn.setMinimumSize(170, 120)
+            if exe:
+                from PySide6.QtWidgets import QFileIconProvider
+                from PySide6.QtCore import QFileInfo
+                btn.setIcon(QFileIconProvider().icon(QFileInfo(exe)))
+                btn.setText(name)
+                btn.clicked.connect(lambda _c=False, k=key: self._pick(k))
+                if first is None or key == last:   # focus the last choice
+                    first = btn
+            else:
+                btn.setText(f"{name}\nnot installed")
+                btn.setEnabled(False)
+            row.addWidget(btn)
+        lay.addLayout(row)
+
+        note = QLabel("🔒  Your everyday browser windows, cookies and passwords are not "
+                      "touched. Your password goes only to Google.")
+        note.setObjectName("note")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        foot = QHBoxLayout()
+        foot.addStretch()
+        cancel = QPushButton("Cancel")
+        cancel.setObjectName("ghost")
+        cancel.setCursor(Qt.PointingHandCursor)
+        cancel.clicked.connect(self.reject)
+        foot.addWidget(cancel)
+        lay.addLayout(foot)
+        if first is not None:
+            first.setFocus()
+
+    def _pick(self, key):
+        self.choice = key
+        self.accept()
+
+
 class NotebookLMWindow(GeometryMemoryMixin, QDialog):
     """Non-modal Gemini/NotebookLM chat window (v1: ask → answer)."""
 
@@ -78,20 +178,14 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self._notebook_id = saved_notebook(self._settings)
         self._worker = None
         self._login_proc = None
-        # One-click auto-detect login state: walk a browser list, verify each
-        # session, stop at the first that actually works (see _start_auto_login).
-        self._auto_login_active = False
-        self._auto_browsers = []
-        self._auto_index = 0
-        self._auto_saw_decrypt = False
-        self._auto_verifier = None
+        self._login_browser = None    # key of LOGIN_BROWSERS the running login uses
         self._thinking = False        # a question is in flight (Send → Stop thinking)
-        # Answer length ("short"/"medium"/"long"); persisted. Medium = NotebookLM
-        # default verbosity.
+        # Answer length ("short"/"long"); persisted. A stored "medium" (an older
+        # choice) or anything unknown falls back to short.
         self._length_key = self._settings.value(
-            "notebooklm/response_length", "medium", type=str)
-        if self._length_key not in ("short", "medium", "long"):
-            self._length_key = "medium"
+            "notebooklm/response_length", "short", type=str)
+        if self._length_key not in ("short", "long"):
+            self._length_key = "short"
         # Question history for Up/Down recall (oldest -> newest); persisted.
         self._history = []
         self._hist_pos = None        # None = editing the live draft
@@ -144,274 +238,306 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
 
-        # Header
-        self.header_label = QLabel("CWatM AI — Gemini NotebookLM assistant")
-        self.header_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.header_label)
-
+        # ---- Header card: icon + title/notebook, status pill, Login/Logout
+        self.header_card = QFrame()
+        self.header_card.setObjectName("aiCard")
+        head = QHBoxLayout(self.header_card)
+        head.setContentsMargins(14, 10, 12, 10)
+        head.setSpacing(12)
+        self.logo_label = QLabel()
+        try:
+            from src.gui.utils.assets import asset_path
+            pix = QIcon(asset_path("cwatm.ico")).pixmap(36, 36)
+            if not pix.isNull():
+                self.logo_label.setPixmap(pix)
+        except Exception:
+            log.debug("CWatM AI logo not loaded", exc_info=True)
+        head.addWidget(self.logo_label, 0, Qt.AlignVCenter)
+        titles = QVBoxLayout()
+        titles.setSpacing(0)
+        self.header_label = QLabel("CWatM AI")
         self.sub_label = QLabel(self._notebook_subtitle())
-        self.sub_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.sub_label)
-
-        # Login-state line (like the NetCDF window's info label) - clearly states
-        # whether you are signed in; colour set in _refresh_login_state().
+        titles.addWidget(self.header_label)
+        titles.addWidget(self.sub_label)
+        head.addLayout(titles, 1)
+        # Login-state pill - clearly states whether you are signed in; colour set
+        # in _refresh_login_state().
         self.status_label = QLabel("")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.status_label)
+        head.addWidget(self.status_label, 0, Qt.AlignVCenter)
+        self.login_button = QPushButton("Login")
+        self.login_button.setCursor(Qt.PointingHandCursor)
+        self.login_button.setToolTip(
+            "Choose a browser (Edge / Chrome) - Google's sign-in page opens in it; "
+            "sign in there")
+        self.login_button.clicked.connect(self._on_login)
+        head.addWidget(self.login_button, 0, Qt.AlignVCenter)
+        layout.addWidget(self.header_card)
 
-        # Transcript (read-only, rich text so we can colour Q/A/status/error)
+        # ---- Transcript (read-only, rich text: questions / answers / status)
         self.transcript = QTextBrowser()
+        self.transcript.setObjectName("aiTranscript")
         # Links in AI answers come from outside: never straight to the desktop (a
         # file:// link to a program would run it) - open_link() decides (sast.md #4)
         from src.gui.utils.open_path import make_links_safe
-        make_links_safe(self.transcript)
+        make_links_safe(self.transcript, intercept=self._on_followup_link)
+        # Tighter paragraph/list spacing than Qt's 12 px default inside answers.
+        self.transcript.document().setDefaultStyleSheet(
+            "p { margin-top: 2px; margin-bottom: 6px; } "
+            "ul, ol { margin-top: 2px; margin-bottom: 4px; }")
         layout.addWidget(self.transcript, 1)
 
-        # Settings-bridge action: explain the settings editor's current line.
-        # (Also triggerable by typing "explain this line".)
+        # ---- Tools row: explain chip, answer-length segmented control, Notebook/Clear
         self.explain_line_button = QPushButton("Explain current line")
+        self.explain_line_button.setObjectName("chip")
+        self.explain_line_button.setCursor(Qt.PointingHandCursor)
         self.explain_line_button.setToolTip(
             "Ask NotebookLM to explain the line the cursor is on in the settings file")
         self.explain_line_button.clicked.connect(self._cmd_explain_line)
-        tools_row = QHBoxLayout()
-        tools_row.setSpacing(8)
-        tools_row.addWidget(self.explain_line_button)
-        tools_row.addStretch()
-        layout.addLayout(tools_row)
 
-        # Input row: multi-line box + Send (Enter sends, Shift+Enter = newline)
-        self.input_box = QPlainTextEdit()
-        self.input_box.setPlaceholderText(
-            "Ask about CWatM…  (Enter to send, Shift+Enter for a new line)")
-        self.input_box.setFixedHeight(64)
-        self.input_box.installEventFilter(self)
-        self.send_button = QPushButton("Send")
-        self.send_button.clicked.connect(self._on_send)
-        input_row = QHBoxLayout()
-        input_row.setSpacing(8)
-        input_row.addWidget(self.input_box, 1)
-        input_row.addWidget(self.send_button)
-        layout.addLayout(input_row)
-
-        # Bottom button row
-        self.login_button = QPushButton("Login…")
-        self.login_button.setToolTip(
-            "One click: finds the browser you are signed in to Google with "
-            "(Firefox / Chrome / Edge / Opera) and stores its session")
-        self.login_button.clicked.connect(self._on_login)
-        # Fallback: pick a specific browser / the Google login window by hand.
-        self.browser_button = QPushButton("Choose browser…")
-        self.browser_button.setToolTip(
-            "Pick a specific browser to read Google cookies from, or open the "
-            "Google login window (if available)")
-        self.browser_button.clicked.connect(self._on_choose_browser)
-        self.notebook_button = QPushButton("Notebook…")
-        self.notebook_button.setToolTip(
-            "Set which NotebookLM notebook (or its URL) to ask")
-        self.notebook_button.clicked.connect(self._on_set_notebook)
-        self.clear_button = QPushButton("Clear")
-        self.clear_button.clicked.connect(self._on_clear)
-        self.exit_button = QPushButton("Exit")
-        self.exit_button.clicked.connect(self.close)
-
-        # Answer-length selector (Short / Medium / Long) - compact exclusive toggle
-        # buttons placed right of Notebook…
-        self.length_caption = QLabel("Length:")
+        self.length_caption = QLabel("Answer length")
         self.length_group = QButtonGroup(self)
         self.length_group.setExclusive(True)
         self._length_buttons = {}
-        for key, label in (("short", "Short"), ("medium", "Medium"), ("long", "Long")):
+        segment = QHBoxLayout()
+        segment.setSpacing(0)
+        keys = (("short", "Short"), ("long", "Long"))
+        for i, (key, label) in enumerate(keys):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setChecked(key == self._length_key)
-            btn.setMaximumWidth(56)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setObjectName("segFirst" if i == 0 else
+                             "segLast" if i == len(keys) - 1 else "segMid")
             btn.setToolTip(f"Ask NotebookLM for a {label.lower()} answer")
             btn.clicked.connect(lambda _c=False, k=key: self._on_length_selected(k))
             self.length_group.addButton(btn)
             self._length_buttons[key] = btn
+            segment.addWidget(btn)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(8)
-        btn_row.addWidget(self.login_button)
-        btn_row.addWidget(self.browser_button)
-        btn_row.addWidget(self.notebook_button)
-        btn_row.addSpacing(6)
-        btn_row.addWidget(self.length_caption)
-        for key in ("short", "medium", "long"):
-            btn_row.addWidget(self._length_buttons[key])
-        btn_row.addStretch()
-        btn_row.addWidget(self.clear_button)
-        btn_row.addWidget(self.exit_button)
-        layout.addLayout(btn_row)
+        self.notebook_button = QPushButton("Notebook…")
+        self.notebook_button.setObjectName("ghost")
+        self.notebook_button.setCursor(Qt.PointingHandCursor)
+        self.notebook_button.setToolTip(
+            "Set which NotebookLM notebook (or its URL) to ask")
+        self.notebook_button.clicked.connect(self._on_set_notebook)
+        self.clear_button = QPushButton("Clear")
+        self.clear_button.setObjectName("ghost")
+        self.clear_button.setCursor(Qt.PointingHandCursor)
+        self.clear_button.setToolTip("Clear the conversation")
+        self.clear_button.clicked.connect(self._on_clear)
+
+        tools_row = QHBoxLayout()
+        tools_row.setSpacing(8)
+        tools_row.addWidget(self.explain_line_button)
+        tools_row.addSpacing(10)
+        tools_row.addWidget(self.length_caption)
+        tools_row.addLayout(segment)
+        tools_row.addStretch()
+        tools_row.addWidget(self.notebook_button)
+        tools_row.addWidget(self.clear_button)
+        layout.addLayout(tools_row)
+
+        # ---- Composer: multi-line box with Send inside (Enter sends, Shift+Enter
+        # = newline)
+        self.composer = QFrame()
+        self.composer.setObjectName("composer")
+        comp = QHBoxLayout(self.composer)
+        comp.setContentsMargins(10, 6, 6, 6)
+        comp.setSpacing(8)
+        self.input_box = QPlainTextEdit()
+        self.input_box.setPlaceholderText(
+            "Ask about CWatM…  (Enter to send, Shift+Enter for a new line)")
+        self.input_box.setFixedHeight(58)
+        self.input_box.installEventFilter(self)
+        self.send_button = QPushButton("Send")
+        self.send_button.setObjectName("primary")
+        self.send_button.setCursor(Qt.PointingHandCursor)
+        self.send_button.clicked.connect(self._on_send)
+        comp.addWidget(self.input_box, 1)
+        comp.addWidget(self.send_button, 0, Qt.AlignBottom)
+        layout.addWidget(self.composer)
 
     # ------------------------------------------------------------------ styling
+    @staticmethod
+    def _mix(token_a, token_b, t):
+        """Blend two theme colours (t = share of b) - for hover / tint shades, so
+        every colour still comes from the active theme."""
+        from PySide6.QtGui import QColor
+        a, b = QColor(theme.c(token_a)), QColor(theme.c(token_b))
+        return QColor(round(a.red() + (b.red() - a.red()) * t),
+                      round(a.green() + (b.green() - a.green()) * t),
+                      round(a.blue() + (b.blue() - a.blue()) * t)).name()
+
     def _apply_theme(self):
         """Theme the window at construction time (like the other secondary
-        windows) - every colour from a theme token."""
-        self.setStyleSheet(
-            f"QDialog {{ background-color: {theme.c('window_bg')}; }}")
-        # Header 14px/600 + muted sub-label - matches the NetCDF window.
+        windows) - every colour from a theme token, flat and rounded."""
+        c, mix = theme.c, self._mix
+        font = "font-family: 'Segoe UI', sans-serif;"
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: {c('window_bg')}; }}
+            QFrame#aiCard {{
+                background-color: {c('panel_bg')};
+                border: 1px solid {c('border')}; border-radius: 12px;
+            }}
+            QFrame#composer {{
+                background-color: {c('panel_bg')};
+                border: 1px solid {c('border')}; border-radius: 14px;
+            }}
+            QFrame#composer QPlainTextEdit {{
+                background: transparent; border: none; color: {c('text')};
+                {font} font-size: 13px; padding: 4px 2px;
+            }}
+            QPushButton#primary {{
+                {font} font-size: 12px; font-weight: 600;
+                color: {c('menu_sel_text')}; background-color: {c('accent')};
+                border: none; border-radius: 10px; padding: 8px 18px; min-height: 22px;
+            }}
+            QPushButton#primary:hover {{ background-color: {mix('accent', 'panel_bg', 0.18)}; }}
+            QPushButton#primary:pressed {{ background-color: {mix('accent', 'text', 0.2)}; }}
+            QPushButton#primary:disabled {{
+                background-color: {c('border')}; color: {c('text_gray')};
+            }}
+            QPushButton#secondary {{
+                {font} font-size: 12px; font-weight: 600; color: {c('text')};
+                background-color: {c('panel_bg')};
+                border: 1px solid {c('border')}; border-radius: 10px;
+                padding: 7px 16px; min-height: 22px;
+            }}
+            QPushButton#secondary:hover {{
+                border-color: {c('accent')}; background-color: {c('surface_bg')};
+            }}
+            QPushButton#secondary:disabled {{ color: {c('text_gray')}; }}
+            QPushButton#ghost {{
+                {font} font-size: 12px; color: {c('text_muted')};
+                background: transparent; border: none; border-radius: 8px;
+                padding: 5px 10px;
+            }}
+            QPushButton#ghost:hover {{
+                background-color: {mix('window_bg', 'accent', 0.12)}; color: {c('text')};
+            }}
+            QPushButton#chip {{
+                {font} font-size: 12px; color: {c('accent')};
+                background-color: {mix('panel_bg', 'accent', 0.08)};
+                border: 1px solid {mix('panel_bg', 'accent', 0.35)};
+                border-radius: 11px; padding: 3px 12px; min-height: 18px;
+            }}
+            QPushButton#chip:hover {{ background-color: {mix('panel_bg', 'accent', 0.18)}; }}
+            QPushButton#segFirst, QPushButton#segMid, QPushButton#segLast {{
+                {font} font-size: 11px; color: {c('text_muted')};
+                background-color: {c('panel_bg')};
+                border: 1px solid {c('border')}; padding: 4px 12px; min-height: 18px;
+            }}
+            QPushButton#segFirst {{
+                border-top-left-radius: 13px; border-bottom-left-radius: 13px;
+            }}
+            QPushButton#segMid {{ border-left: none; }}
+            QPushButton#segLast {{
+                border-left: none;
+                border-top-right-radius: 13px; border-bottom-right-radius: 13px;
+            }}
+            QPushButton#segFirst:hover, QPushButton#segMid:hover,
+            QPushButton#segLast:hover {{ background-color: {c('surface_bg')}; }}
+            QPushButton#segFirst:checked, QPushButton#segMid:checked,
+            QPushButton#segLast:checked {{
+                background-color: {c('accent')}; color: {c('menu_sel_text')};
+                border-color: {c('accent')}; font-weight: 600;
+            }}
+        """)
         self.header_label.setStyleSheet(
-            "font-family: 'Segoe UI', sans-serif; font-size: 14px; font-weight: 600; "
-            f"color: {theme.c('text')}; padding: 4px;")
+            f"{font} font-size: 17px; font-weight: 700; color: {c('text')};")
         self.sub_label.setStyleSheet(
-            "font-family: 'Segoe UI', sans-serif; font-size: 12px; "
-            f"color: {theme.c('text_muted')}; padding: 2px 8px;")
-        # One triple-quoted f-string (do NOT concatenate f-strings with plain strings:
-        # a plain-string "}}" stays two braces and corrupts the QSS). Blue, round-edged
-        # scrollbar matching the main-window settings editor (accent handle, surface_bg
-        # groove) — vertical and horizontal.
+            f"{font} font-size: 11px; color: {c('text_gray')};")
+        self.length_caption.setStyleSheet(
+            f"{font} font-size: 11px; color: {c('text_gray')};")
+        # Transcript: a flat card with the thin rounded accent scrollbar used by the
+        # settings editor. One triple-quoted f-string (do NOT concatenate f-strings
+        # with plain strings: a plain-string "}}" stays two braces and corrupts QSS).
         self.transcript.setStyleSheet(f"""
             QTextBrowser {{
-                background-color: {theme.c('out_bg')};
-                color: {theme.c('out_text')};
-                border: 1px solid {theme.c('out_border')};
-                border-radius: 8px;
-                padding: 8px;
-                font-family: 'Segoe UI', sans-serif;
-                font-size: 13px;
+                background-color: {c('panel_bg')}; color: {c('text')};
+                border: 1px solid {c('border')}; border-radius: 12px;
+                padding: 10px 12px; {font} font-size: 13px;
+                selection-background-color: {c('sel_bg')};
+                selection-color: {c('sel_text')};
             }}
             QScrollBar:vertical {{
-                background-color: {theme.c('surface_bg')};
-                width: 18px;
-                border-radius: 7px;
-                margin: 2px;
+                background: transparent; width: 10px; margin: 6px 2px;
             }}
             QScrollBar::handle:vertical {{
-                background-color: {theme.c('accent')};
-                border-radius: 7px;
-                min-height: 28px;
+                background-color: {mix('panel_bg', 'accent', 0.45)};
+                border-radius: 4px; min-height: 28px;
             }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: {theme.c('menu_sel_bg')};
-            }}
+            QScrollBar::handle:vertical:hover {{ background-color: {c('accent')}; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
             QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
             QScrollBar:horizontal {{
-                background-color: {theme.c('surface_bg')};
-                height: 18px;
-                border-radius: 7px;
-                margin: 2px;
+                background: transparent; height: 10px; margin: 2px 6px;
             }}
             QScrollBar::handle:horizontal {{
-                background-color: {theme.c('accent')};
-                border-radius: 7px;
-                min-width: 28px;
+                background-color: {mix('panel_bg', 'accent', 0.45)};
+                border-radius: 4px; min-width: 28px;
             }}
-            QScrollBar::handle:horizontal:hover {{
-                background-color: {theme.c('menu_sel_bg')};
-            }}
+            QScrollBar::handle:horizontal:hover {{ background-color: {c('accent')}; }}
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
             QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{ background: none; }}
         """)
-        self.input_box.setStyleSheet(
-            f"QPlainTextEdit {{ background-color: {theme.c('field_bg')}; "
-            f"color: {theme.c('field_text')}; border: 1px solid {theme.c('field_border')}; "
-            "border-radius: 6px; padding: 6px; "
-            "font-family: 'Segoe UI', sans-serif; font-size: 13px; }")
-        # Blue gradient action buttons like the NetCDF window (Send stands out); a
-        # lighter blue variant is used while a question is in flight ("Stop thinking").
-        blue = self._button_style(
-            "#5dade2", "#3498db", "#85c1e9", "#5dade2", "#3498db", "white")
-        self._send_style = blue
-        self._stop_style = self._button_style(
-            "#aed6f1", "#85c1e9", "#d4e6f1", "#aed6f1", "#5dade2", "white")
-        self.send_button.setStyleSheet(self._stop_style if self._thinking else blue)
-        # Neutral (grey) buttons: Notebook / Clear / Exit.
-        grey = self._button_style(
-            theme.c('btn_top'), theme.c('btn_bottom'), theme.c('btn_hover_top'),
-            theme.c('btn_hover_bottom'), theme.c('btn_border'), theme.c('btn_text'))
-        for b in (self.browser_button, self.notebook_button, self.clear_button,
-                  self.exit_button, self.explain_line_button):
-            b.setStyleSheet(grey)
-        self.length_caption.setStyleSheet(
-            "font-family: 'Segoe UI', sans-serif; font-size: 12px; "
-            f"color: {theme.c('text_muted')};")
-        self._style_length_buttons()
-        # The login button is coloured by sign-in state (blue = in, red = out).
+        self._on_busy(self._thinking)
+        # The login button + pill follow the sign-in state.
         self._refresh_login_state()
 
-    @staticmethod
-    def _compact_button_style(top, bottom, htop, hbottom, border, text):
-        """A smaller variant of _button_style for the length selector."""
-        return f"""
-            QPushButton {{
-                font-family: 'Segoe UI', sans-serif; font-size: 11px; font-weight: 500;
-                color: {text}; border: 1px solid {border}; border-radius: 5px;
-                padding: 2px 6px; min-height: 18px;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {top}, stop:1 {bottom});
-            }}
-            QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {htop}, stop:1 {hbottom}); }}
-        """
-
     def _style_length_buttons(self):
-        """Selected length button = blue, the others grey (compact)."""
-        blue = self._compact_button_style(
-            "#5dade2", "#3498db", "#85c1e9", "#5dade2", "#3498db", "white")
-        grey = self._compact_button_style(
-            theme.c('btn_top'), theme.c('btn_bottom'), theme.c('btn_hover_top'),
-            theme.c('btn_hover_bottom'), theme.c('btn_border'), theme.c('btn_text'))
+        """The segmented control styles itself through :checked - keep the checked
+        button in step with the chosen length."""
         for key, btn in self._length_buttons.items():
-            btn.setStyleSheet(blue if key == self._length_key else grey)
-
-    @staticmethod
-    def _button_style(top, bottom, htop, hbottom, border, text):
-        return f"""
-            QPushButton {{
-                font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 500;
-                color: {text}; border: 1px solid {border}; border-radius: 6px;
-                padding: 6px 14px; min-height: 24px;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {top}, stop:1 {bottom});
-            }}
-            QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 {htop}, stop:1 {hbottom}); }}
-            QPushButton:disabled {{ background: #d3d3d3; color: #a9a9a9; }}
-        """
+            btn.setChecked(key == self._length_key)
 
     # ------------------------------------------------------------ login state UI
     def _refresh_login_state(self):
-        """Colour the Login button + status label by the **verified** sign-in state.
-        A stored session file alone only counts once confirmed valid (blue); an
-        expired/invalid session shows **red** like being logged out."""
-        blue = ("#5dade2", "#3498db", "#85c1e9", "#5dade2", "#3498db", "white")
-        red = ("#ec7063", "#e74c3c", "#f1948a", "#ec7063", "#c0392b", "white")
+        """Set the Login button + status pill by the **verified** sign-in state.
+        A stored session file alone only counts once confirmed valid; an
+        expired/invalid session shows like being logged out."""
         has_file = self._is_authenticated()
 
-        if has_file and self._auth_verified is None:
-            # File exists but not yet verified - neutral "checking" (blue-ish).
+        # The button has three faces: "Checking…" while a stored session is being
+        # verified (disabled), "Logout" once it is confirmed, "Login" otherwise.
+        if (has_file and self._auth_verified is None
+                and not getattr(self, "_auth_unverifiable", False)):
             self.login_button.setText("Checking…")
             self.login_button.setToolTip("Verifying your NotebookLM session…")
-            self.login_button.setStyleSheet(self._button_style(*blue))
-            self.status_label.setText("● Checking NotebookLM session…")
-            colour = "#2e86c1"
+            self.login_button.setObjectName("secondary")
+            self.login_button.setEnabled(False)
+            pill, colour = "Checking session…", "accent"
         elif self._auth_verified is True:
-            self.login_button.setText("✓ Logged in")
+            self.login_button.setText("Logout")
             self.login_button.setToolTip(
-                "Logged in to NotebookLM. Click to sign in again if needed.")
-            self.login_button.setStyleSheet(self._button_style(*blue))
-            self.status_label.setText("● Logged in to NotebookLM")
-            colour = "#2e86c1"
+                "Logged in to NotebookLM - click to log out (removes the stored "
+                "Google session from this computer)")
+            self.login_button.setObjectName("secondary")
+            self.login_button.setEnabled(self._login_proc is None)
+            pill, colour = "Logged in", "ok_color"
         else:
             # No session file, or a stored session that failed verification (expired).
             expired = has_file and self._auth_verified is False
-            self.login_button.setText("Login required" if expired else "Login…")
+            self.login_button.setText("Login")
             self.login_button.setToolTip(
                 "Your NotebookLM session has expired - click to log in again."
                 if expired else "Not logged in - click to sign in to NotebookLM.")
-            self.login_button.setStyleSheet(self._button_style(*red))
-            self.status_label.setText(
-                "● Session expired — press 'Login required'" if expired
-                else "● Not logged in — press 'Login…'")
-            colour = "#c0392b"
+            self.login_button.setObjectName("primary")
+            self.login_button.setEnabled(self._login_proc is None)
+            pill, colour = (("Session expired", "out_error") if expired
+                            else ("Not logged in", "text_gray"))
+        # objectName changed -> re-polish so the stylesheet rule applies
+        self.login_button.style().unpolish(self.login_button)
+        self.login_button.style().polish(self.login_button)
+        self.status_label.setText(f"●  {pill}")
         self.status_label.setStyleSheet(
-            "font-family: 'Segoe UI', sans-serif; font-size: 12px; font-weight: 600; "
-            f"color: {colour}; padding: 2px;")
+            "font-family: 'Segoe UI', sans-serif; font-size: 11px; font-weight: 600; "
+            f"color: {theme.c(colour)}; "
+            f"background-color: {self._mix('panel_bg', colour, 0.12)}; "
+            "border-radius: 9px; padding: 3px 10px; min-height: 16px;")
 
     # -------------------------------------------------------- auth verification
     def _start_auth_check(self):
@@ -421,6 +547,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         if self._auth_checker is not None:
             return                      # already running
         self._auth_verified = None
+        self._auth_unverifiable = False
         self._refresh_login_state()
         self._auth_checker = _AuthCheckWorker(parent=self)
         self._auth_checker.result.connect(self._on_auth_result)
@@ -446,23 +573,30 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         elif status == "no_session":
             self._auth_verified = None
             self._refresh_login_state()
-        else:  # "error" - network/proxy issue; leave state unknown, just note it.
+        else:  # "error" - network/proxy issue; state unknown - note it and leave
+            # "Checking…" (the button offers Login again).
+            self._auth_unverifiable = True
+            self._refresh_login_state()
             self._append_status(message)
 
     def _prompt_reauth(self):
         """Offer to log in again after detecting an expired session."""
-        if _IS_FROZEN:
-            self._append_error(
-                "Log in again from a terminal:  notebooklm login  (or "
-                "notebooklm login --browser-cookies firefox), then reopen this window.")
+        self._offer_login(
+            "Your NotebookLM session has expired. Log in again now?")
+
+    def _offer_login(self, text=None):
+        """Ask whether to log in now (Google's sign-in page in a chosen browser)."""
+        if self._login_proc is not None:
             return
+        if text is None:
+            text = ("You are not logged in to NotebookLM. CWatM AI needs a "
+                    "Google login to answer questions.\n\nLog in now?")
         resp = QMessageBox.question(
             self, "NotebookLM login",
-            "Your NotebookLM session has expired. Log in again now?\n\n"
-            "This opens a Google sign-in window in your browser.",
+            text + "\n\nGoogle's sign-in page opens in a browser you choose.",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if resp == QMessageBox.Yes:
-            self._start_google_login()
+            self._choose_browser_and_login()
 
     # ------------------------------------------------------- state persistence
     def _restore_state(self):
@@ -483,6 +617,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
                 sb = self.transcript.verticalScrollBar()
                 sb.setValue(sb.maximum())
                 restored = True
+                self._exchange_done = True   # set the first new question apart
         except Exception:
             log.debug("transcript restore failed", exc_info=True)
         return restored
@@ -497,49 +632,195 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
             log.debug("state save failed", exc_info=True)
 
     # ---------------------------------------------------------------- transcript
-    def _append_html(self, html):
+    def _append_html(self, html, transient=False):
+        """Append to the transcript. A ``transient`` line (the worker's
+        "Connecting…" / "Thinking…" progress notes) is removed again as soon as
+        anything else is appended - e.g. the answer."""
+        self._drop_transient()
+        doc = self.transcript.document()
+        start = doc.characterCount() - 1
+        if transient:
+            self._transient_from = start
         self.transcript.append(html)  # html-safe: callers escape (_esc) or render markdown with html=False
+        self._squash_spacer_blocks(start)
         sb = self.transcript.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-    def _append_status(self, text):
+    def _squash_spacer_blocks(self, start):
+        """append() of a table leaves an empty paragraph before and after it, each a
+        full text line high - that read as blank lines between every message. Make
+        those empty (non-table) blocks 2 px high so only the blocks' own margins
+        separate the messages."""
+        from PySide6.QtGui import QTextBlockFormat, QTextCursor
+        block = self.transcript.document().findBlock(max(0, start))
+        while block.isValid():
+            cur = QTextCursor(block)
+            if not block.text() and cur.currentTable() is None:
+                fmt = block.blockFormat()
+                fmt.setTopMargin(0)
+                fmt.setBottomMargin(0)
+                fmt.setLineHeight(
+                    0, QTextBlockFormat.LineHeightTypes.FixedHeight.value)
+                cur.setBlockFormat(fmt)
+                cf = cur.blockCharFormat()
+                cf.setFontPointSize(1)
+                cur.setBlockCharFormat(cf)
+            block = block.next()
+
+    def _drop_transient(self):
+        """Remove the transient progress lines appended since the last real one."""
+        start = getattr(self, "_transient_from", None)
+        self._transient_from = None
+        if start is None:
+            return
+        from PySide6.QtGui import QTextCursor
+        cur = QTextCursor(self.transcript.document())
+        cur.setPosition(max(0, start))
+        cur.movePosition(QTextCursor.End, QTextCursor.KeepAnchor)
+        cur.removeSelectedText()
+
+    # The worker's progress notes - shown while waiting, removed with the answer.
+    _TRANSIENT_STATUS = {"Connecting to NotebookLM…", "Connected.", "Ready.",
+                         "Thinking…"}
+
+    def _on_worker_status(self, text):
+        if text in self._TRANSIENT_STATUS:
+            self._append_status(text, transient=True)
+        else:
+            self._append_status(text)
+            if text == "Stopped.":            # a stopped question ends the exchange too
+                self._exchange_done = True
+
+    def _exchange_separator(self):
+        """A bold accent line before a new question / explain request, once an
+        answer (or error) closed the previous exchange - so each question + answer
+        is clearly set apart."""
+        if not getattr(self, "_exchange_done", False):
+            return
+        self._exchange_done = False
         self._append_html(
-            f'<div style="color:{theme.c("text_muted")};"><i>{self._esc(text)}</i></div>')
+            f'<table width="100%" cellspacing="0" cellpadding="0" '
+            f'style="margin-top:16px; margin-bottom:4px;"><tr>'
+            f'<td bgcolor="{theme.c("accent")}" style="font-size:3px;">&nbsp;</td>'
+            f'</tr></table>')
+
+    # Chat blocks. Qt rich text knows tables + cell colours but no border-radius, so
+    # a message is a one-row table: a tinted block for your question (right), a
+    # thin accent bar + soft block for the answer, small centred status lines.
+    def _block(self, body, bar, bg, label, label_colour, indent=0):
+        left = f'<td width="{indent}%"></td>' if indent else ""
+        bar_td = f'<td width="3" bgcolor="{bar}"></td>' if bar else ""
+        return (f'<table width="100%" cellspacing="0" cellpadding="0" '
+                f'style="margin-top:10px;"><tr>{left}{bar_td}'
+                f'<td bgcolor="{bg}" style="padding:8px 12px;">'
+                f'<p style="margin-top:0; margin-bottom:4px; font-size:11px; '
+                f'font-weight:600; color:{label_colour};">'
+                f'{label}</p>{body}</td></tr></table>')
+
+    def _append_status(self, text, transient=False):
+        # a table cell: a bare <p align="center"> loses its alignment in append()
+        self._append_html(
+            f'<table width="100%" cellspacing="0" cellpadding="0" '
+            f'style="margin-top:2px;"><tr><td align="center" style="font-size:11px; '
+            f'color:{theme.c("text_gray")};">{self._esc(text)}</td></tr></table>',
+            transient=transient)
 
     def _append_error(self, text):
-        self._append_html(
-            f'<div style="color:{theme.c("out_error")};"><b>Error:</b> '
-            f'{self._esc(text)}</div>')
+        c = theme.c
+        self._append_html(self._block(
+            self._esc(text), c("out_error"), self._mix("panel_bg", "out_error", 0.08),
+            "Error", c("out_error")))
+        self._exchange_done = True
 
     def _append_label_line(self, label, text=""):
-        """A notice with a **bold blue label** and normal-weight body text (in the
-        regular text colour) - e.g. 'Explaining settings line: <line>'."""
+        """A notice with a bold accent label and the body text - e.g. 'Explaining
+        settings line: <line>'."""
         body = ""
         if text:
-            body = (f' <span style="color:{theme.c("out_text")}; '
-                    f'font-weight:normal;">{self._esc(text)}</span>')
+            body = (f' <span style="color:{theme.c("text")}; font-family:Consolas,'
+                    f'monospace;">{self._esc(text)}</span>')
+        self._exchange_separator()
         self._append_html(
-            f'<div style="margin-top:6px;"><b style="color:{theme.c("link_color")};">'
-            f'{self._esc(label)}</b>{body}</div>')
+            f'<p style="margin-top:10px;"><b style="color:{theme.c("accent")};">'
+            f'{self._esc(label)}</b>{body}</p>')
 
     def _append_question(self, text):
-        self._append_html(
-            f'<div style="margin-top:6px;"><b style="color:{theme.c("link_color")};">'
-            f'You:</b> {self._esc(text)}</div>')
+        c = theme.c
+        self._exchange_separator()
+        self._append_html(self._block(
+            self._esc(text), None, self._mix("panel_bg", "accent", 0.10),
+            "You", c("accent"), indent=18))
 
     def _append_answer(self, text):
         # NotebookLM answers are markdown - render them so bold/lists/tables/code show.
-        body = self._render_markdown(text)
-        self._append_html(
-            f'<div><b style="color:{theme.c("ok_color")};">Gemini:</b></div>'
-            f'<div>{body}</div>')
-        self._append_separator()
+        c = theme.c
+        body_text, followup, icon = self._split_followup_icon(text)
+        body = self._render_markdown(body_text)
+        if followup:
+            body += self._followup_html(followup, icon)
+        self._append_html(self._block(
+            body, c("accent"), c("surface_bg"), "CWatM AI", c("text_gray")))
+        self._exchange_done = True
 
-    def _append_separator(self):
-        """One carriage return + a horizontal rule between an answer and the next
-        question (no extra blank line)."""
-        self._append_html(
-            f'<hr style="height:1px; border:none; background-color:{theme.c("border")};">')
+    # ------------------------------------------------- follow-up offer (clickable)
+    _FOLLOWUP_SCHEME = "cwatmai"
+
+    @classmethod
+    def _split_followup(cls, text):
+        """NotebookLM often ends an answer with an offer such as "💡 Would you like
+        to review how to set up the SpinUp?". Return (rest, question) when the last
+        sentence is such a question, else (text, None)."""
+        rest, question, _icon = cls._split_followup_icon(text)
+        return rest, question
+
+    _DEFAULT_FOLLOWUP_ICON = "💬"
+
+    @staticmethod
+    def _split_followup_icon(text):
+        """Like ``_split_followup`` plus the pictogram NotebookLM put in front of
+        the question (or None) - (rest, question, icon)."""
+        text = (text or "").replace("\r\n", "\n").rstrip()
+        # The offer is the LAST sentence of the answer - often at the end of the
+        # last paragraph, not a paragraph of its own. Citation marks ([1], [2, 3])
+        # and markdown emphasis may follow or wrap it.
+        m = re.search(
+            r"(?:^|(?<=[.!?:)\]])\s+|\n)"              # sentence / line start
+            r"([^\w\n]*"                # pictogram, emphasis / list / quote marks
+            r"((?:would|do|shall|should|can|could|are|is|want|may|if you|let me)"
+            r"\b[^\n?]{3,300}\?)"                      # the question itself
+            r"[*_\s]*(?:\[\d+(?:\s*[,-]\s*\d+)*\][*_\s]*)*)$",
+            text, re.I)
+        if not m:
+            return text, None, None
+        question = re.sub(r"\s*\[\d+(?:\s*[,-]\s*\d+)*\]", "", m.group(2))
+        question = question.strip().strip("*_").strip()
+        # The answer's own pictogram (anything but markdown marks and spaces).
+        prefix = text[m.start(1):m.start(2)]
+        icon = re.sub(r"[\s*_>#\-]", "", prefix) or None
+        rest = text[:m.start(1)].rstrip()
+        return rest, question, icon
+
+    def _followup_html(self, question, icon=None):
+        """The follow-up offer: a clickable pictogram (the answer's own, else 💬)
+        + the question as plain text. The pictogram asks it
+        (``_on_followup_link``; the question travels in the URL, so a restored
+        transcript keeps working)."""
+        from urllib.parse import quote
+        href = f"{self._FOLLOWUP_SCHEME}:ask?q={quote(question, safe='')}"
+        icon = self._esc(icon or self._DEFAULT_FOLLOWUP_ICON)
+        return (f'<p style="margin-top:6px; margin-bottom:0;">'
+                f'<a href="{href}" style="text-decoration:none; font-size:15px;">'
+                f'{icon}</a>&nbsp;{self._esc(question)}</p>')
+
+    def _on_followup_link(self, url):
+        """A click on a follow-up offer: ask it. Other links -> False (open_link)."""
+        if url.scheme().lower() != self._FOLLOWUP_SCHEME:
+            return False
+        from urllib.parse import parse_qs
+        q = (parse_qs(url.query()).get("q") or [""])[0].strip()
+        if q and not self._thinking:
+            self._submit_question(f"Yes, please. {q}", echo=True)
+        return True
 
     @staticmethod
     def _render_markdown(text):
@@ -675,6 +956,14 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
             return
         if echo:
             self._append_question(question)
+        # Known to be logged out (no session file, or one that failed
+        # verification): guide to the login instead of a cryptic server error.
+        if not self._is_authenticated() or self._auth_verified is False:
+            self._append_error(
+                "You are not logged in to NotebookLM - log in first (Login button), "
+                "then ask again.")
+            self._offer_login()
+            return
         self._ensure_worker()
         self._worker.ask(question)
 
@@ -732,7 +1021,7 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self._worker = NotebookLMWorker(
             notebook_id=self._notebook_id or None,
             response_length=self._length_key, parent=self)
-        self._worker.status.connect(self._append_status)
+        self._worker.status.connect(self._on_worker_status)
         self._worker.reply.connect(self._on_reply)
         self._worker.error.connect(self._on_worker_error)
         self._worker.busy.connect(self._on_busy)
@@ -741,8 +1030,8 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
     def _warm_worker(self):
         """Pre-connect the NotebookLM worker in the background (once the session is
         confirmed valid) so the first question skips the connect round-trips.
-        No-op while a question is in flight or an auto-login is running."""
-        if self._thinking or self._auto_login_active:
+        No-op while a question is in flight or a login is running."""
+        if self._thinking or self._login_proc is not None:
             return
         try:
             self._ensure_worker()
@@ -765,12 +1054,19 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         self._append_answer(answer or "(no answer returned)")
 
     def _on_worker_error(self, msg):
-        self._append_error(msg)
         # If the failure is an expired/invalid session, flip to the logged-out (red)
         # state and offer to re-authenticate.
         try:
             from src.gui.utils.notebooklm_client import is_auth_error
-            if is_auth_error(msg):
+            auth = is_auth_error(msg)
+        except Exception:
+            log.debug("auth-error detection failed", exc_info=True)
+            auth = False
+        self._append_error(
+            "You are not logged in to NotebookLM (the stored session is invalid or "
+            "expired) - log in again with the Login button." if auth else msg)
+        try:
+            if auth:
                 self._auth_verified = False
                 self._refresh_login_state()
                 self._reset_worker()          # drop the dead session
@@ -779,15 +1075,17 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
             log.debug("auth-error detection failed", exc_info=True)
 
     def _on_busy(self, busy):
-        """While a question is in flight the Send button becomes a light-blue **Stop
+        """While a question is in flight the Send button becomes an outlined **Stop
         thinking** button (still clickable) that cancels the request; otherwise it is
-        the blue **Send** button."""
+        the accent **Send** button."""
         self._thinking = busy
+        if not busy:
+            self._drop_transient()    # a finished question never leaves "Thinking…"
         self.send_button.setEnabled(True)
         self.send_button.setText("Stop thinking" if busy else "Send")
-        style = getattr(self, "_stop_style" if busy else "_send_style", None)
-        if style:
-            self.send_button.setStyleSheet(style)
+        self.send_button.setObjectName("secondary" if busy else "primary")
+        self.send_button.style().unpolish(self.send_button)
+        self.send_button.style().polish(self.send_button)
 
     def _stop_thinking(self):
         """Stop the in-flight NotebookLM question. The worker cancels its async call
@@ -837,39 +1135,84 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
 
     @staticmethod
     def _playwright_available():
-        """True if the Playwright package can be imported (needed for the
-        interactive Google login window). Not bundled in the frozen build, so this
-        is normally only true from source."""
+        """True if the Playwright package can be imported - it drives the browser
+        window of the Google login. Not bundled in the frozen build."""
         try:
             import importlib.util
             return importlib.util.find_spec("playwright") is not None
         except Exception:
             return False
 
+    # The browsers the Google login can open in: key -> (button text, label used
+    # in the login script's "<label> not found." message). Both are driven by
+    # src/gui/utils/notebooklm_browser_login.py (the keys are its BROWSERS keys).
+    # Each is the INSTALLED browser in a fresh private session - nothing is
+    # downloaded, and no browser's cookies or data are ever read.
+    LOGIN_BROWSERS = {
+        "msedge": ("Microsoft Edge", "Microsoft Edge"),
+        "chrome": ("Google Chrome", "Google Chrome"),
+    }
+    _LOGIN_BROWSER_KEY = "notebooklm/login_browser"
+
     def _on_login(self):
-        """One-click login: auto-detect the browser you are signed in to Google
-        with. Tries Firefox → Chrome → Edge → Opera, verifying each session, and
-        stops at the first that actually works. The old per-browser picker is the
-        'Choose browser…' fallback (``_on_choose_browser``)."""
-        if self._login_proc is not None or self._auto_login_active:
+        """The Login / Logout button: logged in (verified) → log out; otherwise
+        choose a browser and sign in on Google's page in it."""
+        if self._login_proc is not None:
             QMessageBox.information(self, "Login", "A login is already running.")
             return
-        # Already signed in? Re-login is unnecessary - offer to skip it.
-        if self._is_authenticated() and self._auth_verified is not False:
-            resp = QMessageBox.question(
-                self, "Login",
-                "You already have a working NotebookLM session - you can ask "
-                "questions without logging in again.\n\nRe-login anyway?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if resp != QMessageBox.Yes:
-                return
-        if not self._cookie_login_agreed():
+        if self._auth_verified is True:
+            self._logout()
             return
-        self._start_auto_login()
+        # Not verified as working: a session file alone proves nothing (it may be
+        # stale or unverifiable), so the Login button always starts the login.
+        self._choose_browser_and_login()
+
+    def _logout(self):
+        """Logout: ask, then remove the stored Google session (notebooklm's own
+        logout - session file, login-window profile, context cache)."""
+        resp = QMessageBox.question(
+            self, "Logout",
+            "Log out of NotebookLM?\n\nThe stored Google session is removed from "
+            "this computer; you will need to sign in again to ask questions.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if resp != QMessageBox.Yes:
+            return
+        self._reset_worker()          # the worker holds the old session
+        from src.gui.utils.notebooklm_client import logout
+        error = logout()
+        self._auth_verified = None
+        self._auth_unverifiable = False
+        self._refresh_login_state()
+        if error:
+            self._append_error(f"Logout failed: {error}")
+        else:
+            self._append_status("Logged out of NotebookLM.")
+
+    def _choose_browser_and_login(self):
+        if not self._playwright_available():
+            self._append_error(
+                "The Google login needs the 'playwright' package, which is not "
+                "installed. Install it once with:\n"
+                "    pip install playwright\n"
+                "then try Login again.")
+            return
+        if not self._window_login_agreed():
+            return
+        browser = self._ask_login_browser()
+        if browser:
+            self._start_window_login(browser)
+
+    def _ask_login_browser(self):
+        """The browser picker (``BrowserPickerDialog``); returns a LOGIN_BROWSERS
+        key or None (cancel). The last choice is pre-selected."""
+        last = self._settings.value(self._LOGIN_BROWSER_KEY, "msedge", type=str)
+        dlg = BrowserPickerDialog(self.LOGIN_BROWSERS, last, self)
+        key = dlg.choice if dlg.exec() == QDialog.Accepted else None
+        if key:
+            self._settings.setValue(self._LOGIN_BROWSER_KEY, key)
+        return key
 
     # ------------------------------------------------- what a login stores (once)
-    _COOKIE_CONSENT_KEY = "notebooklm/cookie_login_agreed"
-
     @staticmethod
     def session_file_text():
         """Where the Google session is kept, for the user (security.md #5)."""
@@ -879,13 +1222,16 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
         except Exception:
             return r"%USERPROFILE%\.notebooklm\profiles\…\storage_state.json"
 
+    _WINDOW_CONSENT_KEY = "notebooklm/window_login_agreed"
+
     @classmethod
-    def cookie_login_text(cls):
-        return ("CWatM AI logs in to NotebookLM with the Google session of a browser "
-                "you are signed in to:\n\n"
-                "• It READS the Google login cookies from your browsers (Firefox, "
-                "Chrome, Edge, Opera - first one that works).\n"
-                "• It STORES that Google session in a file on this computer:\n"
+    def window_login_text(cls):
+        return ("CWatM AI logs in to NotebookLM through Google's own sign-in page:\n\n"
+                "• You choose a browser (Edge or Chrome); a separate window "
+                "of it opens on Google's sign-in page - sign in there, it closes by "
+                "itself. Your password goes only to Google.\n"
+                "• None of your browsers' cookies or data are read.\n"
+                "• It STORES the Google session in a file on this computer:\n"
                 f"   {cls.session_file_text()}\n"
                 "  Anyone - or any program - with access to your Windows account could "
                 "use that file to act as your Google account. Delete the file (or the "
@@ -893,224 +1239,35 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
                 "• The session is used only to ask NotebookLM; it is never sent to the "
                 "CWatM account server or anywhere else.")
 
-    def _cookie_login_agreed(self):
-        """Ask once, before the first cookie read; the answer is remembered."""
-        if self._settings.value(self._COOKIE_CONSENT_KEY, False, type=bool):
+    def _window_login_agreed(self):
+        """Ask once, before the first login; the answer is remembered."""
+        if self._settings.value(self._WINDOW_CONSENT_KEY, False, type=bool):
             return True
         resp = QMessageBox.question(
             self, "Login to NotebookLM",
-            self.cookie_login_text() + "\n\nContinue?",
+            self.window_login_text() + "\n\nContinue?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if resp != QMessageBox.Yes:
             return False
-        self._settings.setValue(self._COOKIE_CONSENT_KEY, True)
+        self._settings.setValue(self._WINDOW_CONSENT_KEY, True)
         return True
 
-    # ------------------------------------------------------ auto-detect login
-    def _start_auto_login(self):
-        """Begin the one-click browser auto-detect sequence."""
-        self._auto_login_active = True
-        self._auto_saw_decrypt = False
-        # Firefox first: its cookie store is readable without elevation, so it is
-        # the most likely to succeed on Windows. Chromium browsers follow.
-        self._auto_browsers = ["firefox", "chrome", "edge", "opera"]
-        self._auto_index = 0
-        self._append_status("Looking for a signed-in Google session in your browsers…")
-        self._auto_try_next()
-
-    def _auto_try_next(self):
-        """Attempt the next browser in the list, or finish if none are left."""
-        if self._auto_index >= len(self._auto_browsers):
-            self._auto_login_failed()
-            return
-        browser = self._auto_browsers[self._auto_index]
-        self._append_status(f"Trying {browser.capitalize()}…")
-        self._run_login_process(["login", "--browser-cookies", browser])
-
-    def _auto_after_login(self, exit_code, out):
-        """Handle a browser-cookie login process that finished during auto-detect."""
-        browser = self._auto_browsers[self._auto_index].capitalize()
-        low = out.lower()
-        # rookiepy missing is fatal for *every* browser path - stop the whole run.
-        if "rookiepy is not installed" in out or "no module named 'rookiepy'" in low:
-            self._auto_login_active = False
-            self._append_error(
-                "Reading browser cookies needs the 'rookiepy' package, which is "
-                "not installed. Install it once with:\n"
-                "    pip install rookiepy\n"
-                "(or  pip install \"notebooklm-py[cookies]\" ), then try Login again.")
-            self._refresh_login_state()
-            return
-        # Windows Chrome/Edge/Opera app-bound cookie encryption - note it so the
-        # final message can point at 'Run as administrator' / Firefox.
-        if ("could not decrypt" in low or "decrypt" in low or "app-bound" in low
-                or "appbound" in low or "as admin" in low):
-            self._auto_saw_decrypt = True
-        # This browser produced a session file - verify it really works before
-        # declaring success (cookies may exist but not authenticate NotebookLM).
-        if exit_code == 0 and self._is_authenticated():
-            self._append_status(f"Found a {browser} session — verifying…")
-            self._auto_verify()
-            return
-        # No usable session from this browser - move on.
-        self._auto_index += 1
-        self._auto_try_next()
-
-    def _auto_verify(self):
-        """Verify the just-stored session against NotebookLM (off the GUI thread)."""
-        self._auto_verifier = _AuthCheckWorker(parent=self)
-        self._auto_verifier.result.connect(self._auto_on_verify)
-        self._auto_verifier.finished.connect(
-            lambda: setattr(self, "_auto_verifier", None))
-        self._auto_verifier.start()
-
-    def _auto_on_verify(self, status, message):
-        browser = self._auto_browsers[self._auto_index].capitalize()
-        if status == "ok":
-            self._auto_login_active = False
-            self._append_status(f"Logged in via {browser}.")
-            self._auth_verified = True
-            self._refresh_login_state()
-            self._reset_worker()      # drop any stale worker…
-            self._warm_worker()       # …and pre-connect with the fresh session
-            return
-        if status == "error":
-            # Reached the server but it failed (network/proxy) - trying other
-            # browsers cannot help, so stop and report it.
-            self._auto_login_active = False
-            self._append_error(message)
-            self._refresh_login_state()
-            return
-        # "auth" / "no_session": these cookies don't authenticate - try the next.
-        self._append_status(f"{browser}: no valid NotebookLM session.")
-        self._auto_index += 1
-        self._auto_try_next()
-
-    def _auto_login_failed(self):
-        """No browser yielded a working session - explain and offer the picker."""
-        self._auto_login_active = False
-        self._refresh_login_state()
-        if self._auto_saw_decrypt:
-            self._append_error(
-                "Found Chrome / Edge / Opera but Windows encrypts their cookie "
-                "store (app-bound encryption), so CWatM cannot read it. Either "
-                "right-click CWatM and 'Run as administrator' and try Login again, "
-                "or sign in to Google in Firefox (its cookies are readable without "
-                "elevation).")
-        else:
-            self._append_error(
-                "Could not find a signed-in Google session in Firefox, Chrome, "
-                "Edge or Opera. Sign in to Google in one of them, then click Login "
-                "again.")
-        # Offer the manual picker (individual browsers / Google login window).
-        resp = QMessageBox.question(
-            self, "Login",
-            "Automatic login could not find a working session.\n\n"
-            "Choose a browser or the Google login window manually?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        if resp == QMessageBox.Yes:
-            self._on_choose_browser()
-
-    # ---------------------------------------------------- manual browser picker
-    def _on_choose_browser(self):
-        """The explicit per-browser login dialog (Login…'s 'Choose browser…'
-        fallback): pick a specific browser to read cookies from, or open the
-        interactive Google login window."""
-        if self._login_proc is not None or self._auto_login_active:
-            QMessageBox.information(self, "Login", "A login is already running.")
-            return
-        # The interactive Google window needs Playwright (source only). The
-        # browser-cookie options only need rookiepy, which IS bundled, so they work
-        # from the frozen exe too (the login command runs via the exe's own
-        # --notebooklm-login self-dispatch).
-        has_google = self._playwright_available()
-        box = QMessageBox(self)
-        box.setWindowTitle("Login to NotebookLM")
-        text = "Store a Google session for NotebookLM.\n\n"
-        if has_google:
-            text += ("• 'Google login window' opens a browser to sign in "
-                     "(most reliable).\n")
-        text += ("• The browser options read the Google cookies from a browser you "
-                 "are already signed in to. Firefox works normally; on Windows the "
-                 "Chromium browsers (Chrome / Edge / Opera) encrypt their cookie "
-                 "store (app-bound encryption), so those can only be read when "
-                 "CWatM is run as Administrator.\n"
-                 "• Either way the Google session is stored on this computer in\n"
-                 f"   {self.session_file_text()}\n"
-                 "  - delete it to remove it. It is never sent anywhere but NotebookLM.")
-        if not has_google:
-            text += ("\n\nEasiest: sign in to Google in Firefox, then 'From "
-                     "Firefox'. For Chrome / Edge / Opera, run CWatM as "
-                     "Administrator first.")
-        box.setText(text)
-        google = (box.addButton("Google login window", QMessageBox.AcceptRole)
-                  if has_google else None)
-        firefox = box.addButton("From Firefox", QMessageBox.AcceptRole)
-        chrome = box.addButton("From Chrome", QMessageBox.AcceptRole)
-        edge = box.addButton("From Edge", QMessageBox.AcceptRole)
-        opera = box.addButton("From Opera", QMessageBox.AcceptRole)
-        box.addButton("Cancel", QMessageBox.RejectRole)
-        box.exec()
-        clicked = box.clickedButton()
-        if google is not None and clicked is google:
-            self._start_google_login()
-        elif clicked is firefox:
-            self._start_login("firefox")
-        elif clicked is chrome:
-            self._start_login("chrome")
-        elif clicked is edge:
-            self._start_login("edge")
-        elif clicked is opera:
-            self._start_login("opera")
-
-    def _start_login(self, browser):
-        self._append_status(f"Logging in (reading cookies from {browser})…")
-        self._run_login_process(["login", "--browser-cookies", browser])
-
-    def _start_google_login(self, force_chromium=False):
-        """Login via the interactive Google window. Prefer the user's installed
-        Google Chrome (``--browser chrome``, no download); fall back to the bundled
-        Playwright Chromium (one-time ~150 MB download) if Chrome cannot be used."""
-        if not force_chromium:
-            self._google_login_stage = "chrome"
-            self._append_status(
-                "Opening the Google login window in Chrome - sign in there, then "
-                "return here…")
-            self._run_login_process(["login", "--browser", "chrome"])
-            return
-        # Fallback path: bundled Chromium (download it first if missing).
-        self._google_login_stage = "chromium"
-        if not self._chromium_installed():
-            self._append_status("Downloading Chromium for the login window…")
-            self._pending_google_login = True
-            self._run_login_process(["install", "chromium"], module="playwright",
-                                    is_chromium_install=True)
-            return
+    # ------------------------------------------------------------ the login run
+    def _start_window_login(self, browser):
+        label = self.LOGIN_BROWSERS[browser][1]
+        self._login_browser = browser
         self._append_status(
-            "Opening the Google login window - sign in there, then return here…")
-        self._run_login_process(["login"])
+            f"Opening Google's sign-in page in {label} - sign in there, then "
+            "return here…")
+        self._run_login_process(browser)
 
-    @staticmethod
-    def _chromium_installed():
-        try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                return os.path.exists(p.chromium.executable_path)
-        except Exception:
-            return False
-
-    def _run_login_process(self, cli_args, module="notebooklm", is_chromium_install=False):
-        """Run a CLI module (``notebooklm`` or ``playwright``) in a child process.
-
-        From source: ``<python> -m <module> <cli_args>``. Frozen: there is no
-        ``python -m`` inside the exe, so the **notebooklm** CLI is run by
-        re-invoking THIS executable with the ``--notebooklm-login`` self-dispatch
-        (see cwatm_gui.py). ``playwright`` has no such path when frozen (it is not
-        bundled) - that only matters for the optional Google-window Chromium
-        fallback, which is offered from source only."""
+    def _run_login_process(self, browser):
+        """Run the login in a child process (it opens the browser window and
+        writes the session file, then exits - the GUI stays responsive):
+        ``<python> -u notebooklm_browser_login.py <browser>``, or frozen
+        ``CWatM_GUI.exe --notebooklm-browser-login <browser>`` (see cwatm_gui.py)."""
         self.login_button.setEnabled(False)
         self._login_output = ""
-        self._login_is_chromium_install = is_chromium_install
         proc = QProcess(self)
         self._login_proc = proc
         proc.setProcessChannelMode(QProcess.MergedChannels)
@@ -1119,122 +1276,77 @@ class NotebookLMWindow(GeometryMemoryMixin, QDialog):
                 bytes(p.readAllStandardOutput()).decode(errors="ignore")))
         proc.finished.connect(
             lambda code, status: self._on_login_finished(int(code)))
-        if _IS_FROZEN and module == "notebooklm":
-            program, argv = sys.executable, ["--notebooklm-login"] + list(cli_args)
+        if _IS_FROZEN:
+            argv = ["--notebooklm-browser-login", browser]
         else:
-            program, argv = sys.executable, ["-m", module] + list(cli_args)
-        proc.start(program, argv)
+            from src.gui.utils import notebooklm_browser_login
+            argv = ["-u", notebooklm_browser_login.__file__, browser]
+        proc.start(sys.executable, argv)
 
     def _on_login_output(self, chunk):
         self._login_output += chunk
-        self._append_status(chunk.rstrip())
+        # one status line per printed line - no blank lines in the transcript
+        text = "\n".join(ln.strip() for ln in chunk.splitlines() if ln.strip())
+        if text:
+            self._append_status(text)
 
     def _on_login_finished(self, exit_code):
         self._login_proc = None
         self.login_button.setEnabled(True)
         out = getattr(self, "_login_output", "")
-
-        # One-click auto-detect: this is one browser in the sequence - hand it to
-        # the auto handler (which chains to the next browser or verifies success).
-        if self._auto_login_active:
-            self._auto_after_login(exit_code, out)
-            return
-
+        low = out.lower()
+        browser, self._login_browser = self._login_browser, None
+        label = self.LOGIN_BROWSERS.get(browser, ("", "the browser"))[1]
         self._refresh_login_state()   # recolour Login blue/red by the new state
 
-        # Step 1 of the Google-login path: a Chromium download just finished.
-        if getattr(self, "_login_is_chromium_install", False):
-            self._login_is_chromium_install = False
-            if getattr(self, "_pending_google_login", False):
-                self._pending_google_login = False
-                if exit_code == 0 and self._chromium_installed():
-                    self._append_status(
-                        "Chromium ready. Opening the Google login window…")
-                    self._run_login_process(["login"])
-                else:
-                    self._append_error(
-                        "Chromium download failed. Try 'From Firefox' instead, or "
-                        "run  python -m playwright install chromium  in a terminal.")
-            return
-
-        # The browser-cookie path needs rookiepy; surface a precise hint for that.
-        if "rookiepy is not installed" in out or "No module named 'rookiepy'" in out:
-            self._append_error(
-                "Reading browser cookies needs the 'rookiepy' package, which is "
-                "not installed. Install it once with:\n"
-                "    pip install rookiepy\n"
-                "(or  pip install \"notebooklm-py[cookies]\" ), then try Login again.")
-            return
-        # The Google-login window needs Playwright.
-        if "playwright not installed" in out.lower() or \
-                "no module named 'playwright'" in out.lower():
-            self._append_error(
-                "The Google login window needs the 'playwright' package, which is "
-                "not installed. Install it once with:\n"
-                "    pip install playwright\n"
-                "then try Login again (or use 'From Firefox').")
-            return
-
         if exit_code == 0 and self._is_authenticated():
-            self._google_login_stage = None
             self._append_status("Logged in. Verifying the session…")
             self._auth_verified = None
             self._reset_worker()      # reconnect with the fresh session
             self._start_auth_check()  # confirm the new session really works (blue)
             return
-
-        # The system-Chrome Google-login window failed (e.g. Chrome not found or
-        # crashed) - offer the bundled Chromium instead.
-        if getattr(self, "_google_login_stage", None) == "chrome":
-            self._google_login_stage = None
+        if "playwright not installed" in low or "no module named 'playwright'" in low:
+            self._append_error(
+                "The Google login needs the 'playwright' package, which is not "
+                "installed. Install it once with:\n"
+                "    pip install playwright\n"
+                "then try Login again.")
+            return
+        if "browser window was closed" in low:
+            self._append_status("Login cancelled - the login window was closed.")
+            return
+        if f"{label} not found".lower() in low:
+            self._append_error(f"{label} is not installed on this computer.")
             resp = QMessageBox.question(
                 self, "Login",
-                "Could not open the login window with your system Chrome.\n\n"
-                "Try the bundled browser instead? (a one-time ~150 MB download "
-                "may be needed)",
+                f"{label} is not installed on this computer.\n\n"
+                "Choose another browser?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             if resp == QMessageBox.Yes:
-                self._start_google_login(force_chromium=True)
+                self._choose_browser_and_login()
             return
-
-        # Windows Chrome/Edge/Opera encrypt their cookie store (app-bound
-        # encryption), so rookiepy can only read it when the process is elevated
-        # ("... can be decrypted only when running as admin ...") - point the user
-        # to the two working paths.
-        if ("decrypt" in out.lower() or "could not decrypt" in out.lower()
-                or "appbound" in out.lower() or "app-bound" in out.lower()
-                or "as admin" in out.lower()):
-            msg = ("On Windows, Chrome / Edge / Opera encrypt their cookie store "
-                   "(app-bound encryption), so their cookies can only be read when "
-                   "CWatM runs elevated. Either right-click CWatM and 'Run as "
-                   "administrator', then try that browser again - or use 'From "
-                   "Firefox' (Firefox cookies are readable without elevation).")
-            if self._is_authenticated():
-                self._append_status(
-                    "The login command failed, but an existing NotebookLM session "
-                    "is still available - you can ask questions. (" + msg + ")")
-                self._reset_worker()
-            else:
-                self._append_error(msg)
+        if "login not detected" in low:
+            self._append_error("No login within 5 minutes - press Login to try again.")
             return
-
         if self._is_authenticated():
             # The command reported an error but a usable session already exists.
             self._append_status(
-                "The login command failed, but an existing NotebookLM session is "
+                "The login did not finish, but an existing NotebookLM session is "
                 "still available - you can ask questions.")
             self._reset_worker()
         else:
             self._append_error(
-                "Login did not produce a session. Make sure you are signed in to "
-                "Google in that browser, or use the Google login window.")
+                f"The login in {label} did not produce a session. Press Login to "
+                "try again, or choose another browser.")
 
     # -------------------------------------------------------------------- misc
     def _on_clear(self):
         self.transcript.clear()
+        self._transient_from = None
+        self._exchange_done = False
 
     def _stop_auth_check(self):
-        for attr in ("_auth_checker", "_auto_verifier"):
+        for attr in ("_auth_checker",):
             w = getattr(self, attr, None)
             setattr(self, attr, None)
             if w is not None:

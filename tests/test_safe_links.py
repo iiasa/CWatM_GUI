@@ -69,8 +69,23 @@ def test_ai_answers_show_raw_html_as_text():
 def test_the_transcript_routes_links_through_open_link(qapp):
     from src.gui.widgets import notebooklm_window as N
     src = open(N.__file__, encoding="utf-8").read()
-    assert "make_links_safe(self.transcript)" in src
+    assert "make_links_safe(self.transcript" in src
     assert "setOpenExternalLinks(True)" not in src
+
+
+def test_followup_intercept_takes_only_its_own_links(monkeypatch):
+    # the transcript's intercept answers only the in-app follow-up links
+    # (cwatmai:ask?q=...); every other link still goes to open_link
+    from PySide6.QtCore import QUrl
+    from src.gui.widgets.notebooklm_window import NotebookLMWindow as N
+    asked = []
+    fake = N.__new__(N)
+    fake._thinking = False
+    fake._submit_question = lambda q, echo=True: asked.append(q)
+    assert N._on_followup_link(fake, QUrl("https://example.org")) is False
+    assert N._on_followup_link(fake, QUrl("file:///C:/x.exe")) is False
+    assert N._on_followup_link(fake, QUrl("cwatmai:ask?q=Would%20you%3F")) is True
+    assert asked == ["Yes, please. Would you?"]
 
 
 class _Settings:
@@ -84,9 +99,10 @@ class _Settings:
         self.d[key] = value
 
 
-def test_cookie_login_asks_once_and_explains(monkeypatch):
-    # security.md #5: reading browser cookies + storing a Google session needs a
-    # clear, informed yes first - asked once, "No" is the default and stops it
+def test_window_login_asks_once_and_explains(monkeypatch):
+    # security.md #5: storing a Google session needs a clear, informed yes first -
+    # asked once, "No" is the default and stops it (the login reads no browser
+    # cookies, it signs in on Google's page)
     from types import SimpleNamespace
     from PySide6.QtWidgets import QMessageBox
     from src.gui.widgets.notebooklm_window import NotebookLMWindow as N
@@ -96,13 +112,13 @@ def test_cookie_login_asks_once_and_explains(monkeypatch):
         lambda parent, title, text, buttons, default:
         asked.append((text, default)) or answer[0]))
     host = SimpleNamespace(_settings=_Settings(),
-                           _COOKIE_CONSENT_KEY=N._COOKIE_CONSENT_KEY,
-                           cookie_login_text=N.cookie_login_text)
-    assert N._cookie_login_agreed(host) is False             # declined: no login
+                           _WINDOW_CONSENT_KEY=N._WINDOW_CONSENT_KEY,
+                           window_login_text=N.window_login_text)
+    assert N._window_login_agreed(host) is False             # declined: no login
     text, default = asked[-1]
-    assert "READS the Google login cookies" in text and "storage_state" in text
+    assert "cookies or data are read" in text and "storage_state" in text
     assert default == QMessageBox.No
     answer[0] = QMessageBox.Yes
-    assert N._cookie_login_agreed(host) is True
+    assert N._window_login_agreed(host) is True
     asked.clear()
-    assert N._cookie_login_agreed(host) is True and asked == []   # asked only once
+    assert N._window_login_agreed(host) is True and asked == []
