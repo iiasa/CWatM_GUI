@@ -132,6 +132,12 @@ button in the bar's **right corner** that opens the Preferences window.
 - **QAction/QMenu lifetime**: menus are kept referenced (`self._menus`) and the
   "Write output" state is mirrored to a plain bool so a stale QAction cannot crash a
   run; menu-touching code is guarded against `RuntimeError` (deleted C++ object).
+- **Finding a menu again**: every top-level menu has an **objectName** (`fileMenu`,
+  `settingsMenu`, `toolsMenu`, `runMenu`, `configureMenu`, `analyseMenu`, `helpMenu`,
+  `infoMenu`, set in `menu_builder`). Look a menu up by it, never by its title — titles
+  are translated (Language preference). CWatM Academy's guide bubble points at a menu
+  this way (`academy_window._menu_point`, opening below the title) and **steps aside**
+  while any menu or modal dialog is open (`academy_guide`, `other_popup_or_modal`).
 
 ### Preferences window (Configure ▸ Preferences…)
 `src/gui/widgets/preferences_window.py` — `PreferencesWindow(QDialog)`, **modal**,

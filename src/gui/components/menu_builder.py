@@ -384,6 +384,14 @@ class MenuBuilderMixin:
         self._menus = [file_menu, settings_menu,
                        tools_menu, run_menu, configure_menu,
                        analyse_menu, help_menu, info_menu]
+        # Stable names for code that has to find a menu again (CWatM Academy's
+        # guide points at Analyse: academy_window._menu_point). The titles are
+        # no use for that - they are translated (Preferences ▸ Display ▸ Language).
+        for menu, name in ((file_menu, "fileMenu"), (settings_menu, "settingsMenu"),
+                           (tools_menu, "toolsMenu"), (run_menu, "runMenu"),
+                           (configure_menu, "configureMenu"), (analyse_menu, "analyseMenu"),
+                           (help_menu, "helpMenu"), (info_menu, "infoMenu")):
+            menu.setObjectName(name)
         # Entries a **Beginner** does not see (Skill of user). The level restricts the
         # settings sections shown in the editor; the same idea applied to the menus -
         # everything a beginner has no use for yet, and could set up wrongly, is out of

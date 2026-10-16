@@ -29,7 +29,19 @@ global QPoint, or a ``(QPoint, forced_side)`` pair when the target itself
 knows which side is genuinely clear to open into (see _reposition) -
 evaluated lazily as each step is shown (not all up front), so a target that
 first needs to scroll something into view (e.g. a settings-editor line) can
-do that scroll and then report where it landed.
+do that scroll and then report where it landed. ``forced_side="below"``
+opens the bubble *under* the point with the tail on its top edge, pointing
+up - for a menu-bar title (academy_window._menu_point), where a bubble
+beside the title would cover its neighbours in the bar.
+
+**Stepping aside.** While the bubble is up, it hides itself whenever another
+popup (an open menu, a combo box list) or a modal dialog is active, and
+comes back where it was once that closes (_check_aside, polled every
+_ASIDE_POLL_MS). It is always-on-top, so otherwise it would cover the very
+menu or file dialog a step asks the learner to use - e.g. the Analyse menu
+dropping down right under a bubble that points at it, or Watercycle's file
+dialog, which Qt centres on the main window. The gate keeps polling while
+the bubble is hidden, so it returns already showing the step's new state.
 
 A step is normally a ``(target, html_text)`` pair; it can also be a
 ``(target, html_text, gate)`` triple, where ``gate`` is a zero-argument
@@ -85,7 +97,9 @@ academy_window (Level 2: teaching tour -> mission briefing -> a second,
 gated TorusGuideBubble tour for the Field Test itself -> celebration).
 """
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+)
 from PySide6.QtCore import Qt, QPoint, QRect, QTimer, Signal
 from PySide6.QtGui import (
     QPixmap, QPainter, QPainterPath, QColor, QPen, QPolygon, QGuiApplication,
@@ -112,9 +126,42 @@ _HALO_INSET = 26
 _CARD_PADDING = 14
 _MASCOT_SIZE = 56        # px, the Torus avatar
 _MARGIN = 18             # gap kept from the target point / screen edges
+# A top tail (forced side "below") stays this far from the widget's left and
+# right edges: clear of the halo inset and the card's rounded corners.
+_TAIL_EDGE_MIN = _HALO_INSET + _TAIL_SIZE + 8
+_ASIDE_POLL_MS = 200     # how often a visible bubble checks for menus/dialogs
 
 _DEFAULT_WAITING_TEXT = "Waiting for this …"
 _DEFAULT_READY_TEXT = "✓ Ready"
+
+
+def below_placement(target_x, target_y, width, height, left, top, right, bottom):
+    """Where a ``width`` x ``height`` bubble goes when it opens *below* the
+    global point (``target_x``, ``target_y``) - forced side "below".
+
+    The tail's tip sits on the point and the card is centred under it, then
+    the whole widget is clamped into the screen's available area (``left``,
+    ``top``, ``right``, ``bottom``, QRect convention: right/bottom are the
+    last pixel). Returns ``(x, y, tail_x)``: the widget's top-left corner and
+    the tail's x in the widget's own coordinates - still on the target after
+    a clamp, but never closer than _TAIL_EDGE_MIN to either side, where the
+    rounded card corners are. Plain ints in and out, so it is testable
+    without a screen."""
+    x = max(left, min(target_x - width // 2, right - width))
+    y = max(top, min(target_y, bottom - height))
+    tail_x = max(_TAIL_EDGE_MIN, min(target_x - x, width - _TAIL_EDGE_MIN))
+    return x, y, tail_x
+
+
+def other_popup_or_modal(own):
+    """True while a popup (open menu, combo list) or a modal dialog other than
+    ``own`` and its children is active - when TorusGuideBubble steps aside.
+    A native file dialog counts: Qt keeps its QFileDialog in the modal stack
+    while the native one is open."""
+    for widget in (QApplication.activePopupWidget(), QApplication.activeModalWidget()):
+        if widget is not None and widget is not own and not own.isAncestorOf(widget):
+            return True
+    return False
 
 
 def _normalize_gate(gate):
@@ -301,10 +348,14 @@ class TorusGuideBubble(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._steps = []
         self._index = 0
-        self._tail_side = "left"     # which edge of the bubble the tail is on
-        self._tail_anchor_y = 0      # local y of the tail's centre on that edge
+        self._tail_side = "left"     # which edge the tail is on: left / right / top
+        self._tail_anchor_y = 0      # local y of the tail's centre (left/right tail)
+        self._tail_anchor_x = 0      # local x of the tail's centre (top tail)
         self._current_gate = None    # this step's gate callable, if any
         self._gate_timer = None      # polls _current_gate while it's False
+        self._active = False         # between start() and finishing/closing
+        self._aside = False          # hidden by _check_aside, not by the tour
+        self._aside_timer = None     # polls other_popup_or_modal while active
         self._build_ui()
 
     # ------------------------------------------------------------------ ui
@@ -398,8 +449,41 @@ class TorusGuideBubble(QWidget):
         self._steps = list(steps)
         self._index = 0
         self._show_step()
+        self._active = True
+        self._aside = False
         self.show()
         self.raise_()
+        if self._aside_timer is None:
+            self._aside_timer = QTimer(self)
+            self._aside_timer.setInterval(_ASIDE_POLL_MS)
+            self._aside_timer.timeout.connect(self._check_aside)
+        self._aside_timer.start()
+
+    def _check_aside(self):
+        """Hide while another popup or a modal dialog is active, come back
+        when it closes - see "Stepping aside" in the module docstring. Comes
+        back without taking the focus from whatever the learner returns to."""
+        if not self._active:
+            return
+        try:
+            busy = other_popup_or_modal(self)
+        except Exception:
+            log.debug("_check_aside: popup/modal check failed", exc_info=True)
+            return
+        if busy and not self._aside:
+            self._aside = True
+            self.hide()
+        elif not busy and self._aside:
+            self._aside = False
+            self.setAttribute(Qt.WA_ShowWithoutActivating, True)
+            self.show()
+            self.raise_()
+
+    def _stop_timers(self):
+        self._active = False
+        for timer in (self._gate_timer, self._aside_timer):
+            if timer is not None:
+                timer.stop()
 
     def _show_step(self):
         step = self._steps[self._index]
@@ -489,14 +573,12 @@ class TorusGuideBubble(QWidget):
         self._show_step()
 
     def _close_and_finish(self):
-        if self._gate_timer is not None:
-            self._gate_timer.stop()
+        self._stop_timers()
         self.hide()
         self.finished.emit()
 
     def closeEvent(self, event):
-        if self._gate_timer is not None:
-            self._gate_timer.stop()
+        self._stop_timers()
         self.finished.emit()
         super().closeEvent(event)
 
@@ -533,9 +615,22 @@ class TorusGuideBubble(QWidget):
         knows its own clear side (academy_window._widget_point's
         ``from_right=True``) returns ``forced_side='right'`` for exactly
         that reason; a target with no such preference (a settings-editor
-        line) returns a bare QPoint and keeps the automatic heuristic."""
+        line) returns a bare QPoint and keeps the automatic heuristic.
+
+        ``forced_side="below"`` opens the bubble under the point, tail on
+        its top edge pointing up (below_placement) - for a target at the top
+        of the window with neighbours left and right, like a menu-bar title."""
         avail = self._screen_geometry(target_point)
         w, h = self.width(), self.height()
+
+        if forced_side == "below":
+            x, y, self._tail_anchor_x = below_placement(
+                target_point.x(), target_point.y(), w, h,
+                avail.left(), avail.top(), avail.right(), avail.bottom())
+            self._tail_side = "top"
+            self._apply_mascot_side()
+            self.move(x, y)
+            return
 
         if forced_side == "right":
             fits_left = False
@@ -567,9 +662,10 @@ class TorusGuideBubble(QWidget):
         would sit right on top of the exact point the tail is pointing at,
         which is the one thing this bubble has to stay precise about."""
         self._row.removeWidget(self.mascot_label)
-        if self._tail_side == "right":
+        if self._tail_side in ("right", "top"):
             # Tail on the right (pointing right, at the target) -> mascot
-            # goes on the left, the far side.
+            # goes on the left, the far side. A top tail points up, away from
+            # both sides, so the mascot keeps the usual left place.
             self._row.insertWidget(0, self.mascot_label, 0, Qt.AlignVCenter)
         else:
             # Tail on the left -> mascot goes on the right.
@@ -588,18 +684,27 @@ class TorusGuideBubble(QWidget):
         card_path = QPainterPath()
         card_path.addRoundedRect(card, 14, 14)
 
-        tail_y = self._tail_anchor_y
-        if self._tail_side == "left":
-            tip_x = 0
-            base_x = card.left()
+        if self._tail_side == "top":
+            # Pointing up from the card's top edge (forced side "below").
+            tail_x = self._tail_anchor_x
+            tail = QPolygon([
+                QPoint(tail_x, 0),
+                QPoint(tail_x - _TAIL_SIZE, card.top()),
+                QPoint(tail_x + _TAIL_SIZE, card.top()),
+            ])
         else:
-            tip_x = self.width()
-            base_x = card.right()
-        tail = QPolygon([
-            QPoint(tip_x, tail_y),
-            QPoint(base_x, tail_y - _TAIL_SIZE),
-            QPoint(base_x, tail_y + _TAIL_SIZE),
-        ])
+            tail_y = self._tail_anchor_y
+            if self._tail_side == "left":
+                tip_x = 0
+                base_x = card.left()
+            else:
+                tip_x = self.width()
+                base_x = card.right()
+            tail = QPolygon([
+                QPoint(tip_x, tail_y),
+                QPoint(base_x, tail_y - _TAIL_SIZE),
+                QPoint(base_x, tail_y + _TAIL_SIZE),
+            ])
         tail_path = QPainterPath()
         tail_path.addPolygon(tail)
         path = card_path.united(tail_path)

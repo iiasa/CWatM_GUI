@@ -58,10 +58,10 @@ browser.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
-    QListWidgetItem, QTextBrowser, QFrame, QStackedWidget, QMessageBox,
+    QListWidgetItem, QTextBrowser, QFrame, QStackedWidget, QMessageBox, QMenu,
 )
 from PySide6.QtCore import Qt, QDate, QPoint, QSize, QTimer
-from PySide6.QtGui import QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import QIcon, QPixmap
 
 from src.gui.utils import theme
 from src.gui.utils.assets import asset_path
@@ -661,7 +661,7 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
              "Launch the mission run - click <b>RUN CWATM</b>.",
              (self._level2_mission_run_complete,
               "Standing by …", "✓ Mission run complete")),
-            (self._corner_point(),
+            (self._menu_point("analyseMenu"),
              "Debrief: open <b>Analyse ▸ Watercycle</b>, then pick "
              "the <b>WaterCycle</b> result csv from your PathOut folder - "
              "the file dialog already starts there - to confirm the "
@@ -670,28 +670,6 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
               "Waiting for you to open it …", "✓ Watercycle opened")),
         ]
         self._level2_field_test_guide.start(steps)
-
-    def _corner_point(self):
-        """A zero-arg TorusGuideBubble target pinned near the screen's
-        top-left corner, forced to open to its right (see
-        TorusGuideBubble._reposition's ``forced_side``) - used for the
-        Analyse/Watercycle step specifically, whose real target (the
-        Analyse menu) triggers a *native* file-open dialog right after, and
-        Qt centres that dialog on the main window. A bubble positioned at
-        the menu itself (the usual _menu_point target) ends up sitting
-        directly on top of that centred dialog once it opens - confirmed
-        live: the dialog's file list was unusable behind it. Parking the
-        bubble in a corner keeps it clear of wherever that dialog lands,
-        at the cost of no longer pointing precisely at the menu entry -
-        acceptable here since the step's own text already names it by menu
-        path."""
-        def _target():
-            screen = QGuiApplication.primaryScreen()
-            geo = screen.availableGeometry() if screen is not None else None
-            if geo is None:
-                return None
-            return QPoint(geo.left() + 20, geo.top() + 80), "right"
-        return _target
 
     def _level2_dates_match_mission(self):
         """Level 2's Field Test date gate: StepStart/SpinUp/StepEnd in the
@@ -799,11 +777,20 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
                 return None
         return _target
 
-    def _menu_point(self, menu_text):
-        """A zero-arg TorusGuideBubble target: the global centre of the
-        top-level menu-bar entry titled ``menu_text`` (e.g. "Analyse") - the
-        action inside it (Watercycle) has no stable screen position while
-        its submenu is closed, so this points at the menu itself.
+    def _menu_point(self, object_name):
+        """A zero-arg TorusGuideBubble target: the bottom centre of the
+        top-level menu-bar entry whose QMenu has ``object_name`` (e.g.
+        "analyseMenu", set in menu_builder.create_menu_bar), with the bubble
+        opening *below* it, tail pointing up at the title (forced side
+        "below") - beside it, the bubble would cover the neighbouring menus.
+        The action inside (Watercycle) has no stable screen position while
+        its menu is closed, so this points at the menu itself. The bubble
+        steps aside while that menu or the file dialog it opens is up (see
+        academy_guide, "Stepping aside").
+
+        Looked up by object name, never by title: the title is translated
+        (Preferences ▸ Display ▸ Language - "Analyse" is "Analisi" in
+        Italian).
 
         ``self.mw.menu_bar`` - not the QWidget-builtin, always-empty
         ``self.mw.menuBar()`` - since menu_builder.create_menu_bar builds a
@@ -816,14 +803,16 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
                 return None
             try:
                 bar = getattr(self.mw, "menu_bar", None)
-                if bar is None:
+                if bar is None or not bar.isVisible():
                     return None
-                for action in bar.actions():
-                    if action.text().replace("&", "") == menu_text:
-                        rect = bar.actionGeometry(action)
-                        if rect.isNull():
-                            return None
-                        return bar.mapToGlobal(rect.center())
+                menu = bar.findChild(QMenu, object_name)
+                if menu is None:
+                    return None
+                rect = bar.actionGeometry(menu.menuAction())
+                if rect.isNull():
+                    return None
+                return (bar.mapToGlobal(QPoint(rect.center().x(), rect.bottom())),
+                        "below")
             except Exception:
                 log.debug("_menu_point failed", exc_info=True)
             return None

@@ -138,6 +138,14 @@ now and `tools/check_invariants.py` rejects exotic line separators.
   match) — explicit targets only now.
 - **Shop migration** (`20261001130000_shop.sql`): accounts that existed when it was
   pushed were **granted** Advanced + Expert (price 0, `granted = true`).
+- **Academy Level 2 debrief bubble covered the menu bar** (2026-10-16). The step
+  "open Analyse ▸ Watercycle" parked its bubble in the screen's top-left corner
+  (`_corner_point`), because a bubble at the Analyse menu had sat on top of the
+  Watercycle file dialog. That corner was the banner and the menu bar itself. Now the
+  bubble opens below the Analyse title, tail pointing up, and every guide bubble steps
+  aside while a menu or modal dialog is open. The then-unused `_menu_point` matched the
+  menu's *title*, which breaks in any language that translates "Analyse"; it now finds
+  the menu by objectName.
 
 ## Report § cross-references
 Older notes cite sections of the GUI review report: §3.1 subprocess run · §3.2
