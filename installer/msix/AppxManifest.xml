@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  CWatM GUI - MSIX package manifest (Microsoft Store build)
+
+  A TEMPLATE: build_release.ps1 (step 'msix') fills the double-brace tokens below and
+  writes the result into the package layout. IDENTITY_NAME, PUBLISHER and
+  PUBLISHER_DISPLAY_NAME come from installer\msix\store_identity.json (copied from
+  Partner Center > Product identity); VERSION is __version__ from
+  src\gui\__init__.py as X.YZ.<MsixBuild>.0.
+
+  The package is the unchanged one-folder PyInstaller build (dist\CWatM_GUI) plus this
+  manifest, Images\ and resources.pri. Details: documentation\CWatM_GUI_Build.md,
+  section "Microsoft Store (MSIX)".
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 desktop rescap">
+
+  <Identity
+    Name="{{IDENTITY_NAME}}"
+    Publisher="{{PUBLISHER}}"
+    Version="{{VERSION}}"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>CWatM GUI</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
+    <Description>Graphical user interface for the Community Water Model (CWatM) by IIASA</Description>
+    <Logo>Images\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <!-- The GUI: the Start menu entry. -->
+    <Application Id="CWatMGUI" Executable="CWatM_GUI.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="CWatM GUI"
+        Description="Graphical user interface for the Community Water Model (CWatM)"
+        BackgroundColor="transparent"
+        Square150x150Logo="Images\Square150x150Logo.png"
+        Square44x44Logo="Images\Square44x44Logo.png" />
+      <Extensions>
+        <!-- "Open with" for .ini settings files: the counterpart of the Inno Setup
+             task 'iniassoc'. Like there, it adds CWatM GUI to the Open-with list and
+             leaves the default .ini handler alone. The file arrives as argv[1]. -->
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="cwatmsettings">
+            <uap:DisplayName>CWatM settings file</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.ini</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+        <!-- `CWatM_GUI.exe <settings.ini>` from any console. -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="CWatM_GUI.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="CWatM_GUI.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+
+    <!-- The model, without a Start menu entry. Exists only for its execution alias:
+         RUN CWATM > Create batch writes `"CWatM_model.exe" <ini> -l` when the GUI runs
+         packaged (batch_file_creator.py), because a .bat outside the package starts
+         the package's executables through their alias, not through the
+         C:\Program Files\WindowsApps\... path. The GUI itself keeps starting
+         _internal\CWatM_model.exe by its path (cwatm_process_worker.model_command). -->
+    <Application Id="CWatMModel" Executable="_internal\CWatM_model.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="CWatM model"
+        Description="Community Water Model (CWatM), command line"
+        BackgroundColor="transparent"
+        Square150x150Logo="Images\Square150x150Logo.png"
+        Square44x44Logo="Images\Square44x44Logo.png"
+        AppListEntry="none" />
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="_internal\CWatM_model.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="CWatM_model.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- A classic Win32 (PyInstaller) desktop app. Partner Center asks for a reason
+         for this restricted capability; the text is in CWatM_GUI_Build.md. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

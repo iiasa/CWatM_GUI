@@ -65,6 +65,37 @@ class TestBuildBatchScript:
         assert '"C:\\runs\\settings.ini"' in run_line
         assert run_line.rstrip().endswith('"-l"')
 
+    def _frozen_build(self, monkeypatch, tmp_path):
+        exe_dir = tmp_path / "WindowsApps" / "IIASA.CWatMGUI_1.11.0.0_x64__abc"
+        (exe_dir / "_internal").mkdir(parents=True)
+        model_exe = exe_dir / "_internal" / "CWatM_model.exe"
+        model_exe.write_text("stub")
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "executable", str(exe_dir / "CWatM_GUI.exe"),
+                            raising=False)
+        return exe_dir
+
+    def test_msix_package_uses_the_execution_alias(self, monkeypatch, tmp_path):
+        # Store build: a .bat outside the package starts the model through the
+        # alias the manifest declares, never through the WindowsApps path.
+        from src.gui.utils import msix
+        exe_dir = self._frozen_build(monkeypatch, tmp_path)
+        monkeypatch.setattr(msix, "_packaged", True)
+
+        run_line = bfc.build_batch_script(r"C:\runs\settings.ini",
+                                          r"C:\runs").split("\r\n")[2]
+        assert run_line == '"CWatM_model.exe" "C:\\runs\\settings.ini" "-l"'
+        assert str(exe_dir) not in run_line
+
+    def test_not_packaged_keeps_the_full_path(self, monkeypatch, tmp_path):
+        from src.gui.utils import msix
+        exe_dir = self._frozen_build(monkeypatch, tmp_path)
+        monkeypatch.setattr(msix, "_packaged", False)
+
+        run_line = bfc.build_batch_script(r"C:\runs\settings.ini",
+                                          r"C:\runs").split("\r\n")[2]
+        assert str(exe_dir / "_internal" / "CWatM_model.exe") in run_line
+
     def test_no_workdir_omits_cd(self, monkeypatch):
         monkeypatch.setattr(sys, "frozen", False, raising=False)
         content = bfc.build_batch_script(r"C:\proj\settings.ini", "")

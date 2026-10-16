@@ -17,7 +17,9 @@ there are unsaved changes, and a blue hint next to **RUN CWATM** lists which fie
 - Make sure a settings file is loaded ("Loaded: …" shows the name).
 - Run **Settings ▸ Check settingsfile** (F4) — missing input files are marked red.
 - Check the output box for an error (shown in dark red).
-- Look at the diagnostic log: `%LOCALAPPDATA%\CWatM_GUI\gui.log`.
+- Look at the diagnostic log: `%LOCALAPPDATA%\CWatM_GUI\gui.log`. In the Microsoft
+  Store version Windows keeps it in the app's own folder:
+  `%LOCALAPPDATA%\Packages\<…CWatMGUI…>\LocalCache\Local\CWatM_GUI\gui.log`.
 
 **How do I stop a run?**
 Press **RUN CWATM** again (it reads **STOP CWatM** while running). Because the model
@@ -428,7 +430,8 @@ re-authenticate - click **Login** and sign in again.
 
 **Nothing happened when I clicked something.**
 Check the diagnostic log: `%LOCALAPPDATA%\CWatM_GUI\gui.log` (swallowed errors are
-recorded there).
+recorded there; for the Microsoft Store version see the path under *The run doesn't
+start* above).
 
 **How do I change the look?**
 **Preferences ▸ Display ▸ Mode** — Normal (light), Dark, or Mikhail (black + amber). It switches

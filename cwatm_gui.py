@@ -230,8 +230,13 @@ def _bring_to_front(window):
 def _set_windows_app_id():
     """Give the app its own AppUserModelID on Windows so the taskbar shows the
     CWatM icon instead of the python.exe icon. Must run before any window is
-    created. No-op on other platforms or on failure."""
+    created. No-op on other platforms or on failure, and in the MSIX (Microsoft
+    Store) build, where the package already assigns the ID and our own would split
+    the taskbar button from the Start entry and the pinned icon (msix.py)."""
     if sys.platform == "win32":
+        from src.gui.utils.msix import is_packaged
+        if is_packaged():
+            return
         try:
             import ctypes
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(

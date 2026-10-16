@@ -8,11 +8,18 @@ launches CWatM the identical way a normal Run CWATM does (CWatM_model.exe when
 frozen, the venv python running "cwatm_model.py" from source). Pure
 logic, no Qt: kept separate from the QFileDialog/QMessageBox wiring in
 run_controller.py so it can be unit tested without a display.
+
+One exception to "identical": in the MSIX (Microsoft Store) build the model exe
+sits under C:\\Program Files\\WindowsApps, and a batch file outside the package
+starts it through its execution alias instead (msix.MODEL_ALIAS, declared in
+installer/msix/AppxManifest.xml).
 """
 
+import ntpath
 import os
 import re
 
+from src.gui.utils import msix
 from src.gui.utils.cwatm_process_worker import model_command
 
 
@@ -41,6 +48,9 @@ def build_batch_script(file_path, workdir):
     relative paths in the settings file resolve the same way they do for a normal
     Run CWATM - the batch file can then be moved anywhere and still work."""
     program, args, _default_workdir = model_command(file_path)
+    if (msix.is_packaged()
+            and ntpath.basename(program).lower() == msix.MODEL_ALIAS.lower()):
+        program = msix.MODEL_ALIAS          # found via PATH (...\Microsoft\WindowsApps)
     command = " ".join(_quote(t) for t in [program] + list(args) + ["-l"])
     lines = ["@echo off"]
     if workdir:

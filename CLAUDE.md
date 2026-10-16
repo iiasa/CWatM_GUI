@@ -18,7 +18,7 @@ This is a graphical user interface for the Community Water Model (CWatM) develop
 > |------|-------|
 > | [`CWatM_GUI_Internals.md`](documentation/CWatM_GUI_Internals.md) | per-feature deep dives (secondary windows + data-visualization viewers) |
 > | [`CWatM_GUI_History.md`](documentation/CWatM_GUI_History.md) | **developer history** — renames (old → new names, incl. internal names kept on purpose), removed features, the stories behind fixes/regressions, report § cross-refs |
-> | [`CWatM_GUI_Build.md`](documentation/CWatM_GUI_Build.md) | dependencies' packaging notes, PyInstaller spec, installer, version source, `build_release.ps1` steps, signing |
+> | [`CWatM_GUI_Build.md`](documentation/CWatM_GUI_Build.md) | dependencies' packaging notes, PyInstaller spec, installer, version source, `build_release.ps1` steps, signing, Microsoft Store (MSIX) package + Partner Center steps |
 > | [`CWatM_GUI_Account.md`](documentation/CWatM_GUI_Account.md) | CWatM account / points / Shop / decay / badges internals |
 > | [`CWatM_GUI_Features.md`](documentation/CWatM_GUI_Features.md) | **user-facing** feature & usage tour |
 > | [`CHANGELOG.md`](documentation/CHANGELOG.md) | user-facing release notes |
@@ -1060,7 +1060,15 @@ pwsh -NoProfile -Command "& '.\build_release.ps1' -Steps sync,build"  # exe only
 pwsh -NoProfile -Command "& '.\build_release.ps1' -ForceVenv"         # after a pip install
 ```
   (`-Command`, not `-File` — with `-File`, `-Steps a,b` arrives as one string.) Steps:
-  `venv` · `sync` · `build` · `installer` · `copyback`.
+  `venv` · `sync` · `build` · `installer` · `msix` · `copyback`.
+- **Microsoft Store (MSIX)**: step `msix` wraps the same `dist\CWatM_GUI` as
+  `installer\Output\CWatM_GUI_<X.YZ.n.0>_x64.msix` (manifest template + logos in
+  `installer/msix/`; Partner Center's identity in `store_identity.json`, empty = step
+  skipped; `-MsixTestIdentity` = a local test layout). Packaged
+  (`src/gui/utils/msix.py`, `is_packaged()`): the install folder is **read-only** — never
+  write next to the exe or into `_internal`; AppData/HKCU writes are redirected per
+  package; no own AppUserModelID; Create batch calls the **`CWatM_model.exe` execution
+  alias**. Detail and the Partner Center steps in `CWatM_GUI_Build.md`.
 - **Version**: only `__version__ = "X.YZ"` in `src/gui/__init__.py` (one line); the
   About dialog and the `.iss` read it. Keep the installer's fixed `AppId` GUID.
 - Installer: `installer/CWatM_GUI.iss` (Inno Setup 7, per-user, no admin); `ISCC.exe` is

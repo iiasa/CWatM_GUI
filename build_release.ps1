@@ -15,31 +15,44 @@
         sync       mirror the sources the build needs into <Work>
         build      <Work>\venv\Scripts\python.exe -m PyInstaller cwatm_gui_dir.spec
         installer  ISCC <Work>\installer\CWatM_GUI.iss
+        msix       the Microsoft Store package: dist\CWatM_GUI + installer\msix
+                   (manifest, logos) -> <Work>\installer\Output\CWatM_GUI_<ver>_x64.msix
         copyback   <Work>\dist\CWatM_GUI      -> <Repo>\dist\CWatM_GUI
                    <Work>\installer\Output\*  -> <Repo>\installer\Output
 
     Everything the build needs resolves relative to the spec / the .iss file, so the
     local copy builds exactly what the repo would - including the version number,
-    which the .iss scrapes from src\gui\__init__.py in the mirror.
+    which the .iss (and the msix step) read from src\gui\__init__.py in the mirror.
 
 .EXAMPLE
-    .\build_release.ps1                       # full run: sync, build, installer, copy back
+    .\build_release.ps1                       # full run: sync, build, installer, msix, copy back
     .\build_release.ps1 -Steps sync,build     # rebuild the exe only
     .\build_release.ps1 -ForceVenv            # re-mirror the venv (after pip install/upgrade)
+    .\build_release.ps1 -Steps msix -MsixTestIdentity   # a packaged layout to try locally
 #>
 [CmdletBinding()]
 param(
     # Local working copy. Anything but a local disk defeats the purpose.
     [string]$Work = 'C:\work\CWatM_GUI',
-    [ValidateSet('venv', 'sync', 'build', 'installer', 'copyback')]
-    [string[]]$Steps = @('venv', 'sync', 'build', 'installer', 'copyback'),
+    [ValidateSet('venv', 'sync', 'build', 'installer', 'msix', 'copyback')]
+    [string[]]$Steps = @('venv', 'sync', 'build', 'installer', 'msix', 'copyback'),
     # Re-mirror the venv even if <Work>\venv already has a python.exe.
     [switch]$ForceVenv,
     # Authenticode signing (security.md #3): the SHA-1 thumbprint of a code-signing
     # certificate in the current user's store (Cert:\CurrentUser\My). Default: the
     # environment variable CWATM_SIGN_THUMBPRINT. Empty = build unsigned (a warning).
     [string]$SignThumbprint = $env:CWATM_SIGN_THUMBPRINT,
-    [string]$TimestampUrl = 'http://timestamp.digicert.com'
+    [string]$TimestampUrl = 'http://timestamp.digicert.com',
+    # MSIX (Microsoft Store): the third field of the package version X.YZ.<MsixBuild>.0.
+    # Every Store upload needs a higher version than the last one, so raise this to
+    # resubmit the same __version__ (e.g. after a packaging-only fix); back to 0 when
+    # __version__ moves on.
+    [ValidateRange(0, 65535)]
+    [int]$MsixBuild = 0,
+    # MSIX with a placeholder identity, before Partner Center's values are in
+    # installer\msix\store_identity.json: builds only the layout folder, to register
+    # and try locally (Developer Mode). Never uploaded, so no .msix is written.
+    [switch]$MsixTestIdentity
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,6 +85,15 @@ function Measure-Step([string]$Name, [scriptblock]$Body) {
 
 $venvPython = Join-Path $Work 'venv\Scripts\python.exe'
 
+function Find-SdkTool([string]$Name) {
+    # A Windows SDK tool (signtool, makeappx, makepri), newest SDK version first.
+    $tool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\$Name" -ErrorAction SilentlyContinue |
+        Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]'0.0' } } -Descending |
+        Select-Object -First 1
+    if (-not $tool) { throw "$Name not found - install the Windows SDK (it ships signtool, makeappx and makepri)." }
+    return $tool.FullName
+}
+
 function Invoke-Sign([string[]]$Files) {
     # Signs with signtool (Windows SDK) when a certificate is configured; otherwise
     # says the build is unsigned. A signed exe/setup lets Windows and users verify
@@ -80,11 +102,48 @@ function Invoke-Sign([string[]]$Files) {
         Write-Host "NOT signed (no -SignThumbprint / CWATM_SIGN_THUMBPRINT): $($Files -join ', ')" -ForegroundColor Yellow
         return
     }
-    $signtool = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1
-    if (-not $signtool) { throw 'signtool.exe not found - install the Windows SDK signing tools.' }
-    & $signtool.FullName sign /sha1 $SignThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 @Files
+    $signtool = Find-SdkTool 'signtool.exe'
+    & $signtool sign /sha1 $SignThumbprint /fd SHA256 /tr $TimestampUrl /td SHA256 @Files
     if ($LASTEXITCODE -ne 0) { throw "signtool failed (exit $LASTEXITCODE)" }
+}
+
+function Get-MsixVersion([string]$Root, [int]$Build) {
+    # __version__ = "X.YZ" (src\gui\__init__.py, the line the .iss reads too) as the
+    # four-part package version X.YZ.<Build>.0. The Store requires the last field 0.
+    $file = Join-Path $Root 'src\gui\__init__.py'
+    $version = $null
+    foreach ($line in Get-Content -LiteralPath $file) {
+        # the ASSIGNMENT only - the comment above it mentions __version__ as well
+        if ($line -match '^__version__\s*=\s*"([^"]+)"') { $version = $Matches[1] }
+    }
+    if (-not $version) { throw "Could not read __version__ from $file" }
+    $parts = $version.Split('.')
+    if ($parts.Count -ne 2 -or ($parts | Where-Object { $_ -notmatch '^\d{1,5}$' -or [int]$_ -gt 65535 })) {
+        throw "__version__ '$version' is not X.YZ - the MSIX version needs two numbers here."
+    }
+    return '{0}.{1}.{2}.0' -f [int]$parts[0], [int]$parts[1], $Build
+}
+
+function Get-MsixIdentity([string]$File) {
+    # Partner Center > Product identity, copied into installer\msix\store_identity.json.
+    # Returns $null while any of the three values is still empty.
+    $id = Get-Content -LiteralPath $File -Raw | ConvertFrom-Json
+    foreach ($key in 'IdentityName', 'Publisher', 'PublisherDisplayName') {
+        if (-not ("$($id.$key)".Trim())) { return $null }
+    }
+    return $id
+}
+
+function Write-MsixManifest([string]$Template, [string]$Target, [hashtable]$Values) {
+    # Fill the {{TOKEN}}s of installer\msix\AppxManifest.xml (values XML-escaped),
+    # refuse a leftover token, and check that the result parses as XML.
+    $xml = Get-Content -LiteralPath $Template -Raw
+    foreach ($key in $Values.Keys) {
+        $xml = $xml.Replace("{{$key}}", [System.Security.SecurityElement]::Escape([string]$Values[$key]))
+    }
+    if ($xml -match '\{\{[A-Z_]+\}\}') { throw "AppxManifest.xml: unfilled token $($Matches[0])" }
+    [void][xml]$xml
+    [IO.File]::WriteAllText($Target, $xml, [Text.UTF8Encoding]::new($false))
 }
 
 # --------------------------------------------------------------- venv (local copy)
@@ -160,6 +219,90 @@ if ($Steps -contains 'installer') {
     }
 }
 
+# --------------------------------------------------------- MSIX (Microsoft Store)
+# The same one-folder build, wrapped as an MSIX package for the Microsoft Store
+# (CWatM_GUI_Build.md, "Microsoft Store (MSIX)"). Left unsigned: the Store signs the
+# package after certification, and Store installs pass Smart App Control.
+if ($Steps -contains 'msix') {
+    Write-Step 'MSIX package (Microsoft Store)'
+    $msixSrc = Join-Path $Work 'installer\msix'
+    if ($MsixTestIdentity) {
+        # Distinct from the Store identity, so a local try-out never collides with
+        # an installed Store copy.
+        $identity = [pscustomobject]@{
+            IdentityName         = 'IIASA.CWatMGUI.LocalTest'
+            Publisher            = 'CN=CWatM GUI local test'
+            PublisherDisplayName = 'IIASA (local test)'
+        }
+    }
+    else {
+        $identity = Get-MsixIdentity (Join-Path $msixSrc 'store_identity.json')
+    }
+    if (-not $identity) {
+        Write-Host ("MSIX skipped: fill in installer\msix\store_identity.json from Partner Center > " +
+                    "Product identity. (-MsixTestIdentity builds a local test layout without it.)") -ForegroundColor Yellow
+    }
+    else {
+        $dist = Join-Path $Work 'dist\CWatM_GUI'
+        if (-not (Test-Path (Join-Path $dist '_internal\CWatM_model.exe'))) {
+            throw "No complete build in $dist - run the build step first."
+        }
+        $version = Get-MsixVersion $Work $MsixBuild
+        $msixRoot = Join-Path $Work 'msix'
+        $layout = Join-Path $msixRoot 'layout'   # the package contents
+        $res = Join-Path $msixRoot 'res'         # manifest + Images only, for makepri
+        Write-Host "Identity $($identity.IdentityName), version $version"
+        Measure-Step 'msix' {
+            # 1. The layout: dist\CWatM_GUI verbatim (_internal\ keeps its exact
+            #    layout), plus the logos and the filled-in manifest.
+            Invoke-Robocopy $dist $layout @('/MIR', '/MT:16')
+            foreach ($dir in $layout, $res) {
+                Invoke-Robocopy (Join-Path $msixSrc 'Images') (Join-Path $dir 'Images') @('/MIR')
+                Write-MsixManifest (Join-Path $msixSrc 'AppxManifest.xml') (Join-Path $dir 'AppxManifest.xml') @{
+                    IDENTITY_NAME          = $identity.IdentityName
+                    PUBLISHER              = $identity.Publisher
+                    PUBLISHER_DISPLAY_NAME = $identity.PublisherDisplayName
+                    VERSION                = $version
+                }
+            }
+
+            # 2. resources.pri: indexes the qualified logo files (scale-*, targetsize-*,
+            #    altform-unplated) so Windows picks the right size for the taskbar,
+            #    Start and Settings. Indexed from the small res\ folder: the layout's
+            #    thousands of build files are no resources. The <packaging> section is
+            #    removed so everything lands in the one resources.pri (it would split
+            #    the scale variants into resource packs, which only a bundle carries).
+            $makepri = Find-SdkTool 'makepri.exe'
+            $priconfig = Join-Path $msixRoot 'priconfig.xml'
+            & $makepri createconfig /cf $priconfig /dq en-US /pv 10.0.0 /o
+            if ($LASTEXITCODE -ne 0) { throw "makepri createconfig failed (exit $LASTEXITCODE)" }
+            [xml]$cfg = Get-Content -LiteralPath $priconfig -Raw
+            foreach ($node in @($cfg.SelectNodes('//packaging'))) { [void]$node.ParentNode.RemoveChild($node) }
+            $cfg.Save($priconfig)
+            $pri = Join-Path $layout 'resources.pri'
+            & $makepri new /pr $res /cf $priconfig /mn (Join-Path $res 'AppxManifest.xml') /of $pri /o
+            if ($LASTEXITCODE -ne 0) { throw "makepri new failed (exit $LASTEXITCODE)" }
+            if (-not (Test-Path $pri)) { throw "makepri did not write $pri" }
+
+            if ($MsixTestIdentity) {
+                Write-Host "Local test layout (placeholder identity, no .msix): $layout" -ForegroundColor Green
+                Write-Host "  try it (Developer Mode on): Add-AppxPackage -Register '$layout\AppxManifest.xml'" -ForegroundColor Green
+                Write-Host "  remove it:                 Get-AppxPackage IIASA.CWatMGUI.LocalTest | Remove-AppxPackage" -ForegroundColor Green
+            }
+            else {
+                # 3. Pack. One package per version in Output; older ones are removed.
+                $outDir = Join-Path $Work 'installer\Output'
+                if (-not (Test-Path $outDir)) { New-Item -ItemType Directory $outDir | Out-Null }
+                Get-ChildItem -LiteralPath $outDir -Filter 'CWatM_GUI_*_x64.msix' | Remove-Item -Force
+                $msix = Join-Path $outDir ('CWatM_GUI_{0}_x64.msix' -f $version)
+                $makeappx = Find-SdkTool 'makeappx.exe'
+                & $makeappx pack /d $layout /p $msix /o
+                if ($LASTEXITCODE -ne 0) { throw "makeappx failed (exit $LASTEXITCODE)" }
+            }
+        }
+    }
+}
+
 # --------------------------------------------------------------------- copy back
 if ($Steps -contains 'copyback') {
     Write-Step "Copying the results back to $Repo"
@@ -168,11 +311,19 @@ if ($Steps -contains 'copyback') {
         if (Test-Path $distSrc) {
             Invoke-Robocopy $distSrc (Join-Path $Repo 'dist\CWatM_GUI') @('/MIR', '/MT:8')
         }
+        $outDir = Join-Path $Repo 'installer\Output'
         $setup = Join-Path $Work 'installer\Output\CWatM_GUI_Setup.exe'
-        if (Test-Path $setup) {
-            $outDir = Join-Path $Repo 'installer\Output'
+        $msixFiles = @(Get-ChildItem -LiteralPath (Join-Path $Work 'installer\Output') -Filter 'CWatM_GUI_*_x64.msix' -ErrorAction SilentlyContinue)
+        if ((Test-Path $setup) -or $msixFiles) {
             if (-not (Test-Path $outDir)) { New-Item -ItemType Directory $outDir | Out-Null }
+        }
+        if (Test-Path $setup) {
             Copy-Item $setup $outDir -Force
+        }
+        if ($msixFiles) {
+            # keep only the current package in the repo's Output as well
+            Get-ChildItem -LiteralPath $outDir -Filter 'CWatM_GUI_*_x64.msix' | Remove-Item -Force
+            $msixFiles | Copy-Item -Destination $outDir -Force
         }
     }
 }
@@ -180,8 +331,10 @@ if ($Steps -contains 'copyback') {
 # ----------------------------------------------------------------------- summary
 Write-Step 'Summary'
 foreach ($k in $script:Times.Keys) { "{0,-10} {1:hh\:mm\:ss}" -f $k, $script:Times[$k] }
-foreach ($p in (Join-Path $Repo 'dist\CWatM_GUI\CWatM_GUI.exe'),
-               (Join-Path $Repo 'installer\Output\CWatM_GUI_Setup.exe')) {
+$msixOut = @(Get-ChildItem -LiteralPath (Join-Path $Repo 'installer\Output') -Filter 'CWatM_GUI_*_x64.msix' -ErrorAction SilentlyContinue |
+    ForEach-Object FullName)
+foreach ($p in @((Join-Path $Repo 'dist\CWatM_GUI\CWatM_GUI.exe'),
+                 (Join-Path $Repo 'installer\Output\CWatM_GUI_Setup.exe')) + $msixOut) {
     if (Test-Path $p) {
         $i = Get-Item $p
         "{0,-58} {1,8:N1} MB  {2}" -f $i.FullName, ($i.Length / 1MB), $i.LastWriteTime
