@@ -70,6 +70,8 @@ from src.gui.utils import academy_progress as progress
 from src.gui.widgets.academy_outlet_map import OutletMapWidget
 from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
 from src.gui.utils.gui_log import get_logger
+from src.gui.utils.i18n import tr
+from html import escape as html_escape
 
 log = get_logger("academy_window")
 
@@ -123,7 +125,7 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.mw = parent
-        self.setWindowTitle("CWatM Academy")
+        self.setWindowTitle(tr("CWatM Academy"))
         try:
             self.setWindowIcon(QIcon())  # inherits the app icon; no extra asset needed
         except Exception:
@@ -259,7 +261,8 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         done = progress.completed_levels()
         for lvl in LEVELS:
             mark = "✓" if lvl["id"] in done else str(lvl["id"])
-            item = QListWidgetItem(f"{mark}   {lvl['title']}")
+            # list items are out of the i18n filter's reach: translate here
+            item = QListWidgetItem(f"{mark}   {tr(lvl['title'])}")
             item.setData(Qt.UserRole, lvl["id"])
             item.setSizeHint(QSize(0, 34))
             self.level_list.addItem(item)
@@ -453,7 +456,8 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         (black), while its text colour would come from the app palette - black in
         Normal mode, i.e. black on black."""
         c = _C
-        box = QMessageBox(QMessageBox.Question, title, text,
+        # window title and message-box text are out of the i18n filter's reach
+        box = QMessageBox(QMessageBox.Question, tr(title), tr(text),
                           QMessageBox.Yes | QMessageBox.No, self)
         box.setDefaultButton(QMessageBox.Yes)
         box.setStyleSheet(f"""
@@ -489,14 +493,20 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         if lvl is None:
             return
         self._current_level_id = level_id
+        # labels: the i18n filter translates them ("Level {n}: {title}", "Badge: {badge}")
         self.lesson_title.setText(f"Level {lvl['id']}: {lvl['title']}")
         self.lesson_badge.setText(f"Badge: {lvl['badge']}")
-        bullets = "".join(f"<li>{t}</li>" for t in lvl["teaches"])
-        self.lesson_body.setHtml(  # html-safe: lesson texts are constants in this module
-            f"<p>{lvl['summary']}</p>"
-            f"<p><b>You'll use:</b></p><ul>{bullets}</ul>"
-            f"<p><i>Try it: {lvl['menu_hint']}</i></p>"
-        )
+        # the lesson page is a QTextBrowser, out of the filter's reach: each piece is
+        # translated here (academy_content texts are rows of the translation table)
+        # and escaped, since a translation is plain text
+        def text(s):
+            return html_escape(tr(s), quote=False)
+        summary = text(lvl["summary"])
+        uses = text("You'll use:")
+        bullets = "".join(f"<li>{text(t)}</li>" for t in lvl["teaches"])
+        try_it = text("Try it: " + lvl["menu_hint"])
+        self.lesson_body.setHtml(  # html-safe: every text piece is escaped by text()
+            f"<p>{summary}</p><p><b>{uses}</b></p><ul>{bullets}</ul><p><i>{try_it}</i></p>")
         done = progress.completed_levels()
         already = level_id in done
         # The current (lowest unfinished) level can be marked, and a completed one

@@ -567,6 +567,14 @@ timeline in `create_gui`, decimals/transparency in `__init__`, the sparkline ani
   Preferences category list items, and in the account windows the tab titles, the
   *Read the full privacy notice* link and the badge progress text (those windows are
   built fresh on every open, so a construction-time `tr()` follows a switch).
+  **CWatM Academy is translated the same way**: its curriculum (`academy_content`),
+  guide-bubble steps, prompts and Field Test texts are table rows, a level's lesson
+  page is assembled from `tr()`-translated pieces (title/badge labels via the templates
+  `Level {n}: {title}` / `Badge: {badge}`), and `tr()` covers its window titles, the
+  login question, the level list and the outlet map's legend (web page). Menu paths
+  inside Academy texts use the translated menu names, and the Beginner / Advanced /
+  Expert level names stay English (the level button shows them untranslated).
+  `tests/test_academy_i18n.py` fails when a curriculum text has no row.
 - **Asset paths**: never load assets with a relative path (`QPixmap("assets/...")`
   only worked when the CWD happened to contain an assets/ copy — in the frozen
   build assets live in `_internal/`, not next to the .exe). Always resolve through

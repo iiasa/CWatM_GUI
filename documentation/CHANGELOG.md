@@ -18,6 +18,11 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
   Several stations: Backward / Forward. Save HTML and Save CSV (the table).
 - **Shop**: a new animal for the live discharge sparkline - **Salmon (Jessi)**, 20
   points.
+- **CWatM Academy speaks your language.** The lessons, the Torus guide, the
+  briefings, the Field Test and the celebrations now follow *Preferences ▸ Display ▸
+  Language* in all twelve languages, and the menu paths they mention match your menus.
+- **The Torus guide points at the Analyse menu** in Level 2's debrief instead of
+  covering it, and steps aside while a menu or a file dialog is open.
 
 
 ## CWatM GUI 1.12 — what is new

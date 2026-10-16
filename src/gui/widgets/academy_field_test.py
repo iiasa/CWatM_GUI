@@ -105,6 +105,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from src.gui.utils import theme
 from src.gui.utils.window_geometry import scaled_default_size
 from src.gui.utils.gui_log import get_logger
+from src.gui.utils.i18n import tr
 
 log = get_logger("academy_field_test")
 
@@ -415,7 +416,7 @@ def ask_initials(parent, suggestion=""):
 
     c = _C
     dlg = QDialog(parent)
-    dlg.setWindowTitle("New highscore")
+    dlg.setWindowTitle(tr("New highscore"))
     dlg.setStyleSheet(f"""
         QDialog {{ background-color: {c['window_bg']}; }}
         QLabel {{ color: {c['text']}; font-size: 13px; }}
@@ -473,7 +474,7 @@ def show_level2_message(parent, image=None):
     from PySide6.QtWidgets import QDialogButtonBox
     c = _C
     dlg = QDialog(parent)
-    dlg.setWindowTitle("Level 2")
+    dlg.setWindowTitle(tr("Level 2"))
     dlg.setStyleSheet(f"""
         QDialog {{ background-color: {c['window_bg']}; }}
         QLabel {{ color: {c['text']}; font-size: 13px; }}
@@ -541,7 +542,7 @@ def show_end_statistics(parent, stats):
     from src.gui.utils.badge_images import badge_pixmap
     c = _C
     dlg = QDialog(parent)
-    dlg.setWindowTitle("Field Test - statistics")
+    dlg.setWindowTitle(tr("Field Test - statistics"))
     dlg.setStyleSheet(f"""
         QDialog {{ background-color: {c['window_bg']}; }}
         QLabel {{ color: {c['text']}; font-size: 13px; }}
@@ -684,7 +685,7 @@ class BasinFieldTestWindow(QDialog):
             self._basins = load_basins()
         except Exception:
             log.warning("academy basin list unreadable", exc_info=True)
-        self.setWindowTitle("CWatM Academy - Field Test")
+        self.setWindowTitle(tr("CWatM Academy - Field Test"))
         # a maximize button in the title bar (a QDialog has none by default)
         self.setWindowFlag(Qt.WindowMaximizeButtonHint, True)
         self._build_ui()

@@ -72,6 +72,8 @@ from src.gui.utils import theme
 from src.gui.utils import display_format
 from src.gui.utils.assets import asset_path
 from src.gui.utils.gui_log import get_logger
+from src.gui.utils.i18n import tr
+from html import escape as html_escape
 
 log = get_logger("academy_outlet_map")
 
@@ -533,15 +535,18 @@ class OutletMapWidget(QWidget):
         else:
             html = css + html
 
+        # text on the web page is out of the i18n filter's reach: translate here
+        def label(s):
+            return html_escape(tr(s), quote=False)
         legend = ('<div class="cwatm-legend">'
-                  '<div class="cwatm-legend-title">Upstream Area</div>'
+                  f'<div class="cwatm-legend-title">{label("Upstream Area")}</div>'
                   '<div class="cwatm-legend-bar"></div>'
-                  '<div class="cwatm-legend-labels"><span>low</span>'
-                  '<span>high</span></div></div>')
+                  f'<div class="cwatm-legend-labels"><span>{label("low")}</span>'
+                  f'<span>{label("high")}</span></div></div>')
         opacity_pct = int(round(self._overlay_opacity * 100))
         opacity_ctl = (
             '<div class="cwatm-opacity">'
-            '<div class="cwatm-opacity-label">Transparency</div>'
+            f'<div class="cwatm-opacity-label">{label("Transparency")}</div>'
             f'<input type="range" min="0" max="100" value="{opacity_pct}" '
             'class="cwatm-opacity-range" id="cwatmOpacityRange"></div>')
         overlay_html = legend + opacity_ctl
