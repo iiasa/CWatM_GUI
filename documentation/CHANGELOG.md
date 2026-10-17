@@ -4,6 +4,72 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
+## Unreleased
+
+- **Tools ▸ Add output WaterBalance**: adds `OUT_TSS_AreaSum_Daily = WaterBalance`
+  under `[OUTPUT]` (if it is not there yet) - the csv with almost all water-balance
+  variables, day by day.
+- **Analyse ▸ Full Waterbalance**: opens that `WaterBalance_areasum_daily.csv` and shows
+  the balance of every part of the water cycle in one page - a table with In / Out /
+  storage change / balance error in mm/year (errors above 1e-3 of the input in red) and
+  the sunbursts of all parts: soil and its layers, soil per land cover, groundwater
+  (MODFLOW layers), runoff concentration, evapotranspiration (potential vs. actual),
+  storage change, snow and glacier, lakes / channels / routing, water demand and use.
+  Several stations: Backward / Forward. Save HTML and Save CSV (the table).
+- **Shop**: a new animal for the live discharge sparkline - **Salmon (Jessi)**, 20
+  points.
+
+
+## CWatM GUI 1.12 — what is new
+
+*Released 16 October 2026. Previous release: 1.11 (7 October 2026).*
+
+This release ships an updated **CWatM model** — mainly bug fixes and a much more
+complete water balance — together with new ways to look into the water balance in
+the GUI and an easier CWatM AI login.
+
+---
+
+### 1. CWatM model (bundled)
+
+- **New `WaterBalance` output** (`OUT_TSS_AreaSum_MonthTot = WaterBalance`): the
+  WaterCycle columns plus interception/throughfall, the three soil layers and their
+  fluxes, the soil of each land cover, potential vs. actual evapotranspiration, the
+  runoff-concentration inputs, the snow pack (pySnowClim), precipitation on glaciers,
+  and lakes and reservoirs separately. Like WaterCycle it is always written as csv.
+- **WaterCycle is more complete**: inflow from outside the basin, canal leakage of
+  reservoir command areas, capillary rise from MODFLOW, and the CWatM↔MODFLOW
+  exchange terms (coupling buffer, rejected recharge, exported recharge, seepage).
+- **MODFLOW coupling**: the groundwater storage of **all** layers is now used for the
+  water balance and the init file (`groundwater_storage_total`); a reworked transient
+  coupling with new outputs such as depth to water, actual/rejected recharge and the
+  groundwater balance.
+- Bug fixes across soil, capillary rise, land cover, routing, lakes/reservoirs,
+  water demand, runoff concentration, inflow, initial conditions and pySnowClim
+  (e.g. the variable `depostition` is now spelled `deposition`).
+
+### 2. Water balance in the GUI
+
+- **Watercycle and Flow Diagram**: right-click a sector, node or flow ▸ **Timeseries**
+  shows its monthly series; **Add to timeseries** overlays further sectors.
+- **Check settingsfile (F4)** accepts the new `WaterBalance` output.
+
+### 3. CWatM AI
+
+- **Login with Edge or Chrome**: Google's sign-in page opens in the installed browser;
+  no browser cookies are read any more.
+- An expired or missing login is detected and you are guided to log in instead of a
+  failing question; a closing "Would you like …?" offer can be asked with one click.
+
+### 4. Account and CWatM Academy
+
+- **Feature badges** for runs with MODFLOW (MoleFlow), pySnowClim and Glacier OGGM.
+- **Academy Field Test**: a score, a Level 2 shape mode, an all-users highscore with
+  initials and a Field Test badge. CWatM Academy now needs a login.
+- Check Data resets CWatM's flags before an in-process run.
+
+---
+
 ## CWatM GUI 1.11 — what is new
 
 *Released 7 October 2026. Previous release: 1.10 (30 September 2026).*

@@ -1663,4 +1663,31 @@ result file as Watercycle and shows the overall water balance as a Plotly
   suggesting the resolved PathOut directory. Window geometry remembered via
   QSettings key `flowdiagram`.
 
+### Full Waterbalance Analysis (`src/gui/widgets/analysis_full_waterbalance.py`)
+**Analyse ▸ Full Waterbalance** opens a **`WaterBalance_areasum_daily.csv`** (output
+`OUT_TSS_AreaSum_Daily = WaterBalance`, inserted by **Tools ▸ Add output WaterBalance** —
+`main_window.add_output_waterbalance`, the same `_add_output_table` helper as Add output
+Watercycle) and shows, in **one scrolling QtWebEngine page** (plotly.js inlined once, no
+CDN), the summary table of cell no 07 and every sunburst below it of
+`develop/Toolkit/check_waterbalance/watercycle.ipynb`.
+- **The computation is a port of the notebook** (cells no 02-22) in
+  `src/gui/utils/full_waterbalance.py` — no Qt, so it can be checked against the
+  notebook's own json output (the Uganda run matches all 25 summary rows exactly). Keep
+  it in sync with the notebook when the WaterBalance variables change.
+  `read_waterbalance_csv` reads the csv **once** (stations from rows 2/3, settings file
+  from row 1); `compute(data, station)` returns the summary / 2nd-list DataFrames, the
+  notes the notebook prints, and the figures in the notebook's order (a part that is not
+  in the csv or whose option is off is listed with its reason instead of a plot).
+  Differences to the notebook: the overall GUI sunburst (cell no 06) is left out — that
+  is Analyse ▸ Watercycle — and the figures follow the GUI theme (`plotly_template`,
+  centre colour `panel_bg`) and are width-responsive instead of fixed pixel widths.
+- The csv of a long run is **hundreds of MB** (all variables, daily, every station) and
+  reading it is I/O-bound (≈ 30 s for 226 MB from P:), so `open_full_waterbalance` reads
+  it in a `QThread` (`_ReadWorker`) behind a busy `QProgressDialog`; Backward / Forward
+  then only re-run `compute` (≈ 1 s).
+- Table cells are `html.escape`d (a settings Title is user text); `|error / In| > tol`
+  (1e-3) is drawn in the `warn_color` token. **Save CSV** writes the summary table
+  (`full_waterbalance.csv`), **Save HTML** the whole page. Geometry key
+  `full_waterbalance`.
+
 

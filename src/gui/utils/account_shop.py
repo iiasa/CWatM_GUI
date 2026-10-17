@@ -21,6 +21,7 @@ ANIMAL_CODES = {
     "Trout": "trout",
     "Catfish": "catfish",
     "Clownfish": "clownfish",
+    "Salmon (Jessi)": "salmon",          # migration ..._shop_salmon.sql
     "Otter": "otter",
     "Beaver": "beaver",
     "Octopus (Carla)": "octopus",

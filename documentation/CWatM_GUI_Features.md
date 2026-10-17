@@ -485,6 +485,20 @@ that node or flow in mm/month (the Discharge node in m³/s while it is shown alo
 
 ![Flow Diagram](figures/screenshot_flowdiagram.png)
 
+### Full Waterbalance (Analyse ▸ Full Waterbalance)
+The balance of **every part** of the water cycle, not just the overall one. It needs the
+`WaterBalance_areasum_daily.csv` - add its output with **Tools ▸ Add output
+WaterBalance** (`OUT_TSS_AreaSum_Daily = WaterBalance`) and run CWatM. The page shows a
+**table** of all circles (In, Out, storage change and balance error in mm/year; an error
+above 1e-3 of the inputs is red), the circles that are not a balance or not drawn, and
+then the **sunbursts** of the parts: Total, interception and soil, the three soil layers,
+soil per land cover, groundwater and runoff concentration, the MODFLOW layers,
+evapotranspiration, potential vs. actual ET, storage change, snow and glacier, lakes /
+channels / routing, water demand and use. Only the parts of the options that are on are
+drawn. **Backward / Forward** switch the station, **Save HTML** keeps the whole page,
+**Save CSV** the table. A WaterBalance csv of a long run can be large, so reading it may
+take a while.
+
 ### CWatM AI (CWatM AI button)
 Ask questions about CWatM in a chat window answered by Google **NotebookLM** (Gemini),
 grounded on a notebook that holds the CWatM documentation. Answers are formatted, the

@@ -168,6 +168,10 @@ class MenuBuilderMixin:
         watercycle_action = tools_menu.addAction("Add output Watercycle")
         watercycle_action.setToolTip("Adds an additional output for creating watercycles")
         watercycle_action.triggered.connect(lambda: self.add_output_watercycle())
+        waterbalance_action = tools_menu.addAction("Add output WaterBalance")
+        waterbalance_action.setToolTip(
+            "add the output WaterBalance which creates a .csv with almost all variable")
+        waterbalance_action.triggered.connect(lambda: self.add_output_waterbalance())
         outvars_action = tools_menu.addAction("Add output variables")
         outvars_action.setToolTip("Shows a list of possible output variables to select from")
         outvars_action.triggered.connect(lambda: self.add_output_variables())
@@ -265,6 +269,11 @@ class MenuBuilderMixin:
         flowdiagram_action.setToolTip(
             "Show the water balance of a WaterCycle_areasum_monthtot.csv as a Sankey flow diagram")
         flowdiagram_action.triggered.connect(self.open_flowdiagram_analysis)
+        analyse_menu.addSeparator()
+        full_wb_action = analyse_menu.addAction("Full Waterbalance")
+        full_wb_action.setToolTip(
+            "Shows the full waterbalance but needs the waterbalance.csv")
+        full_wb_action.triggered.connect(self.open_full_waterbalance_analysis)
 
         # --- Group divider: between "analyse results" and "Help & Info" ---
         self._add_menubar_separator(menu_bar)
@@ -384,10 +393,10 @@ class MenuBuilderMixin:
         # balance, so it stays visible at every level - Tools ▸ Add output
         # Watercycle (a setup/config action, not part of that lesson) still hides.
         self._beginner_hidden_actions = [
-            watercycle_action, options_action, workbook_action, check_action,
-            restore_action, ledger_action,                      # Tools
+            watercycle_action, waterbalance_action, options_action, workbook_action,
+            check_action, restore_action, ledger_action,        # Tools
             hidden_run_action, batch_action,                    # RUN CWATM
-            flowdiagram_action,                                 # Analyse
+            flowdiagram_action, full_wb_action,                 # Analyse
         ]
         # Entries only an **Expert** sees. Compare Tab works on the settings-file
         # tabs, and those are Expert-only themselves (Preferences ▸ Use Tabs ×

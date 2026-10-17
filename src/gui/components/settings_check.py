@@ -616,7 +616,8 @@ class SettingsCheckMixin:
         # Output values: each comma-separated variable name of a (valid) out_* key is
         # checked against the metaNetcdf.xml catalogue (cached in meta_netcdf.py).
         # Mirrors CWatM's runtime check (output.py checkifvariableexists, Error 132):
-        # case-sensitive, `[index]` stripped, the special 'WaterCycle' allowed; a
+        # case-sensitive, `[index]` stripped, the special 'WaterCycle' / 'WaterBalance'
+        # tables allowed (output.py builds them, they are not in metaNetcdf.xml); a
         # first item of "None" (or empty) means "output disabled" (configuration.py
         # splitout) and is skipped. Best-effort: if the xml is unreadable, or a token
         # is not a plain identifier, nothing is flagged.
@@ -624,6 +625,7 @@ class SettingsCheckMixin:
         from src.gui.utils.meta_netcdf import all_varnames
         _known = all_varnames()
         _known_lower = {k.lower(): k for k in _known}
+        _SPECIAL_OUTPUTS = ('WaterCycle', 'WaterBalance')
 
         # Multi-dimensional model variables that need an index in an output value
         # (e.g. actualET -> actualET[1]). The sets and the check live in
@@ -645,11 +647,11 @@ class SettingsCheckMixin:
                     continue
                 base = m.group(1)
                 idx = re.findall(r'\[([^\]]*)\]', m.group(2))
-                if base == 'WaterCycle':
+                if base in _SPECIAL_OUTPUTS:
                     continue
                 if base not in _known:
-                    hit = _known_lower.get(base.lower()) or (
-                        'WaterCycle' if base.lower() == 'watercycle' else None)
+                    hit = _known_lower.get(base.lower()) or next(
+                        (s for s in _SPECIAL_OUTPUTS if s.lower() == base.lower()), None)
                     if hit:
                         msgs.append(f"'{base}' has the wrong case - CWatM is "
                                     f"case-sensitive, use '{hit}'.")

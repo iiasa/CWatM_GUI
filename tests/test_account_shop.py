@@ -79,9 +79,11 @@ def test_animal_codes_cover_the_sparkline_animals():
     assert images, "no animal images in assets/ani"
     # every image and every emoji animal is a Shop item (the mole a reward one)
     assert images | {name for name, _emoji in ANIMALS} <= set(S.ANIMAL_CODES)
-    # the item codes of migration ..._shop_animals_v2.sql
+    # the item codes of migrations ..._shop_animals_v2.sql + ..._shop_salmon.sql
     assert set(S.ANIMAL_CODES.values()) == {
-        "trout", "catfish", "clownfish", "otter", "beaver", "octopus", "bottle", "mole"}
+        "trout", "catfish", "clownfish", "otter", "beaver", "octopus", "bottle", "mole",
+        "salmon"}
+    assert S.ANIMAL_NAMES["salmon"] == "Salmon (Jessi)"
     # code -> the image name the GUI shows (not the old emoji name)
     assert S.ANIMAL_NAMES["trout"] == "Trout"
     assert S.ANIMAL_NAMES["octopus"] == "Octopus (Carla)"
@@ -105,3 +107,12 @@ def test_the_migration_sells_these_animals():
                    or re.search(rf"price = {price}\b", ln) for ln in lines), code
     assert re.search(r"'mole'.*'modflow_first_run'", sql)
     assert S.MODFLOW_REWARD == "modflow_first_run"
+
+
+def test_the_salmon_migration_sells_the_salmon_for_20():
+    import pathlib
+    import re
+    sql = (pathlib.Path(__file__).resolve().parents[1] / "supabase" / "migrations"
+           / "20261016120000_shop_salmon.sql").read_text(encoding="utf-8")
+    assert re.search(r"\('salmon',\s*'animal',\s*'Salmon',\s*20,\s*null,\s*\d+,\s*null\)",
+                     sql)

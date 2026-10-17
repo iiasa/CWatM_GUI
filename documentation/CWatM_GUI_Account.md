@@ -86,7 +86,8 @@ recorded decay (shown on the account button, ranked on the leaderboard, spent in
 Shop). Spending **never removes a badge** nor moves a badge goal. Items + prices live on
 the server (`shop_items`: `advanced` 20, `expert` 40 *requires* `advanced`; animals
 (`20261007120000_shop_animals_v2.sql`): `trout` 10, `catfish` 30, `otter` 20,
-`clownfish` 30, `beaver` 30, `octopus` 20, `bottle` 2). **`shop_buy` is the only
+`clownfish` 30, `beaver` 30, `octopus` 20, `bottle` 2; `salmon` 20 —
+`20261016120000_shop_salmon.sql`). **`shop_buy` is the only
 buyer** (per-user lock; checks the Breg badge `game_config.shop_required_badge`, not
 owned yet, the `requires` item, the balance) and answers with the full status (`buy` ∈
 `_STATUS_OPS`).

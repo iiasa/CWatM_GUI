@@ -1132,24 +1132,35 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
     def add_output_watercycle(self):
         """Append 'OUT_TSS_AreaSum_MonthTot = WaterCycle' as the last line of the settings
         file (in memory, not saved), unless a WaterCycle entry already exists."""
+        self._add_output_table("OUT_TSS_AreaSum_MonthTot", "WaterCycle")
+
+    def add_output_waterbalance(self):
+        """Tools ▸ Add output WaterBalance: 'OUT_TSS_AreaSum_Daily = WaterBalance' (the
+        csv with almost all variables, read by Analyse ▸ Full Waterbalance), added the
+        same way as the WaterCycle output."""
+        self._add_output_table("OUT_TSS_AreaSum_Daily", "WaterBalance")
+
+    def _add_output_table(self, out_key, table):
+        """Insert '<out_key> = <table>' under [OUTPUT] (in memory, not saved), unless
+        that key already lists ``table``."""
         if not self.file_manager.has_file_loaded():
             self.status_bar.showMessage("No file loaded")
             return
-        line_to_add = "OUT_TSS_AreaSum_MonthTot = WaterCycle"
+        line_to_add = f"{out_key} = {table}"
         try:
             content = self.original_content or self.text_display.get_content()
         except Exception:
             content = ""
 
-        # Skip if a WaterCycle value already exists for that key
+        # Skip if the table already exists for that key
         for line in content.split('\n'):
             s = line.strip()
             if s.startswith('#') or s.startswith(';') or '=' not in s:
                 continue
             key, value = s.split('=', 1)
-            if key.strip().lower() == 'out_tss_areasum_monthtot' and \
-               'watercycle' in [v.lower() for v in value.split()]:
-                self.status_bar.showMessage("WaterCycle output already present")
+            if key.strip().lower() == out_key.lower() and \
+               table.lower() in [v.strip().lower() for v in value.replace(',', ' ').split()]:
+                self.status_bar.showMessage(f"{table} output already present")
                 return
 
         # Insert the line under the [OUTPUT] section (in memory only)
@@ -1181,7 +1192,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.text_display.set_original_content(updated)
         self.parse_file(content=updated, load=False, expand_all=False)
         self._set_save_dirty(True)
-        self.status_bar.showMessage("Added WaterCycle output under [OUTPUT] (not saved)")
+        self.status_bar.showMessage(f"Added {table} output under [OUTPUT] (not saved)")
 
     def add_output_variables(self):
         """Tools ▸ Add output variables: open the picker of metaNetcdf.xml [Array]
@@ -2720,6 +2731,15 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             open_flowdiagram(parent=self)
         except Exception as e:
             print(f"Error opening Flow Diagram analysis: {str(e)}", file=sys.stderr)
+
+    def open_full_waterbalance_analysis(self):
+        """Analyse menu > Full Waterbalance: open a WaterBalance csv and show the
+        summary table + all part sunbursts."""
+        try:
+            from src.gui.widgets.analysis_full_waterbalance import open_full_waterbalance
+            open_full_waterbalance(parent=self)
+        except Exception as e:
+            print(f"Error opening Full Waterbalance analysis: {str(e)}", file=sys.stderr)
 
     def open_cwatm_ai(self):
         """CWatM AI button: open the Gemini NotebookLM chat window (lazy import so
