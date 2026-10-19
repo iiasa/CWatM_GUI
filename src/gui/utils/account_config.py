@@ -22,9 +22,26 @@ _DEFAULT_KEY = "sb_publishable_nN1YHaYvwk80HMo82aAS-Q_Q71ibQSl"
 # The privacy notice a new account agrees to (documentation/CWatM_Account_Privacy.md).
 # Sent with every sign-up and stored in the profile as the proof of consent - keep it
 # equal to the "Version ..." line of that file (tests/test_account_privacy.py checks),
-# and change both whenever the notice changes in a way that matters.
+# and change both whenever the notice changes in a way that matters: every existing
+# user is then shown the new notice at the next login and asked to agree again
+# (privacy_consent_needed below; account_ui._on_privacy_consent).
 PRIVACY_VERSION = "2026-10-19-draft6"      # draft6: proposed answers for IIASA, + outside the account
 PRIVACY_DOC = "CWatM_Account_Privacy.md"
+# The minimum age for an account (the notice's "Age" section; the Register tick box).
+MIN_AGE = 16
+
+
+def privacy_consent_needed(consent):
+    """Must the logged-in user agree to the privacy notice again?
+
+    ``consent`` is the server's answer to get_privacy_consent: {privacy_version,
+    privacy_accepted_at}. True when the stored version is not PRIVACY_VERSION,
+    including none at all (an account older than the consent record). False when
+    there is no answer (``None``, e.g. a server without the function yet): an
+    unknown state never locks anyone out - the next login asks again."""
+    if not isinstance(consent, dict):
+        return False
+    return (consent.get("privacy_version") or None) != PRIVACY_VERSION
 
 
 def supabase_url():

@@ -545,6 +545,20 @@ class AccountClient:
         return self._rpc("record_feature_run",
                          {"p_feature": str(feature), "p_meta": dict(meta or {})}) or {}
 
+    def get_privacy_consent(self):
+        """The version of the privacy notice this user agreed to, and when:
+        {privacy_version, privacy_accepted_at}. Compared after every login with
+        account_config.PRIVACY_VERSION (account_config.privacy_consent_needed)."""
+        return self._rpc("get_privacy_consent") or {}
+
+    def accept_privacy(self, version):
+        """Record that the user agreed to ``version`` of the privacy notice (the
+        re-consent after the notice changed). Returns the new consent record."""
+        version = str(version or "").strip()
+        if not version:
+            raise AccountError("invalid_input", "No privacy notice version given.")
+        return self._rpc("accept_privacy", {"p_version": version[:40]}) or {}
+
     def get_field_test_record(self):
         """The CWatM Academy Field Test record of all users (public - no login
         needed). {record_score, record_initials}."""

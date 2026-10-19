@@ -33,3 +33,23 @@ def asset_path(*parts):
         if os.path.exists(candidate):
             return candidate
     return os.path.join(bases[0], "assets", *parts)
+
+
+def documentation_path(name):
+    """Absolute path to the bundled help file ``documentation/<name>``, or None.
+
+    Same places as asset_path (``_internal`` and the .exe folder when frozen, the
+    project root from source), then the current working directory. Used by the Help
+    viewer (main_window.show_documentation) and the privacy-consent dialog."""
+    if getattr(sys, "frozen", False):
+        bases = [getattr(sys, "_MEIPASS", ""), os.path.dirname(sys.executable)]
+    else:
+        bases = [os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))]
+    bases.append(os.getcwd())
+    for base in bases:
+        if not base:
+            continue
+        candidate = os.path.join(base, "documentation", name)
+        if os.path.exists(candidate):
+            return candidate
+    return None

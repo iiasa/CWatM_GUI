@@ -152,6 +152,8 @@ supabase/
 | rpc `record_run_location(p_lon, p_lat)` | user | `{status: recorded\|no_consent\|invalid_location\|daily_limit}` — adds 1 to the anonymous count of (round(lon,2), round(lat,2), month); stores **no user** |
 | rpc `get_my_status()` | user | `{profile, total_points (= earned), earned_points, balance, purchases, badges, next_badge}` |
 | rpc `touch_activity()` | user | called by the GUI after every login: records the point decay due, restarts the clock; `get_my_status()` + `{status: active, decayed_points, inactive_weeks}` |
+| rpc `get_privacy_consent()` | user | called by the GUI after every login: `{privacy_version, privacy_accepted_at}` of the caller - a version other than the GUI's `PRIVACY_VERSION` shows the changed notice |
+| rpc `accept_privacy(p_version)` | user | the caller agrees to notice `p_version` (non-empty, ≤ 40 characters): stores it with the time; `{privacy_version, privacy_accepted_at}` |
 | rpc `get_shop_items()` | anon | the price list: code, kind (`level`/`animal`), name, price, requires |
 | rpc `shop_buy(p_item)` | user | `get_my_status()` + `{status: bought\|unknown_item\|already_owned\|badge_required\|requires_item\|not_enough_points, item, price, requires?, missing?, badge?}` |
 | rpc `export_my_data()` | user | everything stored about the user (GDPR export), incl. purchases, earned_points, balance |

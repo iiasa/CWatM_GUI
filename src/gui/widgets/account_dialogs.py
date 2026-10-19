@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QForm
                                QStackedWidget, QProgressBar, QFrame, QMessageBox,
                                QInputDialog, QFileDialog, QTableWidget,
                                QTableWidgetItem, QHeaderView, QAbstractItemView,
-                               QGridLayout, QScrollArea)
+                               QGridLayout, QScrollArea, QTextBrowser)
 
 from src.gui.utils import theme, account_config, i18n, account_validation as V
 from src.gui.utils.gui_log import get_logger
@@ -48,6 +48,14 @@ LOCATION_TEXT = (
     "100 m) is counted anonymously - stored without your name or account, only as "
     "'a run at this place in this month'. It shows IIASA where CWatM is used. "
     "Can be switched off later in the account window.")
+
+
+def consent_checkbox_text():
+    """The Register form's consent tick box: the minimum age (the notice's "Age"
+    section) and the agreement in one tick. A row of the translation table - keep
+    them equal when MIN_AGE changes (tests/test_privacy_consent.py)."""
+    return (f"I am at least {account_config.MIN_AGE} years old and agree that these "
+            "data are stored (privacy notice)")
 
 
 class _ClickableLabel(QLabel):
@@ -444,8 +452,7 @@ class LoginDialog(_AccountDialogBase):
         lay.addWidget(self._line())
         lay.addWidget(self._note(PRIVACY_TEXT))
         lay.addWidget(self._privacy_link())
-        self.reg_agree = QCheckBox("I agree that these data are stored "
-                                   "(privacy notice)")
+        self.reg_agree = QCheckBox(consent_checkbox_text())
         lay.addWidget(self.reg_agree)
         # The three choices below are OPTIONAL and start UNTICKED: consent must be
         # freely given (not a condition of the account, GDPR Art. 7(4)) and a
@@ -559,8 +566,8 @@ class LoginDialog(_AccountDialogBase):
         if problem:
             return self._problem(problem)
         if not self.reg_agree.isChecked():
-            return self._problem("Please agree to the storage of your data "
-                                 "(tick the box above).")
+            return self._problem("Please confirm your age and agree to the storage of "
+                                 "your data (tick the box above).")
         self._run("register", email, self.reg_password.text(),
                   self.reg_username.text().strip(),
                   full_name=self.reg_name.text(), country=self.reg_country.text(),
@@ -1272,3 +1279,67 @@ def open_account_window(mw):
 
 def open_leaderboard(mw):
     return _open_single(mw, "_leaderboard_window", LeaderboardWindow)
+
+
+# ---- re-consent after the privacy notice changed --------------------------------------
+
+CONSENT_INTRO = (
+    "The privacy notice of the CWatM account has changed. Please read it below and "
+    "agree to it to keep using your account.\n\n"
+    "If you do not agree, you are logged out and asked again at your next login; your "
+    "account stays as it is. To have it deleted instead, write to the contact named "
+    "in the notice.")
+
+
+class PrivacyConsentDialog(QDialog):
+    """The changed privacy notice, shown in full, with **Agree** and **Log out**.
+
+    Shown by account_ui._on_privacy_consent after a login whose stored consent is for
+    another notice version (account_config.privacy_consent_needed). The notice is
+    shown here rather than through Help ▸ CWatM account privacy: a modal question
+    would block scrolling a separate viewer window. Closing the window counts as
+    *Log out* - no choice is no consent. ``exec()`` returns Accepted for *Agree*."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # window titles, the label text and the buttons: translated here, since a
+        # window title is out of the language filter's reach
+        self.setWindowTitle(i18n.tr("CWatM account privacy"))
+        self.resize(*scaled_default_size(self, 760, 640))
+        lay = QVBoxLayout(self)
+
+        intro = QLabel(i18n.tr(CONSENT_INTRO))
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+
+        self.browser = QTextBrowser()
+        try:
+            from src.gui.utils.open_path import make_links_safe
+            make_links_safe(self.browser)       # web links open, no programs
+        except Exception:
+            log.debug("make_links_safe unavailable", exc_info=True)
+        self.browser.setMarkdown(self._notice_text())  # html-safe: our own bundled notice
+        lay.addWidget(self.browser, 1)
+
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.logout_button = QPushButton(i18n.tr("Log out"))
+        self.logout_button.clicked.connect(self.reject)
+        row.addWidget(self.logout_button)
+        self.agree_button = QPushButton(i18n.tr("Agree"))
+        self.agree_button.clicked.connect(self.accept)
+        row.addWidget(self.agree_button)
+        lay.addLayout(row)
+
+    @staticmethod
+    def _notice_text():
+        from src.gui.utils.assets import documentation_path
+        path = documentation_path(account_config.PRIVACY_DOC)
+        if path:
+            try:
+                with open(path, encoding="utf-8") as fh:
+                    return fh.read()
+            except OSError:
+                log.warning("privacy notice unreadable: %s", path, exc_info=True)
+        return ("The privacy notice could not be found. It is part of CWatM GUI "
+                "(documentation/" + account_config.PRIVACY_DOC + ").")

@@ -959,7 +959,10 @@ rpc / setup in [`supabase/README.md`](supabase/README.md). The invariants:
 - **The privacy notice must match the code** — `tests/test_account_privacy.py` ties
   them; changing what is stored or sent means changing
   `documentation/CWatM_Account_Privacy.md`. Every sign-up carries
-  `account_config.PRIVACY_VERSION`.
+  `account_config.PRIVACY_VERSION`, and **raising it asks every existing user to agree
+  again at the next login** (the notice in full, Agree / Log out - see
+  `CWatM_GUI_Account.md`, Privacy). Minimum age for an account: `MIN_AGE` (16), on the
+  Register tick box.
 - **Guiding principle**: the gamification must never stop a serious user — the
   session-only **Cheat** tick opens every level, logged out too.
 

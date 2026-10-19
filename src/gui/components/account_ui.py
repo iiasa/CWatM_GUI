@@ -9,7 +9,11 @@
   the worker thread, never at startup) and the login state every window reads;
 - the automatic re-login at startup: only when the last session stored a login
   (``account/remembered``), started ``_RESTORE_DELAY_MS`` after construction so it
-  never competes with the window coming up.
+  never competes with the window coming up;
+- the re-consent: after every login (the silent one at startup included) the version
+  of the privacy notice the user agreed to is compared with the one this GUI ships;
+  a different one shows the new notice with **Agree** / **Log out**
+  (``_check_privacy_consent``, ``account_dialogs.PrivacyConsentDialog``).
 
 States: ``logged_out`` · ``restoring`` (re-login in flight) · ``logged_in`` ·
 ``offline`` (a login is stored but the server cannot be reached - kept, retried on
@@ -24,7 +28,7 @@ supabase at startup for users who never logged in), ``account/count_runs``
 import json
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QToolButton, QMessageBox
+from PySide6.QtWidgets import QDialog, QToolButton, QMessageBox
 
 from src.gui import __version__ as GUI_VERSION
 from src.gui.utils import (academy_progress, account_config, account_runs,
@@ -42,7 +46,8 @@ _STATUS_OPS = {"restore", "login", "confirm_signup", "reset_password", "get_stat
 _LOGIN_OPS = {"restore", "login", "confirm_signup", "reset_password", "register"}
 # Interactive logins: the one-time run-location question is asked after these (not
 # after the silent re-login at startup - a question out of nowhere - and not after
-# confirm_signup: a new account has just answered it on the Register form).
+# confirm_signup: a new account has just answered it on the Register form). It waits
+# until the privacy consent is settled (_after_privacy_consent), never on top of it.
 _ASK_LOCATION_OPS = {"login", "reset_password"}
 # award_run answers that settle a run for good (anything else = try again later).
 _AWARD_FINAL = {"awarded", "duplicate", "too_short", "daily_limit", "invalid_run_uid",
@@ -182,6 +187,9 @@ class AccountMixin:
         self._account_state = "logged_out"
         self._account_status = None
         self._account_worker_obj = None
+        # re-consent: the notice dialog is open / ask the run-location question after it
+        self._privacy_dialog_open = False
+        self._ask_location_after_consent = False
         # award_run requests in flight, in submit order: (uid, meta, user). The worker
         # answers strictly in order, and only this mixin submits award_run, so the
         # oldest entry is always the one an answer belongs to.
@@ -724,6 +732,51 @@ class AccountMixin:
         if answer == QMessageBox.Yes:
             self.account_worker().submit("update_profile", share_locations=True)
 
+    # ---- re-consent after the privacy notice changed ---------------------------------
+    # After every login: get_privacy_consent -> _on_privacy_consent. A stored version
+    # other than account_config.PRIVACY_VERSION shows the new notice; Agree ->
+    # accept_privacy, Log out (or closing the window) -> logout. Only then, after an
+    # interactive login, the one-time run-location question (_after_privacy_consent).
+    def _check_privacy_consent(self):
+        if self._account_state != "logged_in" or self._privacy_dialog_open:
+            return
+        self.account_worker().submit("get_privacy_consent")
+
+    def _on_privacy_consent(self, consent):
+        if self._account_state != "logged_in" or self._privacy_dialog_open:
+            return
+        if not account_config.privacy_consent_needed(consent):
+            self._after_privacy_consent()
+            return
+        from src.gui.widgets.account_dialogs import PrivacyConsentDialog
+        self._privacy_dialog_open = True
+        try:
+            agreed = PrivacyConsentDialog(self).exec() == QDialog.Accepted
+        finally:
+            self._privacy_dialog_open = False
+        if self._account_state != "logged_in":
+            return                                   # logged out in the meantime
+        if agreed:
+            self.account_worker().submit("accept_privacy", account_config.PRIVACY_VERSION)
+        else:
+            # no consent, no account use: logged out, asked again at the next login
+            self._ask_location_after_consent = False
+            self.account_worker().submit("logout")
+
+    def _on_privacy_accepted(self):
+        from src.gui.utils import i18n
+        try:
+            self.status_bar.showMessage(
+                i18n.tr("Your agreement to the privacy notice is recorded."), 6000)
+        except Exception:
+            log.debug("status bar message failed", exc_info=True)
+        self._after_privacy_consent()
+
+    def _after_privacy_consent(self):
+        if self._ask_location_after_consent:
+            self._ask_location_after_consent = False
+            QTimer.singleShot(400, self._ask_location_consent)
+
     # ---- CWatM Academy progress in the profile ---------------------------------------
     # academy_progress calls these while "Link CWatM Academy to your login" is on.
     def academy_remote_active(self):
@@ -845,6 +898,7 @@ class AccountMixin:
     def _clear_account(self, remembered=False):
         self._account_status = None
         self._account_state = "logged_out"
+        self._ask_location_after_consent = False
         self._settings.setValue("account/remembered", bool(remembered))
         self._update_account_button()
 
@@ -905,6 +959,10 @@ class AccountMixin:
             self._on_reward_reset(result)
         elif op == "record_feature_run":
             self._on_feature_run_answer(result)
+        elif op == "get_privacy_consent":
+            self._on_privacy_consent(result)
+        elif op == "accept_privacy":
+            self._on_privacy_accepted()
         elif op in _STATUS_OPS and isinstance(result, dict) and "profile" in result:
             self._set_account_status(result)
             if op in _LOGIN_OPS:
@@ -913,13 +971,16 @@ class AccountMixin:
                 # a login = CWatM GUI is used: record the point decay due, restart
                 # the clock (the answer is a status - handled just above)
                 self.account_worker().submit("touch_activity")
+                # every login, the silent one at startup too: a changed privacy
+                # notice must reach "stay logged in" users as well. After an
+                # interactive login the run-location question follows the consent
+                # (after the login dialog has closed).
+                self._ask_location_after_consent = op in _ASK_LOCATION_OPS
+                QTimer.singleShot(400, self._check_privacy_consent)
             if op == "touch_activity":
                 note = decay_message(result)
                 if note:
                     self._account_note(note)
-            if op in _ASK_LOCATION_OPS:
-                # after the login dialog has closed
-                QTimer.singleShot(400, self._ask_location_consent)
         elif op == "restore" and result is None:
             self._clear_account()               # nothing stored after all
         elif op in ("logout", "delete_account"):
@@ -946,6 +1007,22 @@ class AccountMixin:
             return
         if op == "record_location":
             log.info("run location not recorded: %s", code)   # best-effort, no retry
+            return
+        if op == "get_privacy_consent":
+            # e.g. a server without the function yet: never locks anyone out, the
+            # next login checks again
+            log.info("privacy consent not checked: %s", code)
+            if code in ("session_expired", "not_logged_in"):
+                self._clear_account()
+                return
+            self._after_privacy_consent()
+            return
+        if op == "accept_privacy":
+            self._account_note(f"CWatM account: your agreement to the privacy notice "
+                               f"could not be saved ({message or code}) - you will be "
+                               f"asked again at your next login.")
+            if code in ("session_expired", "not_logged_in"):
+                self._clear_account()
             return
         if op == "record_feature_run":
             self._on_feature_run_failed(code)

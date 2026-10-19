@@ -1694,18 +1694,8 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                            window_title="CWatM GUI — Documentation"):
         """Open a bundled Markdown help file in a viewer window (Help menu:
         the Documentation by default, the Features tour via show_features)."""
-        base_file = os.path.dirname(os.path.abspath(__file__))          # .../src/gui/components
-        gui_root = os.path.abspath(os.path.join(base_file, "..", "..", ".."))  # .../gui
-        candidates = [
-            os.path.join(gui_root, "documentation", doc_name),
-            os.path.join(os.getcwd(), "documentation", doc_name),
-        ]
-        if getattr(sys, "frozen", False):
-            candidates.insert(0, os.path.join(getattr(sys, "_MEIPASS", ""),
-                                              "documentation", doc_name))
-            candidates.append(os.path.join(os.path.dirname(sys.executable),
-                                           "documentation", doc_name))
-        doc_path = next((c for c in candidates if os.path.exists(c)), None)
+        from src.gui.utils.assets import documentation_path
+        doc_path = documentation_path(doc_name)
         if not doc_path:
             QMessageBox.warning(self, "Documentation",
                                 f"{doc_name} was not found in the documentation folder.")

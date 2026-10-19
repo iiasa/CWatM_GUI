@@ -33,6 +33,7 @@ OPS = frozenset({
     "get_field_test_record", "get_field_test_highscore", "field_test_submit_score",
     "get_moleflow", "record_modflow_run", "get_feature_badges", "record_feature_run",
     "get_shop_items", "buy", "touch_activity", "claim_reward",
+    "get_privacy_consent", "accept_privacy",
     "reset_reward",
 })
 

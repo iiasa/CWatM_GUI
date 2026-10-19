@@ -11,7 +11,17 @@ The notice `documentation/CWatM_Account_Privacy.md` must describe what the code 
 run fields to the code, so changing what is stored or sent means changing the notice.
 Every sign-up carries `account_config.PRIVACY_VERSION` (`register(...,
 privacy_version=)`); the server **refuses** a sign-up without it and stores version +
-time in `profiles` (migration `…140000_privacy_consent.sql`). **Data minimisation**
+time in `profiles` (migration `…140000_privacy_consent.sql`). The Register tick box
+states the minimum age (`account_config.MIN_AGE` = 16, `consent_checkbox_text()` - a
+row of the translation table). **Re-consent** (migration
+`…20261019120000_privacy_reconsent.sql`): after every login, the silent one at startup
+too, `account_ui._check_privacy_consent` reads the stored version (rpc
+`get_privacy_consent`); a different one (`account_config.privacy_consent_needed`) shows
+the new notice in full in `account_dialogs.PrivacyConsentDialog` - **Agree** → rpc
+`accept_privacy` (new version + time), **Log out** or closing it → `logout`, account
+unchanged. No answer (an older server) never locks anyone out. The one-time
+run-location question waits until this is settled. So **raising `PRIVACY_VERSION`
+asks every existing user again**. **Data minimisation**
 (migration `…150000_minimal_point_data.sql`): a counted run is stored as fingerprint +
 the UTC **day** only, an Academy level as the level only; the export masks the email.
 

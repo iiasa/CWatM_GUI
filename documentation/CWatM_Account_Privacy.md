@@ -155,9 +155,9 @@ IIASA processes these data in line with the principles and requirements of the E
 General Data Protection Regulation (GDPR) and relevant Austrian legislation.
 
 - **The account and its data:** your **consent** (Article 6(1)(a) GDPR), given when you
-  create the account (the tick box *I agree that these data are stored*). You can
-  withdraw it at any time by deleting your account; this does not affect what was done
-  before.
+  create the account (the tick box *I am at least 16 years old and agree that these
+  data are stored*). You can withdraw it at any time by deleting your account; this
+  does not affect what was done before.
 - **Anonymous run locations:** your separate consent (*Record the location of my runs*),
   which you can withdraw at any time by unticking it.
 - **Sign-in times, request logs with IP addresses and failed-login records:** IIASA's
@@ -165,8 +165,9 @@ General Data Protection Regulation (GDPR) and relevant Austrian legislation.
 
 ## Age **[A7]**
 
-You need to be at least **16 years old** to create a CWatM account. The GUI and the
-CWatM model can be used at any age without an account.
+You need to be at least **16 years old** to create a CWatM account; you confirm this
+with the consent tick box on the Register form. The GUI and the CWatM model can be
+used at any age without an account.
 
 ## Who processes the data
 
@@ -209,8 +210,9 @@ before they are overwritten. **[A5]**
 
 ## Changes
 
-If this notice changes in a way that matters, the new version is shown with a new date,
-and you will be asked to agree again. **[A9]**
+If this notice changes in a way that matters, the new version gets a new date and is
+shown to you in CWatM GUI at your next login. You agree to it to keep using your
+account; if you do not, you are logged out and your account stays as it is. **[A9]**
 
 ---
 
@@ -293,13 +295,14 @@ consent declaration of February 2026), so that this notice matches IIASA's pract
 
 ### A7 - Minimum age (new point)
 
-- **Proposed:** 16 years for an account.
+- **Proposed:** 16 years for an account, as chosen by the CWatM team. The Register
+  form's consent tick box already says *I am at least 16 years old and agree that
+  these data are stored*.
 - **Why:** the account rests on consent, and the Microsoft Store requires apps to
   follow the laws on children's data. The GDPR sets 16 as the age for consent to
   online services; Austria lowers it to 14 (§ 4(4) DSG), other EU countries to 13 to
   15. One rule of 16 holds in every country; 14 would follow Austrian law only.
-- **To confirm:** 16 or 14. The CWatM team then adds the age to the consent tick box of
-  the Register form.
+- **To confirm:** 16 years.
 
 ### A8 - Outside the account (new section)
 
@@ -317,9 +320,10 @@ consent declaration of February 2026), so that this notice matches IIASA's pract
 - **Proposed:** the approved notice is published on a page of cwatm.iiasa.ac.at, and
   that address goes into the Microsoft Store listing.
 - **To confirm:** the address, and who at IIASA approves later changes to the notice.
+- **Already in place:** CWatM GUI compares, after every login, the version a user
+  agreed to with the current one. A user with an older version sees the new notice in
+  full and either agrees (recorded with the date) or is logged out; the account stays
+  unchanged. The *Changes* section describes exactly this.
 - **For the CWatM team before publishing:** remove the draft banner, the marks
   [A1]-[A9] and this section; give the notice its final version date; set the same
-  date in `PRIVACY_VERSION` (`src/gui/utils/account_config.py`, checked by a test). The
-  GUI does not yet ask existing users to agree again when the version changes, so
-  either that is added, or the *Changes* section says users are told at their next
-  login.
+  date in `PRIVACY_VERSION` (`src/gui/utils/account_config.py`, checked by a test).
