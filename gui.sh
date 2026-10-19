@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start the CWatM GUI on Linux (the counterpart of gui.bat / gui.vbs on Windows).
+# Start the CWatM GUI on Linux or macOS (the counterpart of gui.bat / gui.vbs on Windows).
 #
 #   ./gui.sh                     start with no settings file
 #   ./gui.sh settings.ini        start with that settings file loaded
@@ -132,6 +132,30 @@ _apt_hint_web() {
     echo "        RHEL/Fedora:    sudo dnf install -y nss nspr alsa-lib libXcomposite \\" >&2
     echo "            libXdamage libXrandr libXtst at-spi2-atk cups-libs libdrm mesa-libgbm pango" >&2
 }
+
+# ------------------------------------------------------------------- macOS
+# macOS needs none of the Linux workarounds below (X11, software GL, LD_PRELOAD, ldd):
+# Qt uses its native "cocoa" platform and QtWebEngine runs with the normal GPU path.
+if [ "$(uname -s)" = "Darwin" ]; then
+    if [ "${1:-}" = "--check" ] || [ "${1:-}" = "--doctor" ]; then
+        echo "python            : $PYTHON ($("$PYTHON" -V 2>&1))"
+        echo "macOS             : $(sw_vers -productVersion 2>/dev/null || uname -r) ($(uname -m))"
+        echo "PySide6           : $("$PYTHON" -c 'import PySide6; print(PySide6.__version__)' 2>&1 | tail -1)"
+        for _m in PySide6.QtWebEngineWidgets rasterio netCDF4 xarray folium plotly; do
+            if "$PYTHON" -c "import $_m" >/dev/null 2>&1; then echo "  ok      $_m"
+            else echo "  MISSING $_m"; fi
+        done
+        exit 0
+    fi
+    if ! "$PYTHON" -c 'import PySide6' >/dev/null 2>&1; then
+        echo "gui.sh: PySide6 is missing from $PYTHON. Create the environment first:" >&2
+        echo "    python3 -m venv venv2 && . venv2/bin/activate" >&2
+        echo "    pip install -r requirements.txt" >&2
+        exit 1
+    fi
+    [ -n "${CWATM_GUI_VERBOSE:-}" ] && echo "gui.sh: using $PYTHON" >&2
+    exec "$PYTHON" cwatm_gui.py "$@"
+fi
 
 # --------------------------------------------------------------- --check mode
 if [ "${1:-}" = "--check" ] || [ "${1:-}" = "--doctor" ]; then

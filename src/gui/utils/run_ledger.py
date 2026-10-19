@@ -20,10 +20,10 @@ import json
 import time
 import uuid
 import shutil
-import tempfile
 
 from PySide6.QtCore import QSettings
 
+from src.gui.utils.app_dirs import user_data_base
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("run_ledger")
@@ -41,9 +41,8 @@ def _settings():
 
 
 def default_history_dir():
-    """The default general history folder: ``%LOCALAPPDATA%/CWatM_GUI`` (else temp)."""
-    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
-    return os.path.join(base, _APP)
+    """The default general history folder: ``<user data base>/CWatM_GUI`` (see app_dirs)."""
+    return os.path.join(user_data_base(), _APP)
 
 
 def history_dir():

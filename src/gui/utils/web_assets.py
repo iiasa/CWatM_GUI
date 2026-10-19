@@ -77,6 +77,8 @@ def user_cache_dir(name):
     if sys.platform == "win32":
         base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
         root = os.path.join(base, "CWatM_GUI", "cache")
+    elif sys.platform == "darwin":
+        root = os.path.join(os.path.expanduser("~"), "Library", "Caches", "cwatm_gui")
     else:
         base = os.environ.get("XDG_CACHE_HOME") or os.path.join(
             os.path.expanduser("~"), ".cache")

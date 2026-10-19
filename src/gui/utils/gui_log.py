@@ -21,16 +21,16 @@ silently degrades to a no-op NullHandler.
 import logging
 import logging.handlers
 import os
-import tempfile
+
+from src.gui.utils.app_dirs import user_data_base
 
 _ROOT_NAME = "cwatm_gui"
 _configured = False
 
 
 def _log_dir():
-    """Directory for the log file: %LOCALAPPDATA%/CWatM_GUI, else <temp>/CWatM_GUI."""
-    base = os.environ.get("LOCALAPPDATA") or tempfile.gettempdir()
-    return os.path.join(base, "CWatM_GUI")
+    """Directory for the log file: ``<user data base>/CWatM_GUI`` (see app_dirs)."""
+    return os.path.join(user_data_base(), "CWatM_GUI")
 
 
 def log_file_path():

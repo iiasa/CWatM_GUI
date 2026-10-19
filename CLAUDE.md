@@ -1058,6 +1058,9 @@ The invariants that belong here:
   `sys.executable -u cwatm_model.py <ini>`, which is also the way to run the
   model **headless** with no Qt at all.
 
+### Running on macOS (source run)
+See [`cwatm_gui_macos.md`](cwatm_gui_macos.md). `gui.sh` detects Darwin and skips every Linux workaround; `gui.log` and the run journal go to `~/Library/Application Support/CWatM_GUI` (`src/gui/utils/app_dirs.user_data_base`, the one place that picks the per-user base), caches to `~/Library/Caches/cwatm_gui`. Untested on a real Mac.
+
 ### Building a release — `build_release.ps1`
 **Full detail (spec contents, installer, version scraping, signing) in
 [`documentation/CWatM_GUI_Build.md`](documentation/CWatM_GUI_Build.md).** The rules:
