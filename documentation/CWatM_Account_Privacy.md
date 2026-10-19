@@ -248,7 +248,11 @@ consent declaration of February 2026), so that this notice matches IIASA's pract
   and immunities as an international organisation (IIASA's other notices do not
   include one).
 
-### A3 - Supabase as processor, and transfers outside the EU
+### A3 - Where the account server runs, and transfers outside the EU
+
+Two options are open; the text above describes option 1, the current setup.
+
+**Option 1 - Supabase's cloud (as now)**
 
 - **Proposed:** Supabase processes the data for IIASA under its data processing
   agreement; storage in Frankfurt; access from outside the EU covered by the EU
@@ -269,6 +273,29 @@ consent declaration of February 2026), so that this notice matches IIASA's pract
     Supabase organisation is held by an IIASA account (not a personal one) on the paid
     **Pro** plan (a free project pauses after a week without use).
 
+**Option 2 - a server run by IIASA**
+
+- **What it is:** the same software on a server IIASA owns or already manages. Supabase
+  is open source and can be run on one's own server with Docker (database, login,
+  server functions); the CWatM GUI then only needs the new server address, and the
+  account database and its server functions are installed there unchanged.
+- **Effect on the notice:** no outside company holds the account data and nothing
+  leaves the EU, so the transfer question of option 1 disappears. In *Who processes the
+  data* the Supabase bullet becomes: *"**IIASA** runs the account server (database and
+  login) itself, on [a server in Laxenburg, Austria / an IIASA-managed server in ...].
+  No other company receives the account data."* Usernames and email addresses stay at
+  IIASA; passwords are stored only as one-way hashes under either option.
+- **Effect on IIASA:** IIASA IT runs the server - security updates (Supabase publishes
+  a new version about once a month), backups, HTTPS and monitoring. Supabase states 4 GB
+  of memory, 2 processor cores and 40 GB of disk as the minimum (8 GB, 4 cores and
+  80 GB recommended). The retention in A5 then follows IIASA's own backups and logs.
+- **A variant:** signing in with an IIASA account that already exists, if IIASA runs a
+  login service with OpenID Connect. Passwords would then never reach the CWatM
+  account at all, but the GUI's login has to be changed for it (sign-in in the
+  browser, as for CWatM AI).
+
+**To decide:** option 1 or option 2 (and for option 2, the server and who runs it).
+
 ### A4 - Who sends the confirmation and password-reset emails
 
 - **Proposed:** IIASA's own mail server, connected to Supabase by SMTP.
@@ -285,6 +312,8 @@ consent declaration of February 2026), so that this notice matches IIASA's pract
   7 days. (Team plan: 14 days of backups, 28 days of logs. If point-in-time recovery
   is switched on, its own period of 7, 14 or 28 days applies instead.)
 - **To confirm:** the plan the production project uses; the number is then fixed.
+  With option 2 of A3 (a server run by IIASA), the number is the period of IIASA's own
+  backups and server logs, set by IIASA IT.
 
 ### A6 - Supervisory authority
 
