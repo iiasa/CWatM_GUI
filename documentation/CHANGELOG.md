@@ -4,20 +4,50 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
-## Unreleased
+## CWatM GUI 1.13 — what is new
 
-- **Tools ▸ Add output WaterBalance**: adds `OUT_TSS_AreaSum_Daily = WaterBalance`
-  under `[OUTPUT]` (if it is not there yet) - the csv with almost all water-balance
-  variables, day by day.
-- **Analyse ▸ Full Waterbalance**: opens that `WaterBalance_areasum_daily.csv` and shows
-  the balance of every part of the water cycle in one page - a table with In / Out /
-  storage change / balance error in mm/year (errors above 1e-3 of the input in red) and
-  the sunbursts of all parts: soil and its layers, soil per land cover, groundwater
-  (MODFLOW layers), runoff concentration, evapotranspiration (potential vs. actual),
-  storage change, snow and glacier, lakes / channels / routing, water demand and use.
-  Several stations: Backward / Forward. Save HTML and Save CSV (the table).
-- **Shop**: a new animal for the live discharge sparkline - **Salmon (Jessi)**, 20
-  points.
+*Released 20 October 2026. Previous release: 1.12 (16 October 2026).*
+
+This release is about the water balance: a new way to check every part of it, two
+new analysis tools, and corrected WaterCycle output.
+
+---
+
+### 1. New analysis tools
+
+- **Analyse ▸ Full Waterbalance**: reads a `WaterBalance_areasum_daily.csv` and shows,
+  in one page, a table of In / Out / storage change / balance error (mm/year, an error
+  above 1e-3 of the input in red) for every part of the water cycle, plus a sunburst for
+  each part (soil and its layers, land covers, groundwater with its MODFLOW layers,
+  runoff concentration, evapotranspiration, snow and glacier, lakes and routing, water
+  demand). A **month slider** stays fixed at the top and sets the period analysed.
+  **Tools ▸ Add output WaterBalance** adds the output it needs.
+- **Analyse ▸ Chord Analysis** *(test)*: the flows between the parts of the water
+  cycle as a chord diagram. Click a part to show only its flows; click it again for
+  inflows only, then outflows only.
+- **Analyse ▸ Mean Weekly Fluxes** *(test)*: the mean seasonal cycle in mm/week of
+  precipitation, rain, snow, snowmelt, glacier melt, actual ET, irrigation demand and
+  discharge, one panel each. Click a legend entry to hide that panel.
+
+### 2. Watercycle and Flow Diagram
+
+- **Flow Diagram** shows evaporation from channels, and storage no longer overlaps
+  the discharge node.
+- **Tools ▸ Add output Watercycle** writes the **daily** `OUT_TSS_AreaSum_Daily =
+  WaterCycle`. If that line already exists, the table is added to it, not written as a
+  second line that would replace the first.
+- File dialogs show only the matching files (`Water*` or `WaterBalance*`).
+
+### 3. CWatM model (bundled)
+
+- In the monthly and yearly WaterCycle output, the cell area is now the last value of
+  each period and discharge the mean over it, instead of their sum over the days.
+
+### 4. Shop
+
+- A new animal for the live discharge sparkline: **Salmon (Jessi)**, 20 points.
+
+---
 
 
 ## CWatM GUI 1.12 — what is new
