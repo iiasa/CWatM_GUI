@@ -269,6 +269,24 @@ class MenuBuilderMixin:
         flowdiagram_action.setToolTip(
             "Show the water balance of a WaterCycle_areasum_monthtot.csv as a Sankey flow diagram")
         flowdiagram_action.triggered.connect(self.open_flowdiagram_analysis)
+        # Chord Analysis - a test: delete this block + src/gui/widgets/analysis_chord.py
+        chord_action = analyse_menu.addAction("Chord Analysis")
+        chord_action.setToolTip(
+            "Show the water balance of a WaterCycle_areasum_monthtot.csv as a chord diagram")
+
+        def _open_chord():
+            from src.gui.widgets.analysis_chord import open_chord
+            open_chord(parent=self)
+        chord_action.triggered.connect(_open_chord)
+        # Mean Weekly Fluxes - a test: delete this block + src/gui/widgets/analysis_mean_fluxes.py
+        mean_fluxes_action = analyse_menu.addAction("Mean Weekly Fluxes")
+        mean_fluxes_action.setToolTip(
+            "Mean weekly fluxes (mm/week) over the year of a daily WaterCycle csv")
+
+        def _open_mean_fluxes():
+            from src.gui.widgets.analysis_mean_fluxes import open_mean_fluxes
+            open_mean_fluxes(parent=self)
+        mean_fluxes_action.triggered.connect(_open_mean_fluxes)
         analyse_menu.addSeparator()
         full_wb_action = analyse_menu.addAction("Full Waterbalance")
         full_wb_action.setToolTip(
@@ -397,6 +415,7 @@ class MenuBuilderMixin:
             check_action, restore_action, ledger_action,        # Tools
             hidden_run_action, batch_action,                    # RUN CWATM
             flowdiagram_action, full_wb_action,                 # Analyse
+            chord_action, mean_fluxes_action,                   # (tests, see above)
         ]
         # Entries only an **Expert** sees. Compare Tab works on the settings-file
         # tabs, and those are Expert-only themselves (Preferences ▸ Use Tabs ×

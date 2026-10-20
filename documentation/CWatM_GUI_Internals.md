@@ -1621,8 +1621,8 @@ the overall water balance as a Plotly **`go.Sunburst`** rendered in a QtWebEngin
     whose variable is **absent are skipped** (e.g. the optional `Glacier` pair,
     added only when both `GlacierMelt`/`GlacierRain` columns exist).
   - The wedge assembly computes `total_input/output/store`; **negative** total storage is
-    folded into discharge as "Storage (out)", otherwise the residual is a **"Balance"**
-    wedge ("Storage (into)"). The root wedge shows the station **lon/lat** (monospace);
+    folded into discharge as "Storage (out)" (storage decreased), otherwise the residual
+    is a **"Balance"** wedge ("Storage (in)", storage increased). The root wedge shows the station **lon/lat** (monospace);
     hover shows per-wedge **% of parent**, **volume (km³)**, and **mm/year** (`Σm³ /
     cellAreaSum × 1000 / noyears`; the discharge wedge shows **m³/s** instead), plus the
     basin name / area / date-range on the root.
@@ -1640,6 +1640,13 @@ result file as Watercycle and shows the overall water balance as a Plotly
 (plotly.js inlined — no CDN). The Sankey nodes/links/colour helpers and the
 `build_sankey` builder are **ported from the stand-alone
 `sankey_waterbalance_month.py`** template.
+- **Storage change** (not in the template): each store of the csv (`_STORAGES`:
+  interception, snow, soil, groundwater, runoff concentration, channel + lakes →
+  Waterbodies) adds a link from its node to **Storage (in)** when it increased over
+  the window, or from **Storage (out)** to its node when it decreased (end − baseline,
+  mm/yr). As in the sunburst, a window starting at row 0 uses row 0 as the storage
+  baseline only (fluxes from row 1). Right-click ▸ Timeseries of a storage link is the
+  signed per-row change (positive = the link's direction), first row empty.
 - **Header + subtitle + month range slider + multi-station support are identical to
   the Watercycle window** — `RangeSlider` and `WatercycleWindow`'s csv-parsing/station
   helpers (`_read_station`, `_read_settings_title`, `_load_data`, `_fmt_month`,
@@ -1685,6 +1692,16 @@ CDN), the summary table of cell no 07 and every sunburst below it of
   reading it is I/O-bound (≈ 30 s for 226 MB from P:), so `open_full_waterbalance` reads
   it in a `QThread` (`_ReadWorker`) behind a busy `QProgressDialog`; Backward / Forward
   then only re-run `compute` (≈ 1 s).
+- **Month slider** (the Watercycle `RangeSlider`, in Qt **above** the web view, so it
+  stays on top while the page scrolls): the analysed period in whole months of the daily
+  csv (`_init_months`). It maps to `compute(start_date=, end_date=)` = the first / last
+  csv day of the chosen months (`_period_dates`; the day before `start_date` is the
+  storage baseline, at the csv's start its first day). A move is debounced (400 ms), the
+  rebuilt page comes back at the old scroll position (`_rebuild_keep_scroll` →
+  `loadFinished` → `_restore_scroll`). Hidden with fewer than 3 months.
+- The open dialog filters `WaterBalance*.csv` first (all csv as the second filter).
+  Sunbursts are 460 px high (side-by-side 440, single ones max 560 px wide), so a whole
+  one fits on a laptop screen.
 - Table cells are `html.escape`d (a settings Title is user text); `|error / In| > tol`
   (1e-3) is drawn in the `warn_color` token. **Save CSV** writes the summary table
   (`full_waterbalance.csv`), **Save HTML** the whole page. Geometry key

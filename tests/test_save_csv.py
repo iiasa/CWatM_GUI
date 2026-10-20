@@ -35,6 +35,8 @@ def test_flowdiagram_table_follows_the_figure(qapp):
     months = pd.date_range("2000-01-31", periods=24, freq="ME")
     w._df = pd.DataFrame({"Date": months, "Precipitation": [100.0] * 24})
     w._month_dates = list(months)
+    w._row_days = months.days_in_month.to_numpy(dtype=float)
+    w._rows_per_year = 12.0
     w._cellAreaSum = 1_000_000.0
     w._start_idx, w._end_idx = 0, 23
     w.settings_title, w.csv_path = "Test basin", "wc.csv"
@@ -42,7 +44,8 @@ def test_flowdiagram_table_follows_the_figure(qapp):
     w._build_figure()
     meta, header, rows = w._csv_data
     assert dict(meta)["Basin"] == "Test basin"
-    assert dict(meta)["Period"] == "from 1/2000 to 12/2001"
+    # the first month is the storage baseline only (storage change needs a start)
+    assert dict(meta)["Period"] == "from 2/2000 to 12/2001"
     assert header == ["Flow", "From", "To", "mm_per_year"]
     assert rows and all(len(r) == 4 for r in rows)
 
@@ -57,6 +60,8 @@ def test_watercycle_table_follows_the_figure(qapp):
                           "totalET_areasum_m3": [0.6e6] * 24,
                           "avgdischarge_m3s-1": [0.15] * 24})
     w._month_dates = list(months)
+    w._row_days = months.days_in_month.to_numpy(dtype=float)
+    w._rows_per_year = 12.0
     w._cellAreaSum = 1_000_000.0
     w._start_idx, w._end_idx = 0, 23
     w.settings_title, w.csv_path = "Test basin", "wc.csv"

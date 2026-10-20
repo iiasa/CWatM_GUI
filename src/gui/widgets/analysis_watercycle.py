@@ -22,6 +22,7 @@ import os
 import sys
 import csv
 import datetime
+import calendar
 from calendar import monthrange
 
 from PySide6.QtWidgets import (
@@ -90,7 +91,8 @@ def open_watercycle(parent=None):
     except Exception:
         start_dir = ""
     path, _ = QFileDialog.getOpenFileName(
-        parent, "Open WaterCycle result CSV", start_dir, "CSV result files (*.csv)")
+        parent, "Open WaterCycle result CSV", start_dir,
+        "Water csv (Water*.csv);;CSV result files (*.csv)")
     if not path:
         return
     try:
@@ -386,8 +388,20 @@ class WatercycleWindow(PlotlyWindowBase):
         if len(month_dates) < 2:
             raise ValueError("The WaterCycle csv needs at least two months of data.")
         self._month_dates = month_dates
-        self._days_in_month = np.array(
-            [monthrange(d.year, d.month)[1] for d in month_dates])
+        # Time step of a row (daily / monthtot / annualtot csv), from the date spacing:
+        # _row_days = the days one row covers, _rows_per_year for mm/yr averages.
+        step = float(np.median(np.diff(pd.DatetimeIndex(month_dates).asi8))) / 86400e9
+        if step < 2:
+            self._row_days = np.ones(len(month_dates))
+            self._rows_per_year, self._period_unit = 365.25, "mm/day"
+        elif step < 40:
+            self._row_days = np.array(
+                [monthrange(d.year, d.month)[1] for d in month_dates], dtype=float)
+            self._rows_per_year, self._period_unit = 12.0, "mm/month"
+        else:
+            self._row_days = np.array(
+                [366.0 if calendar.isleap(d.year) else 365.0 for d in month_dates])
+            self._rows_per_year, self._period_unit = 1.0, "mm/year"
         self._n = len(month_dates)
         # Selected window: full span by default (indices into month_dates).
         self._start_idx = 0
@@ -415,8 +429,18 @@ class WatercycleWindow(PlotlyWindowBase):
             seen[name] = k + 1
             names.append(name if k == 0 else f"{name}.{k}")
         sub.columns = ['Date'] + names
+        # CWatM writes a monthtot/annualtot row as: storage and cellArea = last value,
+        # discharge = mean m3/s, fluxes = total (output.py). Csvs of older CWatM
+        # versions summed cellArea and discharge over the row's days too - recognised
+        # by a cellArea that changes from row to row - and are normalised to that.
+        area = sub['cellArea_sum_m3'].to_numpy(dtype=float)
+        summed = len(area) > 1 and np.ptp(area) > 1e-6 * abs(area[0])
+        self._cellAreaSum = area[0] / self._row_days[0] if summed else area[0]
+        if summed:
+            for col in names:
+                if col.endswith('_m3s-1'):
+                    sub[col] = sub[col].to_numpy(dtype=float) / self._row_days
         self._df = sub
-        self._cellAreaSum = sub['cellArea_sum_m3'].to_numpy()[0] / self._days_in_month[0]
         lon, lat = self._station_coords[idx]
         self.lon = self._fmt3(lon)
         self.lat = self._fmt3(lat)
@@ -459,6 +483,8 @@ class WatercycleWindow(PlotlyWindowBase):
 
     def _fmt_month(self, idx):
         d = self._month_dates[idx]
+        if getattr(self, "_rows_per_year", 12.0) == 1.0:   # annualtot: a row = a year
+            return f"{d.year}"
         return f"{d.month}/{d.year}"
 
     def _date_range_text(self):
@@ -635,15 +661,16 @@ class WatercycleWindow(PlotlyWindowBase):
         return (self._station_idx, sector)
 
     def _sector_series(self, sector, discharge_mm=False):
-        """(values, unit) - the monthly series behind a sunburst wedge over every
-        month of the csv: fluxes in mm per month, storage as the stored water in mm
-        at the end of the month, the discharge leaf as the monthly mean m³/s (or,
-        with ``discharge_mm``, in mm per month like the fluxes), and Balance =
-        inputs - outputs - storage change (mm per month)."""
+        """(values, unit) - the series behind a sunburst wedge over every row (day /
+        month / year) of the csv: fluxes in mm per row, storage as the stored water
+        in mm at the end of the row, the discharge leaf as the row's mean m³/s (or,
+        with ``discharge_mm``, in mm per row like the fluxes), and Balance =
+        inputs - outputs - storage change (mm per row)."""
         df = self._df
-        days = self._days_in_month.astype(float)
+        secs = self._row_days * 86400.0
         to_mm = 1000.0 / self._cellAreaSum if self._cellAreaSum else 0.0
         n = len(df)
+        per = self._period_unit
 
         def total(comps, kinds):
             out = np.zeros(n)
@@ -651,8 +678,8 @@ class WatercycleWindow(PlotlyWindowBase):
                 if kind not in kinds:
                     continue
                 v = df[col].to_numpy(dtype=float)
-                # Discharge is a monthly total of daily m³/s -> m³, as in the sunburst.
-                out = out + (v * 86400.0 if kind == 'dis' else v)
+                # Discharge is the row's mean m³/s -> m³ over the row, as in the sunburst.
+                out = out + (v * secs if kind == 'dis' else v)
             return out * to_mm
 
         spec = self._sectors[sector]
@@ -662,14 +689,14 @@ class WatercycleWindow(PlotlyWindowBase):
             values = (total(self._sectors.get('Inputs', []), ('flux', 'dis'))
                       - total(self._sectors.get('Outputs', []), ('flux', 'dis'))
                       - dstore)
-            return values, "mm/month"
+            return values, per
         kinds = {kind for _col, kind in spec}
         if kinds == {'dis'} and not discharge_mm:
-            values = sum(df[col].to_numpy(dtype=float) for col, _k in spec) / days
+            values = sum(df[col].to_numpy(dtype=float) for col, _k in spec)
             return values, "m3/s"
         if kinds == {'store'}:
             return total(spec, ('store',)), "mm"
-        return total(spec, ('flux', 'dis')), "mm/month"
+        return total(spec, ('flux', 'dis')), per
 
     def _open_sector_timeseries(self, sector):
         if sector is None:
@@ -726,7 +753,7 @@ class WatercycleWindow(PlotlyWindowBase):
         try:
             name = self._sector_name(sector)
             if win.unit == "m3/s":
-                # The window started with discharge alone: redo it in mm/month.
+                # The window started with discharge alone: redo it in mm per row.
                 cur = self._station_idx
                 main_station, main_sector = win._wc_main
                 try:
@@ -736,7 +763,7 @@ class WatercycleWindow(PlotlyWindowBase):
                     self._select_station(cur)
                 main_name = win.series[0][0]
                 win.series = [(main_name, self._as_list(main_vals))]
-                win.unit = "mm/month"
+                win.unit = _u
             values, _unit = self._sector_series(sector, discharge_mm=True)
             win.compare.append({
                 "name": name,
@@ -788,15 +815,17 @@ class WatercycleWindow(PlotlyWindowBase):
         cellAreaSum = self._cellAreaSum
 
         # Selected window (indices into month_dates). Storage change is measured over
-        # the same window as the fluxes: baseline_idx = the month before the start
-        # (or the first month when the window starts at index 0), so the full-span
-        # default reproduces the original result.
+        # the same rows as the fluxes: baseline_idx = the row before the first flux
+        # row (its storage = the storage at the start). A window starting at row 0
+        # has no row before it, so row 0 is the baseline only and the fluxes start at
+        # row 1 - otherwise a whole month / year of fluxes would be counted without
+        # its storage change (a balance error; see RangeSlider).
         start_idx = self._start_idx
         end_idx = self._end_idx
-        baseline_idx = start_idx - 1 if start_idx > 0 else start_idx
-        flux_start = baseline_idx + 1 if start_idx > 0 else baseline_idx
+        flux_start = max(start_idx, 1)
+        baseline_idx = flux_start - 1
         if flux_start > end_idx:
-            raise ValueError("Select a window of at least two months.")
+            raise ValueError("Select a window of at least two rows.")
 
         Vars = [
             [['Rain'], 'Rain', ['M'], 'flux', 'Input', 'All'],
@@ -856,9 +885,12 @@ class WatercycleWindow(PlotlyWindowBase):
                         missing = True
                         break
                     comps.append((col, 'dis'))
-                    tmp = df[col].to_numpy()[flux_start:end_idx + 1]
-                    discharge = np.mean(tmp)
-                    temp = np.sum(tmp * 86400)
+                    # the row's mean m3/s -> m3 over the row's days; the shown
+                    # discharge is the time-weighted mean over the window
+                    tmp = df[col].to_numpy(dtype=float)[flux_start:end_idx + 1]
+                    days = self._row_days[flux_start:end_idx + 1]
+                    temp = np.sum(tmp * days * 86400)
+                    discharge = temp / (np.sum(days) * 86400) if np.sum(days) else 0.
                 else:
                     col = var[0][ii] + suffix
                     if col not in df.columns:
@@ -920,10 +952,10 @@ class WatercycleWindow(PlotlyWindowBase):
             if discharge_label in labels_out:
                 values[labels_out.index(discharge_label)] += missq
             total_output += missq
-            storetext = "Storage (out)"
+            storetext = "Storage (out)"     # storage decreased: water comes out of it
         else:
             balance = total_input - (total_output + total_store)
-            storetext = "Storage (into)"
+            storetext = "Storage (in)"      # storage increased: water goes into it
         sectors[storetext] = store_comps
         sectors[""] = store_comps          # the storage leaf has no label
         sectors['Balance'] = 'balance'
@@ -932,7 +964,7 @@ class WatercycleWindow(PlotlyWindowBase):
         total_total = total_input + total_output + total_store + abs(balance)
         values_out = [total_total, total_input, total_output, abs(balance), total_store] + values
 
-        noyears = (end_idx - flux_start + 1) / 12.0
+        noyears = (end_idx - flux_start + 1) / self._rows_per_year
         # The sunburst centre (root wedge) shows the station lon/lat instead of the
         # generic "Water balance" text. Monospace so the "lon:"/"lat:" prefixes are the
         # same width and both values start at the same left distance.
@@ -1013,7 +1045,9 @@ class WatercycleWindow(PlotlyWindowBase):
         volume = np.array(volume)
         otherunit = np.array(otherunit)
 
-        date_range_str = self._date_range_text()
+        # the period actually balanced: from the first flux row (row 0 = baseline only)
+        date_range_str = (f"from {self._fmt_month(flux_start)} "
+                          f"to {self._fmt_month(end_idx)}")
         self._date_range_str = date_range_str
         area_km2 = cellAreaSum / 1_000_000
         addinfo = np.full(len(values_out), '', dtype='<U100')

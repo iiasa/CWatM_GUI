@@ -1130,9 +1130,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             f"Gauge set to {coords} (largest upstream area in mask)")
 
     def add_output_watercycle(self):
-        """Append 'OUT_TSS_AreaSum_MonthTot = WaterCycle' as the last line of the settings
-        file (in memory, not saved), unless a WaterCycle entry already exists."""
-        self._add_output_table("OUT_TSS_AreaSum_MonthTot", "WaterCycle")
+        """Add 'OUT_TSS_AreaSum_Daily = WaterCycle' under [OUTPUT] (in memory, not
+        saved), unless a WaterCycle entry already exists."""
+        self._add_output_table("OUT_TSS_AreaSum_Daily", "WaterCycle")
 
     def add_output_waterbalance(self):
         """Tools ▸ Add output WaterBalance: 'OUT_TSS_AreaSum_Daily = WaterBalance' (the
@@ -1142,7 +1142,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
 
     def _add_output_table(self, out_key, table):
         """Insert '<out_key> = <table>' under [OUTPUT] (in memory, not saved), unless
-        that key already lists ``table``."""
+        that key already lists ``table``. When the key is already there with other
+        variables (WaterCycle and WaterBalance share OUT_TSS_AreaSum_Daily), ``table``
+        is appended to that line - a second line with the same key would override it."""
         if not self.file_manager.has_file_loaded():
             self.status_bar.showMessage("No file loaded")
             return
@@ -1152,19 +1154,41 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         except Exception:
             content = ""
 
-        # Skip if the table already exists for that key
-        for line in content.split('\n'):
+        # Skip if the table already exists for that key; remember the key's line
+        lines = content.split('\n')
+        section, key_row = "", None
+        for i, line in enumerate(lines):
             s = line.strip()
+            if s.startswith('[') and s.endswith(']'):
+                section = s.lower()
+                continue
             if s.startswith('#') or s.startswith(';') or '=' not in s:
                 continue
             key, value = s.split('=', 1)
-            if key.strip().lower() == out_key.lower() and \
-               table.lower() in [v.strip().lower() for v in value.replace(',', ' ').split()]:
+            if key.strip().lower() != out_key.lower():
+                continue
+            if table.lower() in [v.strip().lower() for v in value.replace(',', ' ').split()]:
                 self.status_bar.showMessage(f"{table} output already present")
                 return
+            if section == '[output]' and key_row is None:
+                key_row = i
+
+        if key_row is not None:
+            # append to the existing line (an inline comment stays at the end)
+            line = lines[key_row]
+            key_part, value = line.split('=', 1)
+            comment = ""
+            if '#' in value:
+                value, comment = value.split('#', 1)
+                comment = "  #" + comment
+            vals = [v.strip() for v in value.split(',') if v.strip()]
+            if vals and vals[0].lower() == "none":       # output switched off: replace
+                vals = []
+            lines[key_row] = f"{key_part.rstrip()} = {', '.join(vals + [table])}{comment}"
+            self._apply_output_table('\n'.join(lines), table)
+            return
 
         # Insert the line under the [OUTPUT] section (in memory only)
-        lines = content.split('\n')
         out_start = None
         for i, line in enumerate(lines):
             if line.strip().lower() == '[output]':
@@ -1187,7 +1211,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 insert_at -= 1
             lines.insert(insert_at, line_to_add)
             updated = '\n'.join(lines)
+        self._apply_output_table(updated, table)
 
+    def _apply_output_table(self, updated, table):
         self.original_content = updated
         self.text_display.set_original_content(updated)
         self.parse_file(content=updated, load=False, expand_all=False)

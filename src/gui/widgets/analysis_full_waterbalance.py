@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QMessageBox, QProgressDialog,
 )
-from PySide6.QtCore import Qt, QThread
+from PySide6.QtCore import Qt, QThread, QTimer
 from PySide6.QtGui import QIcon
 
 from src.gui.utils import theme
@@ -61,7 +61,7 @@ def open_full_waterbalance(parent=None):
         start_dir = ""
     path, _ = QFileDialog.getOpenFileName(
         parent, "Open WaterBalance result CSV (WaterBalance_areasum_daily.csv)",
-        start_dir, "CSV result files (*.csv)")
+        start_dir, "WaterBalance csv (WaterBalance*.csv);;CSV result files (*.csv)")
     if not path:
         return
     # A WaterBalance csv of a long run is hundreds of MB (all variables, daily) - read
@@ -136,6 +136,12 @@ class FullWaterbalanceWindow(PlotlyWindowBase):
         self._nstations = len(self._data["stations"])
         self._station_idx = fwb.outlet_station(self._data)
         self._result = None
+        self._init_months()
+        # the slider rebuilds the page (all sunbursts) - debounced like Watercycle's
+        self._rebuild_timer = QTimer(self)
+        self._rebuild_timer.setSingleShot(True)
+        self._rebuild_timer.setInterval(400)
+        self._rebuild_timer.timeout.connect(self._rebuild_keep_scroll)
 
         self.setWindowTitle(f"\U0001F30A Full Waterbalance: {os.path.basename(str(csv_path))}")
         self.setModal(True)
@@ -173,7 +179,29 @@ class FullWaterbalanceWindow(PlotlyWindowBase):
             f"color: {theme.c('text_muted')}; padding: 2px 8px;")
         layout.addWidget(self.sub_label)
 
+        # Month slider (as in Watercycle): selects the analysed period. It sits above
+        # the web view, so it stays on top while the page scrolls.
+        from src.gui.widgets.analysis_watercycle import RangeSlider
+        lbl_style = ("font-family: 'Segoe UI', sans-serif; font-size: 11px; "
+                     f"color: {theme.c('text_muted')};")
+        n = len(self._months)
+        self.range_slider = RangeSlider(0, max(n - 1, 1), self._start_m, self._end_m)
+        self.range_slider.rangeChanged.connect(self._on_range_changed)
+        self.start_lbl = QLabel(self._fmt_month(self._start_m))
+        self.start_lbl.setStyleSheet(lbl_style)
+        self.end_lbl = QLabel(self._fmt_month(self._end_m))
+        self.end_lbl.setStyleSheet(lbl_style)
+        slider_row = QHBoxLayout()
+        slider_row.setSpacing(8)
+        slider_row.addWidget(self.start_lbl)
+        slider_row.addWidget(self.range_slider, 1)
+        slider_row.addWidget(self.end_lbl)
+        for w in (self.start_lbl, self.range_slider, self.end_lbl):
+            w.setVisible(n >= 3)          # the slider needs a few months to choose from
+        layout.addLayout(slider_row)
+
         self.web_view = QWebEngineView()
+        self.web_view.loadFinished.connect(self._restore_scroll)
         layout.addWidget(self.web_view, 1)
 
         btn_style = """
@@ -224,15 +252,61 @@ class FullWaterbalanceWindow(PlotlyWindowBase):
         self.prev_button.setEnabled(self._station_idx > 0)
         self.next_button.setEnabled(self._station_idx < self._nstations - 1)
 
+    # ------------------------------------------------------------- month slider
+    def _init_months(self):
+        """Months of the daily csv: (first day, last day) present in each month."""
+        dates = pd.to_datetime(self._data["full"].iloc[:, 0], format="%d/%m/%Y")
+        grouped = dates.groupby(dates.dt.to_period("M"))
+        self._months = list(zip(grouped.min(), grouped.max()))
+        self._start_m, self._end_m = 0, max(len(self._months) - 1, 0)
+
+    def _fmt_month(self, idx):
+        d = self._months[idx][0]
+        return f"{d.month}/{d.year}"
+
+    def _on_range_changed(self, low, high):
+        self._start_m, self._end_m = int(low), int(high)
+        self.start_lbl.setText(self._fmt_month(self._start_m))
+        self.end_lbl.setText(self._fmt_month(self._end_m))
+        self._rebuild_timer.start()
+
+    def _rebuild_keep_scroll(self):
+        """Rebuild for the new period, back at the place the page was scrolled to."""
+        self.web_view.page().runJavaScript(
+            "window.scrollY", 0, lambda y: self._show_page(scroll=y or 0))
+
+    def _restore_scroll(self, ok):
+        y = int(getattr(self, "_scroll", 0) or 0)
+        if ok and y > 0:
+            self.web_view.page().runJavaScript(f"window.scrollTo(0, {y});")
+
+    def _period_dates(self):
+        """start_date / end_date for fwb.compute; None = the csv's own ends. The day
+        before start_date is the storage baseline (the csv's first day at the start)."""
+        if not self._months:
+            return None, None
+        start = None if self._start_m == 0 else f"{self._months[self._start_m][0]:%d/%m/%Y}"
+        end = (None if self._end_m == len(self._months) - 1
+               else f"{self._months[self._end_m][1]:%d/%m/%Y}")
+        return start, end
+
     # --------------------------------------------------------------------- page
-    def _show_page(self):
+    def _show_page(self, scroll=0):
         overrides = theme.plotly_layout_overrides()
         # sunbursts have no axes - keep only the colours
         overrides = {k: v for k, v in overrides.items() if k not in ("xaxis", "yaxis")}
-        res = fwb.compute(self._data, station=self._station_idx,
-                          centre_color=theme.c("panel_bg"),
-                          template=theme.plotly_template(), layout_overrides=overrides)
+        start, end = self._period_dates()
+        try:
+            res = fwb.compute(self._data, station=self._station_idx,
+                              centre_color=theme.c("panel_bg"), start_date=start, end_date=end,
+                              template=theme.plotly_template(), layout_overrides=overrides)
+        except ValueError as e:
+            if self._result is None:
+                raise
+            self.sub_label.setText(str(e))
+            return
         self._result = res
+        self._scroll = scroll
 
         self.header_label.setText(res["title"])
         station = (f"Station {res['station'] + 1}/{self._nstations}: "
@@ -289,7 +363,7 @@ class FullWaterbalanceWindow(PlotlyWindowBase):
         pre {{ color: {theme.c('text_muted')}; font-size: 12px; margin: 4px 0 10px 0;
                white-space: pre-wrap; }}
         .fig {{ margin: 8px auto 4px auto; }}
-        .single {{ max-width: 720px; }}
+        .single {{ max-width: 560px; }}
         .missing {{ color: {theme.c('text_muted')}; font-style: italic; }}
         """
         parts = ["<!DOCTYPE html><html><head><meta charset='utf-8'>",
@@ -305,7 +379,7 @@ class FullWaterbalanceWindow(PlotlyWindowBase):
         parts.append(self._table_html(res["others"], "circle"))
         parts.append("<h2>Water cycle of the parts</h2>")
         parts.append(
-            "<pre>Each balance sunburst: centre = part, 1st ring = Inputs | Outputs | Storage (into) | "
+            "<pre>Each balance sunburst: centre = part, 1st ring = Inputs | Outputs | Storage (in) | "
             "Storage (out) | Balance error,\n2nd ring = the single terms. A storage which increased counts on "
             "the output side, a storage which decreased on the input side.\nA negative term is moved to the "
             "other side. Only the parts and terms of the options which are on are drawn.</pre>")

@@ -120,7 +120,8 @@ TERMCOL = {"Rain": "#60C4DE", "Snow": "#8fd1d1", "Snowfall": "#8fd1d1", "Snow me
            "Percolation": "#b08d57", "Baseflow": "#8b6f47", "Capillary rise": "#c9a26b",
            "Capillary rise from groundwater": "#c9a26b", "Capillary rise from groundwater (MODFLOW)": "#c9a26b",
            "Runoff": "#4a90c2", "Pumping": "#9b59b6", "Irrigation": "#9b59b6"}
-RING1 = {"In": "Inputs", "Out": "Outputs", "S+": "Storage (into)", "S-": "Storage (out)"}
+# storage increased = water goes into it (output side); decreased = comes out of it (input side)
+RING1 = {"In": "Inputs", "Out": "Outputs", "S+": "Storage (in)", "S-": "Storage (out)"}
 
 # why a circle is not in the 1st list of the summary (cell no 07)
 REASON = {"potential": "no balance: potential vs actual, the difference is the deficit (water stress), not an error",
@@ -656,9 +657,10 @@ def compute(data, station=None, min_share=0.0005, tol=1e-3, centre_color="white"
     # ---- cell no 08: sunburst functions
     subtitle = f"{title} | {area / 1e6:.0f} km2 | {period}"
 
-    def finish(fig, text, height=620):
+    # heights small enough that one whole sunburst fits in the window on a laptop
+    def finish(fig, text, height=460):
         fig.update_layout(title=dict(text=text, x=0.5), height=height,
-                          margin=dict(l=10, r=10, t=80, b=10))
+                          margin=dict(l=10, r=10, t=64, b=8))
         if template:
             fig.update_layout(template=template)
         if layout_overrides:
@@ -737,7 +739,7 @@ def compute(data, station=None, min_share=0.0005, tol=1e-3, centre_color="white"
             ann.append(dict(text=f"<b>{f.layout.title.text.split('<br>')[0]}</b>", x=(i + 0.5) / n_, y=1.0,
                             xref="paper", yref="paper", showarrow=False, font=dict(size=14)))
         fig.update_layout(annotations=ann)
-        return finish(fig, f"{key}<br><sup>{subtitle}</sup>", height=600)
+        return finish(fig, f"{key}<br><sup>{subtitle}</sup>", height=440)
 
     def simple_sunburst(key, ids, labels, parents, values, colors, hover, text):
         fig = go.Figure(go.Sunburst(ids=ids, labels=labels, parents=parents, values=values, branchvalues="total",

@@ -68,7 +68,8 @@ def open_flowdiagram(parent=None):
     except Exception:
         start_dir = ""
     path, _ = QFileDialog.getOpenFileName(
-        parent, "Open WaterCycle result CSV", start_dir, "CSV result files (*.csv)")
+        parent, "Open WaterCycle result CSV", start_dir,
+        "Water csv (Water*.csv);;CSV result files (*.csv)")
     if not path:
         return
     try:
@@ -161,6 +162,7 @@ _GRADIENT_JS = """
     if (!trace || !trace.node || !trace.node.y) return;
     if (!gd._cwatmOrigY) gd._cwatmOrigY = trace.node.y.slice();
     var orig = gd._cwatmOrigY, cur = trace.node.y, want = orig.slice();
+    var halves = {};
     gd.querySelectorAll('g.sankey-node').forEach(function(el) {
       var d = el.__data__;
       if (!d || !d.node || !(d.size > 0)) return;
@@ -169,6 +171,24 @@ _GRADIENT_JS = """
       var half = Math.max(d.visibleHeight || 0, 2 * LABEL_HALF) / 2 + EDGE;
       var lo = half / d.size, hi = 1 - half / d.size;
       want[i] = lo > hi ? 0.5 : Math.min(hi, Math.max(lo, orig[i]));
+      halves[i] = half / d.size;
+    });
+    // nodes in the same column (same x) must not overlap: keep their order by the
+    // original y and push a node below the one above it (e.g. "Storage (in)" below
+    // "Discharge"); what then runs off the bottom is pushed back up
+    var cols = {};
+    Object.keys(halves).forEach(function(k) {
+      var key = String(trace.node.x[k]);
+      (cols[key] = cols[key] || []).push(+k);
+    });
+    Object.keys(cols).forEach(function(key) {
+      var c = cols[key].sort(function(a, b) { return orig[a] - orig[b]; });
+      for (var j = 1; j < c.length; j++)
+        want[c[j]] = Math.max(want[c[j]], want[c[j - 1]] + halves[c[j - 1]] + halves[c[j]]);
+      var last = c[c.length - 1];
+      want[last] = Math.min(want[last], 1 - halves[last]);
+      for (var j = c.length - 2; j >= 0; j--)
+        want[c[j]] = Math.min(want[c[j]], want[c[j + 1]] - halves[c[j + 1]] - halves[c[j]]);
     });
     for (var i = 0; i < want.length; i++) {
       if (Math.abs(want[i] - cur[i]) > 0.002) {
@@ -179,22 +199,27 @@ _GRADIENT_JS = """
       }
     }
   }
-  // Click a node: it and everything downstream of it (the links leaving it, their
-  // target nodes, their links, ...) keep their colour, the rest is dimmed. Click a
-  // link: that link and the branch downstream of its target. Click the same
-  // element again, or the background, to show everything again. Kept on
-  // gd._cwatmFocus and re-applied after every redraw (resize, fitNodes restyle).
+  // Click a node: 1st click = it and everything downstream of it (the links leaving
+  // it, their target nodes, their links, ...) keep their colour, the rest is
+  // dimmed; 2nd click on the same node = everything upstream of it (the flows going
+  // in); 3rd click = everything again. A link works the same way: downstream of its
+  // target, then upstream of its source (the link itself always kept). Clicking the
+  // background shows everything. Kept on gd._cwatmFocus and re-applied after every
+  // redraw (resize, fitNodes restyle).
   var DIM_NODE = 0.25, DIM_LINK = 0.12;
-  function downstream(gd, startNode, startLink) {
+  // up = false: follow the links leaving a node (downstream), true: the links
+  // arriving at it (upstream)
+  function follow(gd, startNode, startLink, up) {
     var lk = gd.data[0].link, nodes = {}, links = {}, queue = [startNode];
+    var from = up ? lk.target : lk.source, to = up ? lk.source : lk.target;
     nodes[startNode] = true;
     if (startLink !== null) links[startLink] = true;
     while (queue.length) {
       var n = queue.shift();
-      for (var i = 0; i < lk.source.length; i++) {
-        if (lk.source[i] !== n || links[i]) continue;
+      for (var i = 0; i < from.length; i++) {
+        if (from[i] !== n || links[i]) continue;
         links[i] = true;
-        if (!nodes[lk.target[i]]) { nodes[lk.target[i]] = true; queue.push(lk.target[i]); }
+        if (!nodes[to[i]]) { nodes[to[i]] = true; queue.push(to[i]); }
       }
     }
     return {nodes: nodes, links: links};
@@ -212,16 +237,23 @@ _GRADIENT_JS = """
   }
   function onClick(gd, ev) {
     var t = ev.target, nodeEl = t.closest && t.closest('g.sankey-node'),
-        linkEl = t.closest && t.closest('path.sankey-link'), key = null, focus = null;
+        linkEl = t.closest && t.closest('path.sankey-link'), key = null,
+        node = null, link = null;
     if (nodeEl && nodeEl.__data__ && nodeEl.__data__.node) {
-      var n = nodeEl.__data__.node.pointNumber;
-      key = 'n' + n; focus = downstream(gd, n, null);
+      node = nodeEl.__data__.node.pointNumber; key = 'n' + node;
     } else if (linkEl && linkEl.__data__ && linkEl.__data__.link) {
-      var l = linkEl.__data__.link.pointNumber;
-      key = 'l' + l; focus = downstream(gd, gd.data[0].link.target[l], l);
+      link = linkEl.__data__.link.pointNumber; key = 'l' + link;
     }
-    if (key === null || key === gd._cwatmFocusKey) { key = null; focus = null; }
-    gd._cwatmFocusKey = key;
+    // step per click on the same element: 1 = downstream, 2 = upstream, 0 = all
+    var step = key === null ? 0
+             : key === gd._cwatmFocusKey ? (gd._cwatmFocusStep + 1) % 3 : 1;
+    var focus = null, lk = gd.data[0].link;
+    if (step === 1)
+      focus = follow(gd, link === null ? node : lk.target[link], link, false);
+    else if (step === 2)
+      focus = follow(gd, link === null ? node : lk.source[link], link, true);
+    gd._cwatmFocusKey = step ? key : null;
+    gd._cwatmFocusStep = step;
     gd._cwatmFocus = focus;
     applyFocus(gd);
   }
@@ -425,7 +457,8 @@ def _build_balance_links(b):
         ["Surface Snow",       "Snow",          "Runoff",             b["snow_runoff"]],
         ["Discharge",          "Runoff",        "Waterbodies",        b["runoff"]],
         ["Evapo Waterbody",    "Waterbodies",   "Evapotranspiration", b["EvapWaterBodyM_areasum_m3"]],
-        ["Discharge",          "Waterbodies",   "Discharge",          b["runoff"] - b["EvapWaterBodyM_areasum_m3"] - b["act_SurfaceWaterAbstract_areasum_m3"]],
+        ["Evapo Channel",      "Waterbodies",   "Evapotranspiration", b["EvapoChannel_areasum_m3"]],
+        ["Discharge",          "Waterbodies",   "Discharge",          b["runoff"] - b["EvapWaterBodyM_areasum_m3"] - b["EvapoChannel_areasum_m3"] - b["act_SurfaceWaterAbstract_areasum_m3"]],
         ["Withdrawal Surface", "Waterbodies",   "Withdrawal",         b["act_SurfaceWaterAbstract_areasum_m3"]],
         ["Withdrawal GW",      "Groundwater",   "Withdrawal",         b["nonFossilGroundwaterAbs_areasum_m3"]],
         ["Withdrawal Fossil GW", "Other Source", "Withdrawal",        b["pot_GroundwaterAbstract_areasum_m3"] - b["nonFossilGroundwaterAbs_areasum_m3"] - b["unmet_lost_areasum_m3"]],
@@ -436,7 +469,39 @@ def _build_balance_links(b):
     if not show_glacier:
         nodes = [n for n in nodes if n["name"] != "Glacier"]
         links = [l for l in links if l[0] != "Glacier Input"]
+
+    # storage change (b["ds:<column>"], mm/yr): a store which increased sends water
+    # to "Storage (in)", one which decreased gets water from "Storage (out)"
+    used = set()
+    for node, cols in _STORAGES:
+        ds = sum(b.get("ds:" + c, 0.0) for c in cols)
+        if ds > 0:
+            links.append([node + " storage", node, "Storage (in)", ds])
+            used.add("Storage (in)")
+        elif ds < 0:
+            links.append([node + " storage", "Storage (out)", node, -ds])
+            used.add("Storage (out)")
+    nodes += [n for n in _STORAGE_NODES if n["name"] in used]
     return nodes, links
+
+
+# The stores of the WaterCycle csv and the Sankey node they belong to (only the
+# columns present in a csv count; groundwater with MODFLOW = all its layers)
+_STORAGES = [
+    ("Interception", ["sum_interceptStor_areasum_m3"]),
+    ("Snow",         ["SnowCover_areasum_m3"]),
+    ("Soil",         ["sum_soil_areasum_m3"]),
+    ("Groundwater",  ["storGroundwater_areasum_m3", "groundwater_storage_total_areasum_m3",
+                      "modflow_buffer_areasum_m3"]),
+    ("Runoff",       ["gridcell_storage_areasum_m3"]),
+    ("Waterbodies",  ["channelStorage_sum_m3", "lakeResStorage_sum_m3",
+                      "smalllakeStorage_sum_m3"]),
+]
+STORAGE_COLUMNS = [c for _node, cols in _STORAGES for c in cols]
+_STORAGE_NODES = [
+    {"name": "Storage (out)", "color": "#7fd8b5", "x": 0.01, "y": 0.95},
+    {"name": "Storage (in)",  "color": "#00CC96", "x": 0.90, "y": 0.97},
+]
 
 
 class FlowDiagramWindow(PlotlyWindowBase):
@@ -669,15 +734,30 @@ class FlowDiagramWindow(PlotlyWindowBase):
         data = {c: pd.to_numeric(df[c], errors="coerce").to_numpy(dtype=float)
                 for c in cols}
         to_mm = 1000.0 / cell_area if cell_area else 0.0
+        secs = self._row_days * 86400.0
         values = np.zeros(self._n)
+        # a storage link is drawn into "Storage (in)" or out of "Storage (out)" by the
+        # sign of its change, which differs from row to row: its series is the signed
+        # change (positive = the direction of the link in the diagram)
+        storage_link = sector[0] == "link" and (sector[2] == "Storage (out)"
+                                                or sector[3] == "Storage (in)")
+        storage_sector = storage_link or sector in (("node", "Storage (in)"),
+                                                    ("node", "Storage (out)"))
         for m in range(self._n):
             bal = defaultdict(float)
             for c in cols:
                 bal[c] = data[c][m] * to_mm
-            bal["discharge_m3s-1"] *= 86400.0
-            bal["avgdischarge_m3s-1"] *= 86400.0
+                if c in STORAGE_COLUMNS and m > 0:
+                    bal["ds:" + c] = (data[c][m] - data[c][m - 1]) * to_mm
+            # discharge: the row's mean m3/s -> volume over the row
+            bal["discharge_m3s-1"] *= secs[m]
+            bal["avgdischarge_m3s-1"] *= secs[m]
             _nodes, links = _build_balance_links(bal)
-            if sector[0] == "link":
+            if storage_link:
+                inc = sum(lk[3] if lk[2] == "Storage (in)" else -lk[3]
+                          for lk in links if lk[0] == sector[1])
+                values[m] = inc if sector[3] == "Storage (in)" else -inc
+            elif sector[0] == "link":
                 values[m] = sum(lk[3] for lk in links
                                 if (lk[0], lk[1], lk[2]) == sector[1:])
             else:
@@ -685,18 +765,19 @@ class FlowDiagramWindow(PlotlyWindowBase):
                 inc = sum(lk[3] for lk in links if lk[2] == node)
                 out = sum(lk[3] for lk in links if lk[1] == node)
                 values[m] = inc if inc > 0 else out
+        if storage_sector and self._n:
+            values[0] = np.nan          # no storage before the first row
         if sector == ("node", "Discharge") and not discharge_mm:
-            # mm over the basin per month -> mean m³/s of that month
-            secs = self._days_in_month.astype(float) * 86400.0
+            # mm over the basin per row -> mean m³/s of that row
             return values / to_mm / secs if to_mm else values, "m3/s"
-        return values, "mm/month"
+        return values, self._period_unit
 
     # -------------------------------------------------------- Sankey computation
     def _show_sankey(self):
         fig, grad_pairs = self._build_figure()
         self.sub_label.setText(
             f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-            f"\n{self._date_range_text()}")
+            f"\n{self._period_text}")
         html = fig.to_html(include_plotlyjs=True, full_html=True,
                            config={"responsive": True})
         # Fill the whole page so the plot always matches the web view height.
@@ -717,23 +798,35 @@ class FlowDiagramWindow(PlotlyWindowBase):
         Link values are long-term averages in mm/yr over the basin area (ported
         from ``sankey_waterbalance_month.py``, cells 03-08)."""
         df = self._df
-        cell_area = self._cellAreaSum   # already divided by days_in_month[0]
+        cell_area = self._cellAreaSum   # basin area in m2 (_select_station)
 
-        start_idx = self._start_idx
+        # Storage change needs the storage at the start = the row before the first
+        # flux row; a window starting at row 0 uses row 0 as that baseline only
+        # (the same rule as the Watercycle sunburst).
+        flux_start = max(self._start_idx, 1)
+        baseline_idx = flux_start - 1
         end_idx = self._end_idx
-        nyears = (end_idx - start_idx + 1) / 12.0
+        nyears = (end_idx - flux_start + 1) / self._rows_per_year
         if nyears <= 0:
-            raise ValueError("Select a window of at least one year.")
+            raise ValueError("Select a window of at least two rows.")
+        # the period actually balanced: from the first flux row
+        self._period_text = (f"from {self._fmt_month(flux_start)} "
+                             f"to {self._fmt_month(end_idx)}")
 
         # `bal`: variable name -> long-term average mm/yr over the window.
         # Missing columns read as 0 so an incomplete watercycle csv still renders.
+        # Discharge is the row's mean m3/s -> weighted by the row's seconds.
+        secs = self._row_days[flux_start:end_idx + 1] * 86400.0
         bal = defaultdict(float)
         for col in df.columns[1:]:
-            series = pd.to_numeric(df[col], errors="coerce")
-            bal[col] = series.iloc[start_idx:end_idx + 1].sum() / cell_area * 1000 / nyears
-        # discharge comes as m3/s -- convert to the same mm/yr basis
-        bal["discharge_m3s-1"] *= 86400.0
-        bal["avgdischarge_m3s-1"] *= 86400.0
+            full = pd.to_numeric(df[col], errors="coerce")
+            series = full.iloc[flux_start:end_idx + 1]
+            if col in ("discharge_m3s-1", "avgdischarge_m3s-1"):
+                series = series * secs
+            bal[col] = series.sum() / cell_area * 1000 / nyears
+            if col in STORAGE_COLUMNS:
+                bal["ds:" + col] = ((full.iloc[end_idx] - full.iloc[baseline_idx])
+                                    / cell_area * 1000 / nyears)
 
         nodes, links = _build_balance_links(bal)
         # Right-click: plotly's node / link pointNumber -> sector (_sector_from_hit)
@@ -743,9 +836,13 @@ class FlowDiagramWindow(PlotlyWindowBase):
         name = self.settings_title or os.path.basename(str(self.csv_path))
         self._csv_data = (
             [("Basin", name), ("lon", self.lon), ("lat", self.lat),
-             ("Period", self._date_range_text()), ("Unit", "mm/year")],
+             ("Period", self._period_text), ("Unit", "mm/year")],
             ["Flow", "From", "To", "mm_per_year"],
             [[lk[0], lk[1], lk[2], round(float(lk[3]), 3)] for lk in links])
+        return self._make_figure(nodes, links)
+
+    def _make_figure(self, nodes, links):
+        """The figure of the balance nodes/links (overridden by the Chord window)."""
         return build_sankey(
             nodes, links,
             valueformat=".1f",

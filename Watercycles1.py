@@ -181,10 +181,10 @@ if storeall < 0:
     missq = (total_input + total_store) - total_output
     values[labels_out.index(discharge_label)] += missq
     total_output += missq
-    storetext = "Storage (out)"
+    storetext = "Storage (out)"     # storage decreased: water comes out of it
 else:
     balance = total_input - (total_output + total_store)
-    storetext = "Storage (into)"
+    storetext = "Storage (in)"      # storage increased: water goes into it
 
 total_total = total_input + total_output + total_store + abs(balance)
 values_out = [total_total, total_input, total_output, abs(balance), total_store] + values
