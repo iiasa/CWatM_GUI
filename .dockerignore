@@ -1,0 +1,9 @@
+# Keeps the build context small/fast - the Dockerfile only COPYs cwatm/, src/
+# and cwatm_model.py explicitly, so nothing else needs to reach the daemon.
+*
+!cwatm/
+!src/
+!cwatm_model.py
+!requirements_docker.txt
+**/__pycache__/
+**/*.pyc

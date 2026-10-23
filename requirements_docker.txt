@@ -1,0 +1,52 @@
+# CWatM headless/remote execution image - runtime dependencies.
+#
+# A filtered subset of requirements.txt: everything the model itself needs
+# to run (cwatm/ + cwatm_model.py's entry point, src/gui/utils/
+# warning_filters.py + cwatm_model_runner.py), nothing GUI-only (PySide6/Qt,
+# maps/plots, OSM tile fetching, CWatM AI, the account/Supabase login).
+# Versions are pinned identically to requirements.txt so this environment
+# matches the one the desktop app is tested against.
+
+# ---- Scientific / data stack ----
+numpy==2.5.0
+pandas==2.3.3
+netCDF4==1.7.4
+cftime==1.6.5
+xarray==2026.4.0
+
+# ---- Raster I/O (rasterio bundles its own GDAL - do not also install GDAL/osgeo) ----
+rasterio==1.5.0
+affine==2.4.0
+snuggs==1.4.7
+cligj==0.7.2
+click-plugins==1.1.1.2
+click==8.4.2
+attrs==26.1.0
+
+# ---- Excel settings sheets (cwatm's xlsx settings-sheet reads via pd.read_excel) ----
+openpyxl==3.1.5
+et_xmlfile==2.0.0
+
+# ---- MODFLOW coupling (flopy) - same as the frozen exe, bundled unconditionally so a
+# modflow_coupling=True run works; black and its own deps are excluded, same as the
+# frozen exe, since it's only used by bmipy's code-render CLI, never at model runtime ----
+flopy==3.10.0
+matplotlib==3.11.0
+contourpy==1.3.3
+cycler==0.12.1
+fonttools==4.63.0
+kiwisolver==1.5.0
+pillow==12.3.0
+xmipy==1.5.0
+bmipy==2.0.1
+
+# ---- Common / shared dependencies ----
+python-dateutil==2.9.0.post0
+pytz==2026.2
+tzdata==2026.2
+packaging==26.2
+pyparsing==3.3.2
+six==1.17.0
+typing_extensions==4.16.0
+importlib_metadata==9.0.0
+zipp==4.1.0
