@@ -1,23 +1,14 @@
 /**
- * Project-scoped calls against the Accelerator's "aterm-cli" API
- * (`/api/v1/aterm-cli/{project_slug}/...`). Confirmed live, with a real
- * device-flow (TERM_CLI-typed) access token: the only header/route
- * combination recognized at all is a bare token (no "Bearer" prefix) in
- * `x-authorization` against `aterm-cli` - `/v1/projects/` needs a session
- * cookie regardless of headers. Login, token refresh, and authorized
- * listing/download have all been exercised end-to-end against the live
- * cwatm-gui-dev project.
+ * Project-scoped file browsing against the Accelerator's "aterm-cli" API.
+ * Login, token refresh, and authorized listing/download have all been
+ * exercised end-to-end against the live cwatm-gui-dev project. See
+ * atermFetch.ts for the auth details (confirmed live, applies here too).
  *
- * Job dispatch (`jobs/dispatch/`) is deliberately left out for now -
- * running CWatM remotely needs a CWatM-ready docker image on the
- * Accelerator's execution cluster first, a separate, not-yet-resolved
- * prerequisite. This module is scoped to what Milestone 1 needs: login +
- * browsing a project's files.
+ * Job dispatch lives in jobs.ts, sharing the same atermFetch helper.
  */
 
 import { ATERM_BASE } from "./config";
-import { getAccessToken, AcceleratorAuthError } from "./auth";
-import { httpFetch } from "./platform";
+import { atermFetch } from "./atermFetch";
 
 export interface FileEntry {
   /** Display name (the last path segment). */
@@ -28,30 +19,8 @@ export interface FileEntry {
   isFolder: boolean;
 }
 
-function basename(path: string): string {
+export function basename(path: string): string {
   return path.split("/").filter(Boolean).pop() ?? path;
-}
-
-async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
-  const accessToken = await getAccessToken();
-  const headers = new Headers(init?.headers);
-  headers.set("x-authorization", accessToken);
-
-  const res = await httpFetch(url, { ...init, headers });
-  if (res.status === 401 || res.status === 403) {
-    // Surface the server's own detail (e.g. "You are not allowed.") rather
-    // than a generic message - it proved to be the useful diagnostic
-    // signal during the auth investigation.
-    const detail = await res
-      .json()
-      .then((d) => d?.detail)
-      .catch(() => null);
-    throw new AcceleratorAuthError(detail || "Not authorized for this project.");
-  }
-  if (!res.ok) {
-    throw new Error(`Accelerator API error (HTTP ${res.status}) for ${url}`);
-  }
-  return res;
 }
 
 /**
@@ -69,7 +38,7 @@ async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
  */
 export async function listFiles(projectSlug: string, absolutePath: string = projectSlug): Promise<FileEntry[]> {
   const encodedPath = btoa(absolutePath);
-  const res = await authedFetch(
+  const res = await atermFetch(
     `${ATERM_BASE}/${projectSlug}/node-items/${encodedPath}/`,
   );
   const data: { nodes: { absolute_node_name: string }[]; objects: { filename: string; file_size?: number }[] } =
@@ -90,7 +59,7 @@ export async function listFiles(projectSlug: string, absolutePath: string = proj
 
 /** A presigned, time-limited URL to download the file at `path` (a full path, as from listFiles) directly - no auth header needed on the follow-up GET. */
 export async function getFileDownloadUrl(projectSlug: string, path: string): Promise<string> {
-  const res = await authedFetch(
+  const res = await atermFetch(
     `${ATERM_BASE}/${projectSlug}/get-file-download-url/?filename=${encodeURIComponent(path)}`,
   );
   const data = await res.json();

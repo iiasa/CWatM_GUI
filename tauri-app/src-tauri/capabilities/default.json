@@ -11,7 +11,7 @@
     {
       "identifier": "http:default",
       "allow": [
-        { "url": "https://accelerator.iiasa.ac.at/*" }
+        { "url": "https://*.iiasa.ac.at/*" }
       ]
     }
   ]

@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getFileDownloadUrl, listFiles, type FileEntry } from "../lib/accelerator/client";
+import { dispatchCwatmRun, type DispatchedJob } from "../lib/accelerator/jobs";
+import { pollJobLog, type JobResult } from "../lib/accelerator/jobStatus";
 import { logout } from "../lib/accelerator/auth";
 import { openExternal } from "../lib/accelerator/platform";
 
@@ -19,6 +21,31 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
   // entry is already in the exact shape listFiles expects (no trailing
   // slash). pathStack[0] is always the project root.
   const [pathStack, setPathStack] = useState<string[]>([]);
+  const [dispatchedJob, setDispatchedJob] = useState<DispatchedJob | null>(null);
+  // null = still polling/unresolved; a JobResult once the job's own log is found.
+  const [jobResult, setJobResult] = useState<JobResult | null>(null);
+  // true once pollJobLog gives up without ever finding a result - without
+  // this, giving up was silent and the status just stayed on "running"
+  // forever with no sign anything had changed.
+  const [pollTimedOut, setPollTimedOut] = useState(false);
+
+  // Poll for the dispatched job's log whenever dispatchedJob changes -
+  // cancelled automatically on unmount or when a new job is dispatched.
+  useEffect(() => {
+    if (!dispatchedJob) return;
+    const slug = projectSlug.trim();
+    const cancel = pollJobLog(
+      slug,
+      dispatchedJob.jobId,
+      (result, timedOut) => {
+        setJobResult(result);
+        if (timedOut) setPollTimedOut(true);
+      },
+      { timeoutSeconds: dispatchedJob.timeoutSeconds },
+    );
+    return cancel;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dispatchedJob]);
 
   async function loadPath(stack: string[]) {
     setBusy(true);
@@ -54,6 +81,25 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
     try {
       const url = await getFileDownloadUrl(projectSlug.trim(), path);
       await openExternal(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function runCwatm(entry: FileEntry) {
+    setError(null);
+    setDispatchedJob(null);
+    setJobResult(null);
+    setPollTimedOut(false);
+    try {
+      // The dispatched job itself gives this run its own fresh PathOut
+      // (patching a local copy of the settings file at job start) - see
+      // jobs.ts's buildCommand for why this is done there, not here.
+      const job = await dispatchCwatmRun(projectSlug.trim(), {
+        name: `CWatM: ${entry.name}`,
+        settingsPath: entry.path,
+      });
+      setDispatchedJob(job);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -106,6 +152,38 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
 
       {error && <p style={{ color: "crimson" }}>{error}</p>}
 
+      {dispatchedJob && (
+        <div style={{ textAlign: "left" }}>
+          <p>
+            Dispatched job <code>{dispatchedJob.jobId}</code>
+            {pollTimedOut ? (
+              <>
+                {" - "}
+                <strong style={{ color: "orange" }}>status unknown</strong> (gave up checking after{" "}
+                {Math.round(dispatchedJob.timeoutSeconds / 60)}+ min with no result - it may still be running; check
+                the Accelerator web UI directly)
+              </>
+            ) : jobResult?.success === undefined || jobResult?.success === null ? (
+              <> - running (building the image can take a few minutes on a content change; checking every 15s)...</>
+            ) : jobResult.success ? (
+              <> - <strong style={{ color: "green" }}>succeeded</strong> (last discharge: {jobResult.lastDischarge} m³/s)</>
+            ) : (
+              <> - <strong style={{ color: "crimson" }}>failed</strong></>
+            )}
+          </p>
+          {jobResult?.success === false && jobResult.errorSummary && (
+            <pre style={{ whiteSpace: "pre-wrap", background: "#2a1414", padding: "0.5em", borderRadius: 4 }}>
+              {jobResult.errorSummary}
+            </pre>
+          )}
+          {jobResult && (
+            <button type="button" onClick={() => openExternal(jobResult.logUrl)}>
+              View full log
+            </button>
+          )}
+        </div>
+      )}
+
       {files && (
         <ul style={{ textAlign: "left" }}>
           {files.length === 0 && <li>(empty folder)</li>}
@@ -123,6 +201,14 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
                   <button type="button" onClick={() => download(f.path)}>
                     Download
                   </button>
+                  {f.name.endsWith(".ini") && (
+                    <>
+                      {" — "}
+                      <button type="button" onClick={() => runCwatm(f)}>
+                        Run CWatM
+                      </button>
+                    </>
+                  )}
                 </>
               )}
             </li>
