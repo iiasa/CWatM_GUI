@@ -27,6 +27,7 @@ from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, Signal
 
 from src.gui.utils.gui_log import get_logger
 from src.gui.utils import warning_filters
+from src.gui.utils import hdf5_locking
 
 log = get_logger("cwatm_process_worker")
 
@@ -152,6 +153,10 @@ class CWatMProcessWorker(QObject):
         # filter itself; _suppress below is the final net for either).
         env.insert("PYTHONWARNINGS",
                    warning_filters.export_to_environment(dict(os.environ)))
+        # Disable HDF5 file locking in the child too - it's what actually opens
+        # every netCDF input/output file. See hdf5_locking.py for the why.
+        env.insert(hdf5_locking.HDF5_LOCKING_VAR,
+                   hdf5_locking.export_to_environment(dict(os.environ)))
         self.process.setProcessEnvironment(env)
         self.process.setWorkingDirectory(workdir)
         self.progress.emit(0)
