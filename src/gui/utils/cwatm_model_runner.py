@@ -35,8 +35,12 @@ import traceback
 # here too because the model child (CWatM_model.exe) starts at this module and
 # never imports cwatm_gui, and the model does far more raster reads than the GUI.
 from src.gui.utils.warning_filters import apply as _apply_warning_filters
+# Same HDF5-network-locking fix as cwatm_gui.py - applied here too since the
+# model child is what actually opens every netCDF input/output file.
+from src.gui.utils.hdf5_locking import apply as _apply_hdf5_locking_fix
 
 _apply_warning_filters()
+_apply_hdf5_locking_fix()
 
 # Marker protocol shared with cwatm_process_worker.py (keep in sync).
 MARKER = "@@CWATM_GUI:"

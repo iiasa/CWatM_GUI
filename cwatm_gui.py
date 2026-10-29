@@ -58,8 +58,13 @@ _profile("module top")
 # (src/ is importable here in every launch path: sys.path[0] is the script's own
 # folder from source, the PYZ when frozen.)
 from src.gui.utils.warning_filters import apply as _apply_warning_filters
+# Disable HDF5 file locking before the first netCDF4 import - needed to read
+# netCDF input over a network-mounted drive (e.g. an accli-mounted Accelerator
+# project). See src/gui/utils/hdf5_locking.py for the why.
+from src.gui.utils.hdf5_locking import apply as _apply_hdf5_locking_fix
 
 _apply_warning_filters()
+_apply_hdf5_locking_fix()
 
 # =============================================================================
 # Everything above the Qt import runs in the CHILD process too, so it must stay
