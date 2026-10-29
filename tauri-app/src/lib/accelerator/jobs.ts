@@ -100,21 +100,43 @@ export const DEFAULT_TIMEOUT_SECONDS = 3600;
  *
  * Instead, the DISPATCHED JOB does this patching itself: it already has
  * full read access to the original (already correctly uploaded by the
- * user) settings file and full write access to /mnt/output - the
- * Accelerator team confirmed live (2026-10-28) that this exact path always
- * maps to a fresh, job-ID-scoped directory automatically (no client-side
- * uniqueness scheme needed - an earlier version of this function generated
- * its own pid+timestamp directory name under /mnt/wdrv/output/ instead,
- * before this shortcut was confirmed), that per-job write isolation is
- * intentional and guaranteed ("that won't change" - their words), and that
- * a written file can't be overwritten/deleted by another job (only by the
- * project owner/admin via the web UI). The script reads the original
- * settings file, rewrites its PathOut line to /mnt/output, creates that
- * directory, writes the patched settings there too (so it rides along with
- * that run's uploaded outputs, handy for later debugging which variant
- * actually ran), and runs cwatm_model.py against the patched copy via
- * runpy (run_name "__main__", so its own entry point fires exactly as a
- * normal invocation would).
+ * user) settings file. Where it writes its own output went through two
+ * iterations:
+ *
+ * 1. /mnt/output - the Accelerator team confirmed live (2026-10-28) that
+ *    this path always maps to a fresh, job-ID-scoped directory
+ *    automatically, that per-job write isolation there is intentional and
+ *    guaranteed ("that won't change" - their words). In practice this
+ *    broke live too (job 15561, 2026-10-29): PermissionError writing
+ *    /mnt/output/settings_run.ini, before CWatM even started.
+ * 2. Back to a job-unique directory under /mnt/wdrv/output/ (what an
+ *    even earlier version of this function already did, before the
+ *    /mnt/output shortcut was adopted) - this time informed by what that
+ *    same job 15561's own build log showed about how output upload
+ *    actually works: a step literally named
+ *    `UploadWdrvFilesCreatedByJobGid` scans /mnt/wdrv (not /mnt/output)
+ *    for files tagged with the job's own JOB_GID and uploads exactly
+ *    those - /mnt/wdrv's own per-job write-overlay tracking file
+ *    (`.hf_overlay_writes`) confirms the mount expects exactly this. The
+ *    original problem with writing under /mnt/wdrv/output/ (job 15415,
+ *    see git history) was a *fixed* directory name colliding with an
+ *    earlier job's leftover, now owned by a different uid/gid - solved
+ *    here the same way as before, by making the directory name unique
+ *    per run (process id + unix time), not by avoiding /mnt/wdrv itself.
+ *
+ * Since that directory name is generated INSIDE the container at
+ * runtime, the client can't predict it ahead of dispatch - so the script
+ * prints it to stdout as its own `@@CWATM_GUI:OUTPUT_DIR:<path>@@`
+ * marker (same technique as cwatm_model_runner.py's own RESULT marker),
+ * which jobStatus.ts reads back out of the job's uploaded log once the
+ * run finishes.
+ *
+ * The script reads the original settings file, rewrites its PathOut line
+ * to that directory, creates it, writes the patched settings there too
+ * (so it rides along with that run's uploaded outputs, handy for later
+ * debugging which variant actually ran), and runs cwatm_model.py against
+ * the patched copy via runpy (run_name "__main__", so its own entry
+ * point fires exactly as a normal invocation would).
  */
 export function buildCommand(projectSlug: string, settingsPath: string): string {
   const relativePath = settingsPath.startsWith(`${projectSlug}/`)
@@ -134,11 +156,12 @@ export function buildCommand(projectSlug: string, settingsPath: string): string 
   // which must pass through untouched here (its own correct marker was
   // already printed), so only non-SystemExit exceptions get our fallback.
   const script = [
-    "import os, sys, re, runpy, traceback",
+    "import os, sys, re, runpy, time, traceback",
     "try:",
     `    orig_path = ${JSON.stringify(absoluteSettingsPath)}`,
     "    content = open(orig_path).read()",
-    '    output_dir = "/mnt/output"',
+    '    output_dir = f"/mnt/wdrv/output/run-{os.getpid()}-{int(time.time())}"',
+    '    print(f"@@CWATM_GUI:OUTPUT_DIR:{output_dir}@@")',
     "    os.makedirs(output_dir, exist_ok=True)",
     '    patched = re.sub(r"(?m)^PathOut\\s*=.*$", f"PathOut = {output_dir}", content, count=1)',
     "    assert patched != content, 'No \"PathOut = ...\" line found to patch in ' + orig_path",

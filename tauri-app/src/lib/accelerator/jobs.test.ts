@@ -34,13 +34,14 @@ describe("buildCommand", () => {
     expect(command).toContain("/mnt/wdrv/inhale/settings.ini");
   });
 
-  it("patches PathOut to /mnt/output and wraps execution in a try/except that reports failure", () => {
+  it("patches PathOut to a job-unique dir under /mnt/wdrv/output/ and wraps execution in a try/except that reports failure", () => {
     const command = buildCommand("cwatm-gui-dev", "cwatm-gui-dev/inhale/settings.ini");
     // The embedded Python source has its own double-quotes backslash-escaped
     // for the outer shell argument (see shellDoubleQuote) - match loosely
     // enough to not be brittle to that escaping style.
     expect(command).toContain("output_dir =");
-    expect(command).toContain("/mnt/output");
+    expect(command).toContain("/mnt/wdrv/output/run-");
+    expect(command).toContain("@@CWATM_GUI:OUTPUT_DIR:");
     expect(command).toContain("try:");
     expect(command).toContain("except SystemExit:");
     expect(command).toContain("except BaseException:");

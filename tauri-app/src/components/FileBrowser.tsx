@@ -181,6 +181,21 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
               View full log
             </button>
           )}
+          {jobResult?.success === true && jobResult.outputDir && (
+            <p>
+              Output folder: <code>{jobResult.outputDir}</code>
+              {" — "}
+              <button type="button" onClick={() => loadPath([projectSlug.trim(), jobResult.outputDir!])}>
+                Browse
+              </button>
+            </p>
+          )}
+          {jobResult?.success === true && !jobResult.outputDir && (
+            <p style={{ color: "orange" }}>
+              Run succeeded, but no output directory marker was found in its log (older job, or it predates this
+              feature) - check the Accelerator web UI directly for its output files.
+            </p>
+          )}
         </div>
       )}
 

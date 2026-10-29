@@ -21,6 +21,7 @@
 
 import { listFiles, getFileDownloadUrl } from "./client";
 import { httpFetch } from "./platform";
+import { wdrvPathToProjectPath } from "./outputs";
 
 export interface JobResult {
   /** null = log not found yet (job still building/running, or not dispatched long enough ago). */
@@ -28,6 +29,8 @@ export interface JobResult {
   lastDischarge?: number;
   /** The CWATM FILE ERROR block's content, if the run failed with one. */
   errorSummary?: string;
+  /** Project-relative path to this run's own output directory, if the job got far enough to print its OUTPUT_DIR marker (see jobs.ts's buildCommand) - undefined if it crashed before that point. */
+  outputDir?: string;
   logPath: string;
   logUrl: string;
 }
@@ -42,6 +45,12 @@ export interface JobResult {
 // seen live rather than an assumed shape.
 const RESULT_MARKER_RE = /@@CWATM_GUI:RESULT:(True|False):(None|[\d.eE+-]+)@@/;
 const FILE_ERROR_RE = /={5,}\s*CWATM FILE ERROR\s*={5,}\s*\n([\s\S]*?)\n\s*\n/;
+// Printed by jobs.ts's buildCommand right after it computes its own
+// job-unique output directory under /mnt/wdrv/output/ - the client can't
+// predict that path ahead of dispatch (it's generated inside the
+// container, from its own pid + the current time), so it's read back out
+// of the job's log instead, same as the RESULT marker.
+const OUTPUT_DIR_MARKER_RE = /@@CWATM_GUI:OUTPUT_DIR:(\S+)@@/;
 
 /**
  * Pure parsing of a job log's text - no network, fully unit-testable.
@@ -49,13 +58,16 @@ const FILE_ERROR_RE = /={5,}\s*CWATM FILE ERROR\s*={5,}\s*\n([\s\S]*?)\n\s*\n/;
  * broken exactly as often as the plumbing around it) can be tested without
  * mocking listFiles/getFileDownloadUrl/httpFetch.
  */
-export function parseJobLog(logText: string): Omit<JobResult, "logPath" | "logUrl"> {
+export function parseJobLog(logText: string, projectSlug: string): Omit<JobResult, "logPath" | "logUrl"> {
+  const outputDirMatch = OUTPUT_DIR_MARKER_RE.exec(logText);
+  const outputDir = outputDirMatch ? wdrvPathToProjectPath(projectSlug, outputDirMatch[1]) : undefined;
+
   const resultMatch = RESULT_MARKER_RE.exec(logText);
   if (!resultMatch) {
     // Log exists but the run hasn't reached its own result marker yet (e.g.
     // still mid-build, or an infra-level failure before cwatm_model_runner.py
     // ran at all) - treat as still unresolved rather than guessing.
-    return { success: null };
+    return { success: null, outputDir };
   }
   const success = resultMatch[1] === "True";
   const lastDischarge = resultMatch[2] === "None" ? undefined : Number(resultMatch[2]);
@@ -64,6 +76,7 @@ export function parseJobLog(logText: string): Omit<JobResult, "logPath" | "logUr
     success,
     lastDischarge,
     errorSummary: errorMatch ? errorMatch[1].trim() : undefined,
+    outputDir,
   };
 }
 
@@ -84,7 +97,7 @@ export async function fetchJobLog(projectSlug: string, jobId: string): Promise<J
 
   const logUrl = await getFileDownloadUrl(projectSlug, logFile.path);
   const logText = await (await httpFetch(logUrl)).text();
-  return { ...parseJobLog(logText), logPath: logFile.path, logUrl };
+  return { ...parseJobLog(logText, projectSlug), logPath: logFile.path, logUrl };
 }
 
 /** Extra wall-clock time to keep polling beyond the job's own dispatch timeout, to cover build+queue time before execution even starts (the dispatch timeout governs execution, not the full wait). */
