@@ -130,6 +130,10 @@ now and `tools/check_invariants.py` rejects exotic line separators.
   runs of the same file deleted both — now keyed on `uid` (old key kept as fallback).
 
 ### Smaller ones
+- **Mean Weekly Fluxes, legend click**: a hidden panel kept its old y domain, and plotly
+  draws the opaque plot background of a subplot that overlaps another one above it, so
+  it cut off the enlarged panel above. The hidden axis now gets a sub-pixel domain
+  (`_PANEL_JS`). The lasting choice of panels is the gear window.
 - **Batch Run temp files** were keyed by sanitised scenario name; `run 1` and `run_1`
   sanitised alike and clobbered each other — now keyed by row number.
 - **Drop on the settings editor** used to insert the path as text instead of loading
