@@ -4,13 +4,41 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
-## Unreleased
+## CWatM GUI 1.14 — what is new
+
+*Released 2 November 2026. Previous release: 1.13 (20 October 2026).*
+
+This release opens the GUI up: every skill level and the whole CWatM Academy are
+free and work without a CWatM account.
+
+---
+
+### 1. Everything open without a login
+
+- **Advanced and Expert are free** for everyone, logged in or not. The level button
+  and Preferences ▸ Editor & Dates ▸ Skill of user switch freely between Beginner,
+  Advanced and Expert.
+- The **Cheat** tick (*Cheat - and get the Expert level without buying it*) in
+  Preferences ▸ Account is gone; it is no longer needed.
+- **CWatM Academy** starts and runs **all ten levels** without a login. Logged in, your
+  progress is still kept in your account and every finished level still earns points.
+
+### 2. Animals and the Shop
+
+- The **Trout** and the **Bottle** are **free** for everyone and can be chosen in
+  Preferences ▸ Display ▸ Select animal without logging in.
+- The other animals are still bought in the **Shop** with the points of your CWatM
+  account (a login is needed to buy). The Shop now sells animals only.
+
+### 3. Analysis
 
 - **Nearest city next to a station**: the Analyse windows (Timeseries, NetCDF,
   Watercycle, Flow Diagram, Chord, Mean fluxes, Full Waterbalance) show the nearest city
   and its distance right of a station's lon/lat, e.g. *lon: 16.61, lat: 48.91 - 26 km
   from Břeclav (CZ)*. Offline, from GeoNames' list of cities over 15,000 people (credited
   in Info ▸ About CWatM). Not shown for a projected (x/y) station.
+
+---
 
 
 ## CWatM GUI 1.13 — what is new

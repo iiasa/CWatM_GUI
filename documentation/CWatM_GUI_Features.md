@@ -532,25 +532,20 @@ points earn **river badges** (Breg, Thames, Morava, …).
 - **Your points** are the points you can spend. Next to them the account window shows
   the points **earned in total** - those never go down and decide your badges.
 - **The Shop** (the **Shop** button left of your name; it appears once you have the
-  **Breg** badge) sells:
-  - the **Advanced** (20 points) and **Expert** (40 points) skill levels - Advanced
-    first, then Expert. Expert stays greyed out until you own Advanced;
-  - **animals** for the live discharge plot: Fish (5), Otter (10), Beaver (20),
-    Sailboat (30), Octopus (50). The selector offers the ones you can afford.
+  **Breg** badge) sells **animals** for the live discharge plot. The selector offers
+  the ones you can afford. The **Trout** and the **Bottle** are free for everyone -
+  no purchase and no login needed.
+- **The skill levels are free**: Beginner, Advanced and Expert can be used by
+  everyone, logged in or not. **CWatM Academy** works without a login too.
 - **Buying** asks first, takes the price from your points and is final (no refunds).
   Your badges stay, and the next badge still needs its full earned points. A bought
-  animal appears on the discharge plot at once; a bought level can be switched to
-  right away.
-- **Example:** you earned 20 points and hold Breg and Thames; you buy Advanced for 20 -
-  you now have 0 points to spend, still 20 earned in total, and both badges.
+  animal appears on the discharge plot at once.
+- **Example:** you earned 20 points and hold Breg and Thames; you buy an animal for
+  20 - you now have 0 points to spend, still 20 earned in total, and both badges.
 - **The leaderboard** (Info ▸ Leaderboard) ranks by your current points.
 - **Use it or lose it a little:** without a login for a week your points drop by 3 %,
   every further week by another 5 % of what is left - never below 5 points. Logging in
   (the automatic login at start counts) stops it. Earned points and badges never shrink.
-- **Not interested in the game?** Tick **Cheat - and get the Expert level without
-  buying it** in Preferences ▸ Account: every skill level is open for this session,
-  logged in or not. It switches itself off when the GUI is restarted.
-- Accounts that existed when the Shop opened got Advanced and Expert for free.
 
 ## Usage
 
@@ -608,10 +603,8 @@ points earn **river badges** (Breg, Thames, Morava, …).
     menus** is shown: *Beginner* hides the advanced entries, e.g. Batch Run, Windowed
     Run, Check Data, the Excel editor and the water-balance analyses), the
     date picker style, the date timeline, auto-bookmark on change, and **Use Tabs**
-    (the settings-file tabs, Expert level only). Advanced and Expert are bought in
-    the **Shop** - or tick *Cheat* on the Account page.
-  - **Account** — stay logged in, count my runs, record run locations, and the
-    **Cheat** tick (all skill levels for this session, no purchase needed).
+    (the settings-file tabs, Expert level only). Every level is free.
+  - **Account** — stay logged in, count my runs, record run locations.
   - **Run History** — where the Journal of Runs is kept and for how long.
 
   Nothing changes while you are clicking around: **Apply** puts the current page's
