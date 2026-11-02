@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { parseJobLog } from "./jobStatus";
+import { parseJobLog, pickPrimarySource, summarizeEvents, type JobLogSource, type JobLogEvent } from "./jobStatus";
 
 const SLUG = "cwatm-gui-dev";
 
 describe("parseJobLog", () => {
-  it("returns success: null when no result marker is present yet (job still running)", () => {
+  it("returns success: null when no result marker is present yet and the job isn't completed (still running)", () => {
     const log = "Waiting for FUSE mount on /mnt/wdrv to become ready...\nFUSE mount /mnt/wdrv is ready\n";
-    expect(parseJobLog(log, SLUG)).toEqual({ success: null, outputDir: undefined });
+    expect(parseJobLog(log, SLUG, false)).toEqual({ success: null, outputDir: undefined });
   });
 
   it("parses a successful run's marker (real shape from job 15422)", () => {
@@ -17,7 +17,7 @@ describe("parseJobLog", () => {
       "@@CWATM_GUI:RESULT:True:1245047.6002230425@@",
       "Resource Usage Report:",
     ].join("\n");
-    const result = parseJobLog(log, SLUG);
+    const result = parseJobLog(log, SLUG, true);
     expect(result.success).toBe(true);
     expect(result.lastDischarge).toBeCloseTo(1245047.6002230425);
     expect(result.errorSummary).toBeUndefined();
@@ -37,7 +37,7 @@ describe("parseJobLog", () => {
       "@@CWATM_GUI:RESULT:False:0.0@@",
       "command execution error: exit status 1",
     ].join("\n");
-    const result = parseJobLog(log, SLUG);
+    const result = parseJobLog(log, SLUG, true);
     expect(result.success).toBe(false);
     expect(result.lastDischarge).toBe(0);
     expect(result.errorSummary).toContain("Error 215: Cannot find precipitation maps");
@@ -46,7 +46,7 @@ describe("parseJobLog", () => {
 
   it("parses a failure with last_dis None (every failure we've seen live has this shape - bad settings path, Error 215/220, our own pre-processing fallback)", () => {
     const log = "Traceback (most recent call last):\n...\n@@CWATM_GUI:RESULT:False:None@@\n";
-    const result = parseJobLog(log, SLUG);
+    const result = parseJobLog(log, SLUG, true);
     expect(result.success).toBe(false);
     expect(result.lastDischarge).toBeUndefined();
   });
@@ -58,7 +58,7 @@ describe("parseJobLog", () => {
       "",
       "@@CWATM_GUI:RESULT:True:5.0@@",
     ].join("\n");
-    const result = parseJobLog(log, SLUG);
+    const result = parseJobLog(log, SLUG, true);
     expect(result.success).toBe(true);
     expect(result.errorSummary).toBeUndefined();
   });
@@ -70,21 +70,51 @@ describe("parseJobLog", () => {
       "@@CWATM_GUI:OUTPUT_DIR:/mnt/wdrv/output/run-827276-1793278455@@",
       "@@CWATM_GUI:RESULT:True:12.3@@",
     ].join("\n");
-    const result = parseJobLog(log, SLUG);
+    const result = parseJobLog(log, SLUG, true);
     expect(result.outputDir).toBe("cwatm-gui-dev/output/run-827276-1793278455");
   });
 
-  it("leaves outputDir undefined when the job crashed before printing it (job 15561's actual failure)", () => {
-    const log = [
-      "Waiting for FUSE mount on /mnt/wdrv to become ready...",
-      "FUSE mount /mnt/wdrv is ready and I/O works (attempt 1/180)",
-      "Traceback (most recent call last):",
-      '  File "<string>", line 10, in <module>',
-      "PermissionError: [Errno 13] Permission denied: '/mnt/output/settings_run.ini'",
-      "@@CWATM_GUI:RESULT:False:None@@",
-    ].join("\n");
-    const result = parseJobLog(log, SLUG);
+  it("treats job_completed with no result marker as a failure with no text-derived errorSummary (the infra-failure case - fetchJobLog fills errorSummary from cluster events, not this pure function)", () => {
+    const log = "Waiting for FUSE mount on /mnt/wdrv to become ready...\n";
+    const result = parseJobLog(log, SLUG, true);
     expect(result.success).toBe(false);
-    expect(result.outputDir).toBeUndefined();
+    expect(result.errorSummary).toBeUndefined();
+  });
+});
+
+describe("pickPrimarySource", () => {
+  const stream = (name: string): JobLogSource => ({ name, kind: "stream" });
+  const events = (name: string): JobLogSource => ({ name, kind: "events" });
+
+  it("prefers a source literally named wkube", () => {
+    expect(pickPrimarySource([stream("celery"), stream("wkube"), events("podevents")])).toBe("wkube");
+  });
+
+  it("falls back to the first stream-kind source when wkube isn't present", () => {
+    expect(pickPrimarySource([events("podevents"), stream("celery")])).toBe("celery");
+  });
+
+  it("returns null when there's no stream-kind source at all", () => {
+    expect(pickPrimarySource([events("podevents")])).toBeNull();
+  });
+
+  it("returns null for an empty source list", () => {
+    expect(pickPrimarySource([])).toBeNull();
+  });
+});
+
+describe("summarizeEvents", () => {
+  it("formats each event on its own line", () => {
+    const events: JobLogEvent[] = [
+      { id: "1", time: "2026-11-02T10:00:00Z", precise: true, kind: "Pod", reason: "Scheduled", message: "Successfully assigned" },
+      { id: "2", time: "2026-11-02T10:05:00Z", precise: true, kind: "Pod", reason: "Evicted", message: "The node was low on resource: memory" },
+    ];
+    const summary = summarizeEvents(events);
+    expect(summary).toContain("Pod/Scheduled: Successfully assigned");
+    expect(summary).toContain("Pod/Evicted: The node was low on resource: memory");
+  });
+
+  it("returns undefined for no events", () => {
+    expect(summarizeEvents([])).toBeUndefined();
   });
 });

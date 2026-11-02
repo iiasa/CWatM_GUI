@@ -15,16 +15,23 @@ from `iiasa/CWatM_GUI`'s `cwatm-docker-image` branch. Verified live end
 to end, including a full run against real uploaded basin data (job
 15422, succeeded).
 
-**Milestone 3** (this state): once a run succeeds, a **Browse** button
-jumps the existing file browser straight to that run's own output
-folder - reusing the already-working list/download UI rather than a
-separate one. Verified live end to end (job 15631, 2026-10-29, full
-successful run, all 75 output files correctly browsable/downloadable) -
-see "Job outputs" below for how the folder path itself is found. (An
-earlier version of this milestone rendered the file list and a Plotly
-csv-chart preview inline in its own component; dropped in favour of this
-simpler approach - no duplicate listing UI, no csv-shape guessing, no
-~4.6 MB chart library, see git history.)
+**Milestone 3**: once a run succeeds, a **Browse** button jumps the
+existing file browser straight to that run's own output folder - reusing
+the already-working list/download UI rather than a separate one.
+Verified live end to end (job 15631, 2026-10-29, full successful run,
+all 75 output files correctly browsable/downloadable) - see "Job
+outputs" below for how the folder path itself is found. (An earlier
+version of this milestone rendered the file list and a Plotly csv-chart
+preview inline in its own component; dropped in favour of this simpler
+approach - no duplicate listing UI, no csv-shape guessing, no ~4.6 MB
+chart library, see git history.)
+
+**Milestone 4** (this state): job status now comes from the
+Accelerator's real job-log manifest endpoint
+(`GET /v1/aterm-cli/{project_slug}/jobs/{job_id}/logs/`), which didn't
+exist yet at Milestone 2 - replaces the previous folder-guessing/file-
+polling workaround entirely. See "Job status" below for what changed and
+what's still unconfirmed live.
 
 ## Running it
 
@@ -63,8 +70,8 @@ npm run dev:browser      # for testing the plain-browser-tab target
     `aterm-cli` (auth header, 401/403 handling)
   - `client.ts` - project file browsing (list/download) over `aterm-cli`
   - `jobs.ts` - dispatching a CWatM run as a WKube job
-  - `jobStatus.ts` - polling a dispatched job's own uploaded log file for
-    its result (no status/log endpoint exists in aterm-cli yet)
+  - `jobStatus.ts` - polling the Accelerator's real job-log manifest
+    endpoint for a dispatched job's status (see "Job status" below)
   - `outputs.ts` - `wdrvPathToProjectPath`, converting a job's own
     `OUTPUT_DIR` log marker into the project-relative path its output
     files land at (confirmed live, see below)
@@ -132,6 +139,53 @@ duplicate listing UI, no CWatM csv-shape guessing, no ~4.6 MB chart
 library in the bundle. See git history if csv charting is wanted again
 later - the csv-parsing/chart code itself (tested, working in isolation)
 is still there in that history, just not wired in.
+
+## Job status (Milestone 4)
+
+At Milestone 2, `aterm-cli` had no job-status/log endpoint at all - the
+team said they'd add one, no date given - so `jobStatus.ts` worked
+around it by listing a folder for the job's own uploaded log FILE at a
+guessed path and treating "file not found" as "still running". That
+workaround is gone: the team's endpoint showed up (found via a direct
+link into the live API docs, 2026-11-02) -
+`GET /v1/aterm-cli/{project_slug}/jobs/{job_id}/logs/`, a proper
+cursor-paginated manifest of every log source of a job, merged by time,
+plus Kubernetes cluster events.
+
+This is a real improvement, not just a swap of one polling mechanism for
+another:
+
+- **`job_completed`** - an explicit, authoritative "is this job done"
+  flag from the Accelerator itself, independent of whether the job's own
+  code ever printed anything. The old file-polling design had no way to
+  tell "still running" apart from "crashed before producing a log at
+  all" (a pod OOM-killed or evicted before `cwatm_model_runner.py` even
+  ran) - both looked identical (no file yet) and left the UI stuck on
+  "running" until the client-side timeout gave up. Now `jobCompleted`
+  with no result marker is correctly reported as a failure.
+- **Cluster events as a real diagnostic.** For exactly that infra-level
+  failure case (no result marker, but the job is done), `jobStatus.ts`'s
+  `summarizeEvents` turns the manifest's Kubernetes events (e.g. "Pod
+  Evicted: The node was low on resource: memory") into the
+  `errorSummary` shown in-app - something the old design could never
+  surface at all, since there was no log file to read.
+- **Cursor pagination** instead of re-downloading one growing file.
+
+**Not yet confirmed live** (unlike the endpoint's existence/shape, which
+is straight from the OpenAPI spec): which log source actually carries
+CWatM's own stdout/stderr, where the `@@CWATM_GUI:...@@` markers are
+printed. `pickPrimarySource` guesses `"wkube"` (matching the
+`.wkube_agent` socket path seen at the top of every job's log text so
+far, e.g. `"Unix socket IPC server listening on
+/mnt/tmp/.wkube_agent/..."`), falling back to the first `stream`-kind
+source if that name isn't present - needs a live dispatch to confirm,
+update `jobStatus.ts`'s doc comment either way once done.
+
+`FileBrowser`'s "View full log" also changed shape: logs now arrive as
+several presigned chunk URLs (not one file), already fetched and
+concatenated by `jobStatus.ts` into `JobResult.logText` - so it's an
+inline, scrollable `<pre>` toggle now instead of opening one external
+URL.
 
 ## Things learned the hard way (see the code comments for detail)
 

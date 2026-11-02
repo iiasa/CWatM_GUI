@@ -28,6 +28,11 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
   // this, giving up was silent and the status just stayed on "running"
   // forever with no sign anything had changed.
   const [pollTimedOut, setPollTimedOut] = useState(false);
+  // Full log is now plain text (jobResult.logText), not a single external
+  // file URL (the manifest endpoint serves it as per-chunk presigned URLs
+  // already fetched/concatenated by jobStatus.ts) - shown inline instead
+  // of opened externally.
+  const [showFullLog, setShowFullLog] = useState(false);
 
   // Poll for the dispatched job's log whenever dispatchedJob changes -
   // cancelled automatically on unmount or when a new job is dispatched.
@@ -91,6 +96,7 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
     setDispatchedJob(null);
     setJobResult(null);
     setPollTimedOut(false);
+    setShowFullLog(false);
     try {
       // The dispatched job itself gives this run its own fresh PathOut
       // (patching a local copy of the settings file at job start) - see
@@ -176,10 +182,27 @@ export default function FileBrowser({ onLoggedOut }: FileBrowserProps) {
               {jobResult.errorSummary}
             </pre>
           )}
-          {jobResult && (
-            <button type="button" onClick={() => openExternal(jobResult.logUrl)}>
-              View full log
-            </button>
+          {jobResult && jobResult.logText && (
+            <>
+              <button type="button" onClick={() => setShowFullLog((v) => !v)}>
+                {showFullLog ? "Hide full log" : "View full log"}
+              </button>
+              {showFullLog && (
+                <pre
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    background: "#1a1a1a",
+                    padding: "0.5em",
+                    borderRadius: 4,
+                    maxHeight: 300,
+                    overflowY: "auto",
+                    fontSize: "0.8em",
+                  }}
+                >
+                  {jobResult.logText}
+                </pre>
+              )}
+            </>
           )}
           {jobResult?.success === true && jobResult.outputDir && (
             <p>
