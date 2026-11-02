@@ -178,6 +178,14 @@ class TestWhoAmI:
         with pytest.raises(AA.AcceleratorAuthError, match="Not authorized"):
             AA.who_am_i()
 
+    def test_unauthorized_surfaces_the_server_detail_when_present(self, monkeypatch):
+        monkeypatch.setattr(AA, "get_access_token", lambda: "a-token")
+        _install_fake_requests(
+            monkeypatch, response=_FakeResponse(403, {"detail": "This token type cannot access this route."})
+        )
+        with pytest.raises(AA.AcceleratorAuthError, match="This token type cannot access this route."):
+            AA.who_am_i()
+
 
 class TestLoginState:
     def test_is_logged_in_reflects_the_stored_token(self, monkeypatch):

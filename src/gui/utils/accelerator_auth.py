@@ -153,7 +153,15 @@ def who_am_i():
         raise AcceleratorAuthError("Could not reach Accelerator - check your internet connection.") from exc
 
     if res.status_code in (401, 403):
-        raise AcceleratorAuthError("Not authorized.")
+        # Surface the server's own detail rather than a generic message -
+        # same lesson auth.ts's own atermFetch.ts already learned live:
+        # it's the useful diagnostic signal, not just "not authorized".
+        detail = None
+        try:
+            detail = res.json().get("detail")
+        except Exception:
+            log.debug("401/403 response body was not the expected {detail: ...} shape", exc_info=True)
+        raise AcceleratorAuthError(detail or "Not authorized.")
     if not res.ok:
         raise AcceleratorAuthError(f"Could not fetch account info (HTTP {res.status_code}).")
     return res.json()
