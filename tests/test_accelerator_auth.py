@@ -106,6 +106,16 @@ class TestRedeemDeviceCode:
         with pytest.raises(AA.AcceleratorAuthError, match="internet connection"):
             AA.redeem_device_code("the-code")
 
+    def test_a_failed_save_is_never_silently_reported_as_success(self, monkeypatch):
+        # Caught live: a missing keyring package made save_refresh_token
+        # swallow its own exception and return False - without this check,
+        # redeem_device_code returned normally, looking exactly like a
+        # successful login right up until the very next call failed.
+        _install_fake_requests(monkeypatch, response=_FakeResponse(200, "a-refresh-token"))
+        monkeypatch.setattr(AA.store, "save_refresh_token", lambda t: False)
+        with pytest.raises(AA.AcceleratorAuthError, match="could not save the session"):
+            AA.redeem_device_code("the-code")
+
 
 class TestGetAccessToken:
     def test_not_logged_in_raises_without_a_network_call(self, monkeypatch):

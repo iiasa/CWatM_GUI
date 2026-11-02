@@ -65,7 +65,18 @@ def redeem_device_code(device_authorization_code):
     # The token/ endpoint's response body is the refresh token itself
     # (a JSON-encoded string, not an object) - matches auth.ts's own finding.
     refresh_token = res.json()
-    store.save_refresh_token(refresh_token)
+    # save_refresh_token degrades to a logged, swallowed failure by design
+    # (account_store.py's same convention - a missing keyring backend is
+    # not fatal to the rest of the app) - but here it would silently leave
+    # the user "logged in" for this one call and logged out the moment
+    # get_access_token next tries to read it back, which looked exactly
+    # like a successful login until it didn't (caught live: the real cause
+    # was a missing keyring package in the Python running this, not a
+    # keyring failure at all - still worth never masking either case).
+    if not store.save_refresh_token(refresh_token):
+        raise AcceleratorAuthError(
+            "Logged in, but could not save the session (see gui.log) - you will need to log in again next time."
+        )
 
 
 def is_logged_in():
