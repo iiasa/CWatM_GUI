@@ -44,28 +44,35 @@ client. **Not yet built.**
 
 ## What's here now
 
-- `award_run.py` - the first (and so far only) rule, a straight port of
-  `supabase/migrations/20260928120100_gamification_functions.sql`'s
-  `award_run()`: same status vocabulary (`awarded`/`duplicate`/`too_short`/
-  `daily_limit`/`invalid_run_uid`), same thresholds
-  (`points_per_run`/`min_timesteps`/`daily_run_cap` = 1/30/20). Pure logic -
-  no Accelerator API calls, no file I/O; the caller supplies the claim and
-  the user's existing ledger state. Run its tests with
-  `pytest accelerator_backend/tests/` (not part of the main GUI's `pytest`
-  run - `pytest.ini`'s `testpaths = tests` only, deliberately, since this is
-  a separate component, same relationship `tauri-app/` has to the GUI).
-  Deliberately not ported from the SQL: the email-confirmation check (no
-  equivalent once Accelerator is the identity provider) and the Postgres
-  advisory lock (no concurrent-claims-for-the-same-user scenario expected
-  from a GitHub Actions run - revisit if that changes).
+- `award_run.py` - a straight port of `supabase/migrations/
+  20260928120100_gamification_functions.sql`'s `award_run()`: same status
+  vocabulary (`awarded`/`duplicate`/`too_short`/`daily_limit`/
+  `invalid_run_uid`), same thresholds (`points_per_run`/`min_timesteps`/
+  `daily_run_cap` = 1/30/20). Deliberately not ported from the SQL: the
+  email-confirmation check (no equivalent once Accelerator is the identity
+  provider) and the Postgres advisory lock (no concurrent-claims-for-the-
+  same-user scenario expected from a GitHub Actions run - revisit if that
+  changes).
+- `badges.py` - the river badges, a port of the same file's
+  `_award_badges()`/`_total_points()`, with the final 12-tier ladder from
+  `20260929140000_badge_ladder_v3.sql` (Breg 5 ... Amazonas 10000 -
+  confirmed no later migration changes it). Checked against total
+  **earned** points (never decreases), not the spendable balance.
+
+Pure logic, both of them - no Accelerator API calls, no file I/O; the
+caller supplies the claim/totals and the user's existing ledger state.
+Run their tests with `pytest accelerator_backend/tests/` (not part of the
+main GUI's `pytest` run - `pytest.ini`'s `testpaths = tests` only,
+deliberately, since this is a separate component, same relationship
+`tauri-app/` has to the GUI).
 
 ## Not yet built
 
 - The GitHub Actions workflow itself (claim pickup, validation, the actual
   ledger write, the service-account credential).
-- Everything beyond run-completion points: badges (river-badge tiers,
-  feature badges, Field Test badge), the shop, leaderboard aggregation,
-  academy progress, run locations.
+- Everything beyond run-completion points and river badges: feature badges
+  (ModFlow/pySnowClim/Glacier), the Field Test badge, the shop, leaderboard
+  aggregation, academy progress, run locations.
 - `who_am_i()` (`src/gui/utils/accelerator_auth.py`) - blocked on an
   Accelerator endpoint the team hasn't shipped yet (confirmed live,
   2026-11-02: exposing logged-in-user details on the aterm-cli routes,
