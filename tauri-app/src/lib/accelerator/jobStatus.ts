@@ -15,14 +15,15 @@
  * OOM-killed or evicted before cwatm_model_runner.py even ran used to
  * leave file-polling stuck on "running" forever).
  *
- * NOT YET CONFIRMED LIVE (unlike the endpoint's existence/shape, which is
- * straight from the OpenAPI spec): which source name actually carries
- * CWatM's own stdout/stderr (where the @@CWATM_GUI:...@@ markers are
- * printed) - pickPrimarySource guesses "wkube" (matching the
- * ".wkube_agent" socket path seen in every job's log text so far, e.g.
- * "Unix socket IPC server listening on /mnt/tmp/.wkube_agent/...") with a
- * generic "first stream-kind source" fallback. Needs a live dispatch to
- * confirm - update this comment once done.
+ * pickPrimarySource's guess that the "wkube" source carries CWatM's own
+ * stdout/stderr (where the @@CWATM_GUI:...@@ markers are printed) is
+ * confirmed live (job 15699, 2026-11-02): a full successful run showed
+ * correctly in the app's inline log (catchment creation, routing,
+ * progress lines, the OUTPUT_DIR and RESULT markers all present and
+ * correctly parsed - the per-line ISO-timestamp prefix each log line
+ * gets from this endpoint doesn't interfere, since neither regex is
+ * anchored to line start), and job_completed correctly resolved the
+ * status from "running" to "succeeded" with the right discharge value.
  */
 
 import { ATERM_BASE } from "./config";

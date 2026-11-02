@@ -171,15 +171,15 @@ another:
   surface at all, since there was no log file to read.
 - **Cursor pagination** instead of re-downloading one growing file.
 
-**Not yet confirmed live** (unlike the endpoint's existence/shape, which
-is straight from the OpenAPI spec): which log source actually carries
-CWatM's own stdout/stderr, where the `@@CWATM_GUI:...@@` markers are
-printed. `pickPrimarySource` guesses `"wkube"` (matching the
-`.wkube_agent` socket path seen at the top of every job's log text so
-far, e.g. `"Unix socket IPC server listening on
-/mnt/tmp/.wkube_agent/..."`), falling back to the first `stream`-kind
-source if that name isn't present - needs a live dispatch to confirm,
-update `jobStatus.ts`'s doc comment either way once done.
+**Confirmed live** (job 15699, 2026-11-02): `pickPrimarySource`'s guess
+that the `"wkube"` source carries CWatM's own stdout/stderr is correct -
+a full successful run showed catchment creation, routing, and progress
+lines correctly in the app's inline log, with the `OUTPUT_DIR` and
+`RESULT` markers both present and correctly parsed despite each log line
+now carrying a per-line ISO-timestamp prefix from this endpoint (neither
+marker regex is anchored to line start, so this doesn't interfere), and
+`job_completed` correctly resolved the status from "running" to
+"succeeded" with the right discharge value.
 
 `FileBrowser`'s "View full log" also changed shape: logs now arrive as
 several presigned chunk URLs (not one file), already fetched and
