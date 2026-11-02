@@ -10,17 +10,18 @@ there against the real server; mirrored here rather than re-derived):
      short-lived access token, rotating the refresh token each time - every
      authenticated call goes through this.
   4. ``who_am_i()`` - meant to be the logged-in user's identity
-     (``full_name``, ``email``, ``roles``, ``uid``) via ``GET
-     /v1/auth/user/``, to identify the caller to whatever replaces the
-     points/badges backend. Steps 1-3 are confirmed live (2026-11-02,
-     real login/access-token/refresh round-trip against the real
-     server) - step 4 is NOT: that same working access token gets
-     "Invalid token" back from this endpoint. Its own operationId
-     (``authorize_device_code_v1_auth_user__get``) suggests it's
-     actually part of the browser-side device-approval step, not a
-     general whoami call - asked the Accelerator team which endpoint
-     (or token type) is the right one for this; update this comment
-     once answered.
+     (``full_name``, ``email``, ``roles``, ``uid``), to identify the
+     caller to whatever replaces the points/badges backend. Steps 1-3
+     are confirmed live (2026-11-02, real login/access-token/refresh
+     round-trip against the real server) - step 4 is NOT YET POSSIBLE
+     AT ALL: ``GET /v1/auth/user/`` is browser-only (confirmed by the
+     Accelerator team, 2026-11-02 - its "Invalid token" response to our
+     working device-flow access token wasn't a bug on our side). They
+     are adding logged-in-user details to the aterm-cli routes
+     specifically for this, "next deployment cycle", no date given.
+     who_am_i() is a placeholder against that not-yet-shipped endpoint
+     - do not wire it into anything until confirmed live, and update
+     the URL/path here once they announce it.
 
 Unrelated to ``account_auth``/``account_client.py``'s Supabase-backed CWatM
 account login - a separate identity provider entirely, its own keyring
@@ -147,7 +148,10 @@ def get_access_token():
 
 
 def who_am_i():
-    """The logged-in user's identity: {full_name, email, roles, uid}."""
+    """The logged-in user's identity: {full_name, email, roles, uid}.
+    Placeholder against an endpoint the Accelerator team hasn't shipped
+    yet - see this module's own doc comment. Will raise AcceleratorAuthError
+    ("Invalid token") against the real server until then."""
     import requests
 
     access_token = get_access_token()
