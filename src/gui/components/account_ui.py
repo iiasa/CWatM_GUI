@@ -207,11 +207,10 @@ class AccountMixin:
             "account/remembered", False, type=bool)
 
     def levels_unlocked(self):
-        """Is a CWatM account login in place (the CWatM Academy's rule from Level 4
-        on)? A stored login still being restored (or unreachable offline) counts as
-        logged in, so a network hiccup does not lock anything. Without an account
-        server (no key configured) nobody could log in, so it is always true.
-        Which skill LEVELS may be used is ``level_allowed`` - they are bought."""
+        """Is a CWatM account login in place? A stored login still being restored
+        (or unreachable offline) counts as logged in, so a network hiccup does not
+        lock anything. Without an account server (no key configured) nobody could
+        log in, so it is always true. Skill levels are free (``level_allowed``)."""
         if not account_config.is_configured():
             return True
         state = getattr(self, "_account_state", None)
@@ -261,28 +260,10 @@ class AccountMixin:
             self._settings.setValue(self._owned_cache_key(name),
                                     sorted(account_shop.owned(status)))
 
-    def cheat_levels(self):
-        """Preferences ▸ Account ▸ Cheat: every level open for THIS session only."""
-        return bool(getattr(self, "_cheat_levels", False))
-
-    def _set_cheat_levels(self, value):
-        """Session-only by design: kept in memory, never written to QSettings, so
-        every start of the GUI begins with it off (shop.md decision 10)."""
-        self._cheat_levels = bool(value)
-        refresh = getattr(self, "_refresh_experience_level", None)
-        if refresh is not None:
-            refresh()
-
     def level_allowed(self, level):
-        """May this skill level be used? Beginner always; Advanced / Expert when
-        bought (or granted), when the Cheat tick is on, or without an account
-        server."""
-        if level == "Beginner" or self.cheat_levels():
-            return True
-        owned = self.owned_items()
-        if owned is None:
-            return True
-        return account_shop.LEVEL_CODES.get(level) in owned
+        """May this skill level be used? Always - every level is free, logged in
+        or not."""
+        return True
 
     def cheat_animals(self):
         """Preferences ▸ Account ▸ Cheat (animals): every animal usable, this session."""
@@ -297,15 +278,17 @@ class AccountMixin:
 
     def owned_animals(self):
         """The sparkline animals (discharge_sparkline.animal_names()) this user may
-        show - all of them without an account server or with the Cheat tick; none
-        logged out. An animal with no Shop item (e.g. an image-only one) is never
-        owned - only the Cheat opens it."""
+        show - all of them without an account server or with the Cheat tick; the
+        free ones (account_shop.FREE_ANIMALS: Trout, Bottle) always, logged out too;
+        the others only when bought. An animal with no Shop item (e.g. an
+        image-only one) is never owned - only the Cheat opens it."""
         from src.gui.widgets.discharge_sparkline import animal_names, shop_name
         names = animal_names()
         if self.cheat_animals():
             return names
         owned = self.owned_items()
-        return [name for name in names if owned is None
+        return [name for name in names
+                if account_shop.is_free_animal(shop_name(name)) or owned is None
                 or account_shop.ANIMAL_CODES.get(shop_name(name)) in owned]
 
     # ---- worker ------------------------------------------------------------------

@@ -2,7 +2,8 @@
 
 They must agree with the server (shop_buy in supabase/migrations/..._shop.sql):
 spending lowers the balance, never the earned points or the badges; Expert needs
-Advanced; nothing is bought twice.
+Advanced; nothing is bought twice. The GUI no longer sells the levels nor the free
+Trout and Bottle.
 """
 
 import pytest
@@ -65,9 +66,29 @@ def test_points_to_cheapest():
     assert S.points_to_cheapest(ITEMS, status(30)) == 0         # something affordable
     everything = [i["code"] for i in ITEMS]
     assert S.points_to_cheapest(ITEMS, status(200, 175, everything)) is None
-    # Expert is locked (not "open") while Advanced is missing
+    # the levels are free now - not for sale, so all animals owned = nothing left
     st = status(10, 10, ["fish", "otter", "beaver", "sailboat", "octopus"])
-    assert S.points_to_cheapest(ITEMS, st) == 20                # Advanced, not Expert
+    assert S.points_to_cheapest(ITEMS, st) is None
+
+
+FREE_ITEMS = [
+    {"code": "trout", "kind": "animal", "name": "Trout", "price": 10, "requires": None},
+    {"code": "bottle", "kind": "animal", "name": "Bottle", "price": 2, "requires": None},
+    {"code": "otter", "kind": "animal", "name": "Otter", "price": 20, "requires": None},
+]
+
+
+def test_trout_and_bottle_are_free():
+    assert S.FREE_ANIMALS == {"trout", "bottle"}
+    assert S.is_free_animal("Trout") and S.is_free_animal("Bottle")
+    assert S.is_free_animal("Fish") and S.is_free_animal("Sailboat")  # old emoji names
+    assert not S.is_free_animal("Otter") and not S.is_free_animal("Mole")
+
+
+def test_free_animals_are_not_for_sale():
+    assert [i["code"] for i in S.animals_for_sale(FREE_ITEMS, status(100))] == ["otter"]
+    assert S.points_to_cheapest(FREE_ITEMS, status(1)) == 19    # Otter, not the Bottle
+    assert S.points_to_cheapest(FREE_ITEMS, status(30, 20, ["otter"])) is None
 
 
 @pytest.mark.qt          # imports a Qt module

@@ -3,26 +3,23 @@
 Opened by the **Shop** button in the menu bar (left of the account button), which
 is shown only while logged in **and** holding the Breg badge (``AccountMixin``).
 
-Two sections, both drawn from the server's price list (``get_shop_items``) and the
-user's status (balance, earned points, purchases):
-
-- **Levels**: Advanced and Expert, always listed with their price. "✓ already
-  bought" when owned; greyed out while not affordable, and Expert also while
-  Advanced is not owned (decision 2).
-- **Animals** for the live discharge sparkline: a selector with only the animals
-  that are affordable and not owned yet (decision 5); the owned ones listed below.
+It sells **animals** for the live discharge sparkline, drawn from the server's
+price list (``get_shop_items``) and the user's status (balance, earned points,
+purchases): a selector with only the animals that are affordable and not owned yet
+(decision 5); the owned ones listed below. The skill levels are free (not sold) and
+so are the Trout and the Bottle (``account_shop.FREE_ANIMALS``).
 
 Every purchase is confirmed first ("final - no refunds", decision 6) and decided by
 the server (``buy`` -> ``shop_buy``); its answer is the new status, which the main
-window takes over too (levels, animal, account button). A bought level is offered
-at once; a bought animal becomes the sparkline's animal.
+window takes over too (animal, account button). A bought animal becomes the
+sparkline's animal.
 
 Spending lowers the balance only - the badges and the earned points never change.
 The rules are in ``account_shop`` (pure, tested); this module only shows them.
 """
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel, QLayout,
+from PySide6.QtCore import QSize
+from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QLayout,
                                QMessageBox, QPushButton, QVBoxLayout, QWidget)
 
 from src.gui.utils import account_shop as S
@@ -31,8 +28,7 @@ from src.gui.widgets.account_dialogs import _AccountDialogBase, _open_single
 
 log = get_logger("shop_window")
 
-# Shop item code -> the level / sparkline-animal name the GUI uses
-_LEVEL_NAMES = {code: name for name, code in S.LEVEL_CODES.items()}
+# Shop item code -> the sparkline-animal name the GUI uses
 _ANIMAL_NAMES = S.ANIMAL_NAMES
 
 
@@ -61,22 +57,8 @@ def _icon(code):
     return QIcon(pm)
 
 
-def level_row_text(item, status):
-    """(state text, button enabled, tooltip) of one level row (pure - tested)."""
-    state = S.item_state(item, status)
-    if state == S.OWNED:
-        return "✓ already bought", False, ""
-    if state == S.LOCKED:
-        need = _LEVEL_NAMES.get(item.get("requires"), item.get("requires"))
-        return f"Buy {need} first", False, f"Expert needs the {need} level first"
-    if state == S.UNAFFORDABLE:
-        missing = int(item["price"]) - S.balance(status)
-        return f"{missing} more points needed", False, ""
-    return "", True, ""
-
-
 class ShopWindow(_AccountDialogBase):
-    """Buy levels and sparkline animals with the account's points."""
+    """Buy sparkline animals with the account's points."""
 
     def __init__(self, mw):
         super().__init__(mw, "CWatM Shop")
@@ -93,7 +75,8 @@ class ShopWindow(_AccountDialogBase):
         self.lbl_balance.setStyleSheet("font-size: 14px; font-weight: 600;")
         outer.addWidget(self.lbl_balance)
         outer.addWidget(self._note(
-            "Spend the points your full CWatM runs earned. Buying lowers your points - "
+            "Spend the points your full CWatM runs earned on animals for the live "
+            "discharge plot. Buying lowers your points - "
             "your badges stay, and a new badge still needs its full points. Purchases "
             "are final."))
         outer.addWidget(self._line())
@@ -168,8 +151,7 @@ class ShopWindow(_AccountDialogBase):
             self.body_lay.addWidget(self._note("The price list could not be loaded."))
             self._grow_to_content()
             return
-        self._add_levels(status)
-        self.body_lay.addWidget(self._line())
+        # the skill levels are free now - the Shop sells animals only
         self._add_animals(status)
         need = S.points_to_cheapest(self._items, status)
         if need:
@@ -183,38 +165,6 @@ class ShopWindow(_AccountDialogBase):
         lbl = QLabel(title)
         lbl.setStyleSheet("font-size: 14px; font-weight: 700;")
         self.body_lay.addWidget(lbl)
-
-    def _add_levels(self, status):
-        self._section("Skill levels")
-        self.body_lay.addWidget(self._note(
-            "Advanced and Expert show more of the settings file and more menu "
-            "entries. Buy Advanced first, then Expert."))
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(12)
-        self.level_buttons = {}
-        levels = [i for i in self._items if i.get("kind") == "level"]
-        for row, item in enumerate(levels):
-            text, enabled, tip = level_row_text(item, status)
-            name = QLabel(item["name"])
-            name.setStyleSheet("font-weight: 600;")
-            grid.addWidget(name, row, 0)
-            grid.addWidget(QLabel(_points(int(item["price"]))), row, 1)
-            if S.item_state(item, status) == S.OWNED:
-                grid.addWidget(QLabel(text), row, 2)
-                continue
-            btn = QPushButton("Buy")
-            btn.setAutoDefault(False)
-            btn.setEnabled(enabled)
-            btn.setToolTip(tip or text)
-            btn.clicked.connect(lambda _=False, i=item: self._buy(i))
-            self.level_buttons[item["code"]] = btn
-            grid.addWidget(btn, row, 2, Qt.AlignLeft)
-            if text:
-                note = QLabel(text)               # one line - a wrapped note looked odd
-                note.setObjectName("accNote")
-                grid.addWidget(note, row, 3)
-        grid.setColumnStretch(4, 1)
-        self.body_lay.addLayout(grid)
 
     def _add_animals(self, status):
         self._section("Animals for the live discharge plot")
@@ -241,7 +191,11 @@ class ShopWindow(_AccountDialogBase):
         row.addWidget(self.btn_animal)
         self.body_lay.addLayout(row)
         mine = S.owned(status)
-        owned = [i for i in self._items if i.get("kind") == "animal" and i["code"] in mine]
+        owned = [i for i in self._items if i.get("kind") == "animal" and i["code"] in mine
+                 and i["code"] not in S.FREE_ANIMALS]
+        self.body_lay.addWidget(self._note(
+            "Trout and Bottle are free for everyone - choose them in Preferences ▸ "
+            "Display ▸ Select animal."))
         if owned:
             names = ", ".join(f"{_emoji(i['code'])} {i['name']}".strip() for i in owned)
             self.body_lay.addWidget(self._note(
@@ -281,16 +235,6 @@ class ShopWindow(_AccountDialogBase):
                 self.mw._set_animal(_ANIMAL_NAMES[code])
             except Exception:
                 log.debug("could not select the bought animal", exc_info=True)
-        elif code in _LEVEL_NAMES:
-            level = _LEVEL_NAMES[code]
-            if QMessageBox.question(
-                    self, "CWatM Shop", f"Switch to the {level} level now?",
-                    QMessageBox.Yes | QMessageBox.No,
-                    QMessageBox.Yes) == QMessageBox.Yes:
-                try:
-                    self.mw.set_experience_level(level)
-                except Exception:
-                    log.debug("could not switch the level", exc_info=True)
 
 
 def open_shop(mw):

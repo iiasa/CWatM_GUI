@@ -332,26 +332,33 @@ class TestShopEntitlements:
         host._init_account()
         return host
 
-    def test_logged_out_owns_nothing(self, h):
+    def test_logged_out_owns_only_the_free_animals(self, h):
         assert h.owned_items() == set()
-        assert h.level_allowed("Beginner") and not h.level_allowed("Advanced")
-        assert h.owned_animals() == []
+        assert h.owned_animals() == ["Fish", "Sailboat"]  # = trout + bottle, free
 
-    def test_levels_and_animals_follow_the_purchases(self, h):
-        h._on_account_succeeded("login", _status_owning("advanced", "otter"))
-        assert h.level_allowed("Advanced") and not h.level_allowed("Expert")
-        assert h.owned_animals() == ["Otter"]
-        h._on_account_succeeded("buy", _status_owning("advanced", "expert", "otter",
-                                                      "octopus"))
-        assert h.level_allowed("Expert")
-        assert h.owned_animals() == ["Otter", "Octopus (for Carla)"]
+    @pytest.mark.parametrize("level", ["Beginner", "Advanced", "Expert"])
+    def test_every_level_is_free_logged_in_or_out(self, h, level):
+        assert h.level_allowed(level)                     # logged out
+        h._on_account_succeeded("login", _status_owning())
+        assert h.level_allowed(level)                     # logged in, nothing bought
+
+    def test_no_level_cheat_left(self, h):
+        assert not hasattr(h, "cheat_levels")
+        assert not hasattr(h, "_set_cheat_levels")
+
+    def test_animals_follow_the_purchases(self, h):
+        h._on_account_succeeded("login", _status_owning("otter"))
+        assert h.owned_animals() == ["Fish", "Otter", "Sailboat"]
+        h._on_account_succeeded("buy", _status_owning("otter", "octopus"))
+        assert h.owned_animals() == ["Fish", "Otter", "Sailboat",
+                                     "Octopus (for Carla)"]
 
     def test_offline_uses_the_cached_purchases(self, h):
-        h._on_account_succeeded("login", _status_owning("advanced", "expert"))
+        h._on_account_succeeded("login", _status_owning("otter"))
         h._on_account_failed("restore", "offline", "no connection")
-        assert h._account_state == "offline" and h.level_allowed("Expert")
+        assert h._account_state == "offline" and "Otter" in h.owned_animals()
         h._on_account_succeeded("logout", None)
-        assert not h.level_allowed("Advanced")            # logged out: nothing
+        assert h.owned_animals() == ["Fish", "Sailboat"]  # logged out: the free ones
 
     def test_no_cache_yet_does_not_demote_while_restoring(self, host, monkeypatch):
         monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: True)
@@ -360,20 +367,11 @@ class TestShopEntitlements:
         host._settings.setValue("account/last_user", "Blabla")
         host._init_account()
         assert host._account_state == "restoring"
-        assert host.owned_items() is None and host.level_allowed("Expert")
-
-    def test_cheat_opens_the_levels_for_the_session_only(self, h):
-        h._set_cheat_levels(True)
-        assert h.level_allowed("Expert") and h.level_allowed("Advanced")
-        assert h.owned_animals() == []                    # animals stay bought-only
-        # never persisted: nothing in the settings file mentions it
-        assert not any("cheat" in k.lower() for k in h._settings.allKeys())
-        h._set_cheat_levels(False)
-        assert not h.level_allowed("Expert")
+        assert host.owned_items() is None and len(host.owned_animals()) == 5
 
     def test_a_server_without_the_shop_keeps_the_old_rule(self, h):
         h._on_account_succeeded("login", STATUS)          # no "purchases" key
-        assert h.owned_items() is None and h.level_allowed("Expert")
+        assert h.owned_items() is None and len(h.owned_animals()) == 5
 
     def test_everything_open_without_an_account_server(self, host, monkeypatch):
         monkeypatch.setattr(account_ui.account_config, "is_configured", lambda: False)
@@ -383,22 +381,24 @@ class TestShopEntitlements:
     def test_animal_cheat_opens_every_animal_for_the_session_only(self, h):
         h._set_cheat_animals(True)
         assert len(h.owned_animals()) == 5
-        assert not h.level_allowed("Advanced")            # levels stay bought-only
         assert not any("cheat" in k.lower() for k in h._settings.allKeys())
         h._set_cheat_animals(False)
-        assert h.owned_animals() == []
+        assert h.owned_animals() == ["Fish", "Sailboat"]
 
-    def test_image_animals_need_the_cheat_unless_sold(self, h, monkeypatch):
+    def test_image_animals_need_the_cheat_unless_sold_or_free(self, h, monkeypatch):
         from src.gui.widgets import discharge_sparkline as ds
         monkeypatch.setattr(ds, "USE_IMAGE_ANIMALS", True)
         monkeypatch.setattr(ds, "image_animals",
-                            lambda: [("Mole", "m.png"), ("Otter", "o.png"),
-                                     ("Otter 64x64", "o64.png")])
+                            lambda: [("Bottle", "b.png"), ("Mole", "m.png"),
+                                     ("Otter", "o.png"), ("Otter 64x64", "o64.png"),
+                                     ("Trout", "t.png")])
+        assert h.owned_animals() == ["Bottle", "Trout"]   # free, logged out
         h._on_account_succeeded("login", _status_owning("otter"))
         # Mole has no Shop item; a size variant counts as its base animal
-        assert h.owned_animals() == ["Otter", "Otter 64x64"]
+        assert h.owned_animals() == ["Bottle", "Otter", "Otter 64x64", "Trout"]
         h._set_cheat_animals(True)
-        assert h.owned_animals() == ["Mole", "Otter", "Otter 64x64"]
+        assert h.owned_animals() == ["Bottle", "Mole", "Otter", "Otter 64x64",
+                                     "Trout"]
 
     def test_image_names_map_to_the_shop_animals(self):
         from src.gui.widgets.discharge_sparkline import shop_name
@@ -551,23 +551,14 @@ def test_documented_decay_numbers(balance, weeks, left):
 
 
 class TestEffectiveLevel:
-    """CWatMMainWindow._effective_level: the preferred level, or the highest owned
-    one below it."""
+    """CWatMMainWindow._effective_level: every level is free - the preferred one."""
 
-    @pytest.mark.parametrize("preferred,owned,level", [
-        ("Expert", {"Advanced", "Expert"}, "Expert"),
-        ("Expert", {"Advanced"}, "Advanced"),
-        ("Expert", set(), "Beginner"),
-        ("Advanced", {"Advanced", "Expert"}, "Advanced"),
-        ("Beginner", {"Advanced", "Expert"}, "Beginner"),
-    ])
-    def test_falls_back_to_the_highest_owned(self, preferred, owned, level):
+    @pytest.mark.parametrize("preferred", ["Beginner", "Advanced", "Expert"])
+    def test_is_the_preferred_level(self, preferred):
         from types import SimpleNamespace
         from src.gui.components.main_window import CWatMMainWindow
-        fake = SimpleNamespace(
-            _preferred_level=preferred,
-            level_allowed=lambda lvl: lvl == "Beginner" or lvl in owned)
-        assert CWatMMainWindow._effective_level(fake) == level
+        fake = SimpleNamespace(_preferred_level=preferred)
+        assert CWatMMainWindow._effective_level(fake) == preferred
 
 
 def test_sparkline_without_an_animal_shows_only_the_dot(qapp):

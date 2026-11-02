@@ -4,6 +4,15 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
+## Unreleased
+
+- **Nearest city next to a station**: the Analyse windows (Timeseries, NetCDF,
+  Watercycle, Flow Diagram, Chord, Mean fluxes, Full Waterbalance) show the nearest city
+  and its distance right of a station's lon/lat, e.g. *lon: 16.61, lat: 48.91 - 26 km
+  from Břeclav (CZ)*. Offline, from GeoNames' list of cities over 15,000 people (credited
+  in Info ▸ About CWatM). Not shown for a projected (x/y) station.
+
+
 ## CWatM GUI 1.13 — what is new
 
 *Released 20 October 2026. Previous release: 1.12 (16 October 2026).*

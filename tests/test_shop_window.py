@@ -55,15 +55,15 @@ def test_header_shows_actual_and_earned_points(shop):
     assert w.lbl_balance.text() == "Your points: 22  ·  earned in total: 30"
 
 
-def test_level_rows(shop):
-    _m, w = shop(_status(30))
-    assert w.level_buttons["advanced"].isEnabled()
-    assert not w.level_buttons["expert"].isEnabled()          # Advanced first
-    _m, w = shop(_status(60, 20, ["advanced"]))
-    assert "advanced" not in w.level_buttons                    # ✓ already bought
-    assert w.level_buttons["expert"].isEnabled()
-    _m, w = shop(_status(50, 20, ["advanced"]))                 # 30 left < 40
-    assert not w.level_buttons["expert"].isEnabled()
+def test_levels_are_not_sold(shop):
+    """The skill levels are free - the Shop has no levels section."""
+    _m, w = shop(_status(100))
+    assert not hasattr(w, "level_buttons")
+    texts = [lbl.text() for lbl in w.body.findChildren(type(w.lbl_balance))]
+    assert not any("Skill levels" in t for t in texts)
+    assert any("Trout and Bottle are free" in t for t in texts)
+    offered = [w.cmb_animal.itemData(i) for i in range(w.cmb_animal.count())]
+    assert "advanced" not in offered and "expert" not in offered
 
 
 def test_only_affordable_unowned_animals_are_offered(shop):
@@ -95,16 +95,6 @@ def test_buying_asks_first_and_uses_the_purchase(shop, monkeypatch):
     assert "Bought: Otter" in w.status.text()
 
 
-def test_a_bought_level_is_offered_at_once(shop, monkeypatch):
-    m, w = shop(_status(30))
-    monkeypatch.setattr(QMessageBox, "question",
-                        staticmethod(lambda *a, **k: QMessageBox.Yes))
-    w._buy(next(i for i in ITEMS if i["code"] == "advanced"))
-    m._status = _status(30, 20, ["advanced"])
-    m.worker.succeeded.emit("buy", dict(m._status, status="bought", item="advanced"))
-    assert m.level == "Advanced"
-
-
 def test_a_refusal_stays_readable_after_the_refresh(shop, monkeypatch):
     m, w = shop(_status(30))
     monkeypatch.setattr(QMessageBox, "question",
@@ -134,11 +124,3 @@ def test_shop_button_needs_login_and_breg(qapp, tmp_path, monkeypatch, status, v
     assert h._shop_button.isVisibleTo(h) is visible
     run_ledger.remove_listener(h._on_run_recorded)
     _dispose(qapp, h)
-
-
-def test_level_row_text():
-    adv, exp = ITEMS[0], ITEMS[1]
-    assert W.level_row_text(exp, _status(100)) == (
-        "Buy Advanced first", False, "Expert needs the Advanced level first")
-    assert W.level_row_text(adv, _status(5))[:2] == ("15 more points needed", False)
-    assert W.level_row_text(adv, _status(20, 20, ["advanced"]))[0] == "✓ already bought"

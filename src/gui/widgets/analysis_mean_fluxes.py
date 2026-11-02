@@ -396,8 +396,8 @@ class MeanFluxesWindow(FlowDiagramWindow):
     def _show_sankey(self):
         fig = self._build_figure()
         self.sub_label.setText(
-            f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-            f"\n{self._period_text}  |  mean of each week of the year")
+            self._station_text()
+            + f"\n{self._period_text}  |  mean of each week of the year")
         html = fig.to_html(include_plotlyjs=True, full_html=True,
                            config={"responsive": True, "displaylogo": False})
         # many panels: the page scrolls instead of squeezing them

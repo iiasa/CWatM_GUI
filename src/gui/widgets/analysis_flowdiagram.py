@@ -528,6 +528,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
     # is overridden below so navigation rebuilds the Sankey instead of the sunburst.
     _select_station = WatercycleWindow._select_station
     _station_label = WatercycleWindow._station_label
+    _station_text = WatercycleWindow._station_text
     _goto_station = WatercycleWindow._goto_station
     _csv_name = "flowdiagram.csv"
     _prev_station = WatercycleWindow._prev_station
@@ -596,7 +597,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
         layout.addWidget(self.header_label)
 
         # Subtitle: "Station: lon: x, lat: y" (with "k/N" when several stations)
-        self.sub_label = QLabel(f"{self._station_label()}lon: {self.lon}, lat: {self.lat}")
+        self.sub_label = QLabel(self._station_text())
         self.sub_label.setAlignment(Qt.AlignCenter)
         self.sub_label.setStyleSheet(
             "font-family: 'Segoe UI', sans-serif; font-size: 12px; "
@@ -683,8 +684,8 @@ class FlowDiagramWindow(PlotlyWindowBase):
         self.start_lbl.setText(self._fmt_month(self._start_idx))
         self.end_lbl.setText(self._fmt_month(self._end_idx))
         self.sub_label.setText(
-            f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-            f"\n{self._date_range_text()}")
+            self._station_text()
+            + f"\n{self._date_range_text()}")
         self._rebuild_timer.start()
 
     # ------------------------------------------------- right-click ▸ Timeseries
@@ -776,8 +777,8 @@ class FlowDiagramWindow(PlotlyWindowBase):
     def _show_sankey(self):
         fig, grad_pairs = self._build_figure()
         self.sub_label.setText(
-            f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-            f"\n{self._period_text}")
+            self._station_text()
+            + f"\n{self._period_text}")
         html = fig.to_html(include_plotlyjs=True, full_html=True,
                            config={"responsive": True})
         # Fill the whole page so the plot always matches the web view height.

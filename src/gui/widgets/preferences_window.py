@@ -296,8 +296,8 @@ class PreferencesWindow(QDialog):
         animal_lay.addWidget(self.cmb_animal)
         animal_lay.addWidget(self.lbl_animal_preview)
         self._row(lay, "Select animal:", animal_box,
-                  "Animal shown on the live discharge plot - the animals you bought "
-                  "in the Shop (all of them with the animal Cheat on the Account page)")
+                  "Animal shown on the live discharge plot - Trout and Bottle are "
+                  "free, the others are bought in the Shop")
         self.cb_tooltip_reverse = self._check(
             lay, "Tooltip reverse",
             "Show tooltips with the text and background colours swapped "
@@ -316,9 +316,6 @@ class PreferencesWindow(QDialog):
         self._row(lay, "Skill of user:", self.cmb_level,
                   "The skill of the user determines how much of the settingsfile "
                   "is presented")
-        # enabled when a level beyond Beginner is owned - or the Cheat tick on the
-        # Account page is ticked (followed live, see _sync_level_box)
-        self._level_box_tip = self.cmb_level.toolTip()
         self.cb_web_picker = self._check(
             lay, "Web-style date picker",
             "Pick the Start/Spin/End dates with a modern frameless calendar popup "
@@ -406,15 +403,7 @@ class PreferencesWindow(QDialog):
             "account, only as 'a run at this place in this month'. Saved in your "
             "account, so it can be changed while you are logged in.")
         self.cb_account_locations.setEnabled(status is not None)
-        # Session only (shop.md decision 10): never saved, off at every start. Works
-        # logged out too - the gamification must never stop a serious user.
-        self.cb_cheat = self._check(
-            lay, "Cheat - and get the Expert level without buying it",
-            "Lets you switch freely between Beginner, Advanced and Expert without "
-            "buying the levels in the Shop - for this session only: it is off again "
-            "the next time CWatM GUI starts. Works without a login.")
-        self.cb_cheat.toggled.connect(self._sync_level_box)
-        # Same rule for the sparkline animals (session only as well)
+        # Sparkline animals Cheat - session only (never saved, off at every start)
         self.cb_cheat_animals = self._check(
             lay, "Cheat - you can use all animals",
             "Lets you select every animal for the live discharge plot without "
@@ -459,10 +448,12 @@ class PreferencesWindow(QDialog):
         if cheat:
             usable = names
         else:
-            # same rule as AccountMixin.owned_animals, without its Cheat
+            # same rule as AccountMixin.owned_animals, without its Cheat: the free
+            # ones (Trout, Bottle) always, the others when bought
             items = getattr(self.mw, "owned_items", lambda: None)()
             from src.gui.utils import account_shop
-            usable = [n for n in names if items is None
+            usable = [n for n in names
+                      if account_shop.is_free_animal(ds.shop_name(n)) or items is None
                       or account_shop.ANIMAL_CODES.get(ds.shop_name(n)) in items]
         current = self.cmb_animal.currentData()
         self._animal_box_images = use_images     # what the preview has to draw
@@ -507,18 +498,6 @@ class PreferencesWindow(QDialog):
 
     def _on_cheat_animals_ticked(self, checked):
         self._fill_animal_box(checked)
-
-    def _sync_level_box(self, *_):
-        """Skill of user is usable when a level beyond Beginner is owned, or the
-        Cheat tick is ticked (even before Apply)."""
-        allowed = getattr(self.mw, "level_allowed", lambda _lvl: True)
-        usable = (self.cb_cheat.isChecked() or allowed("Advanced")
-                  or allowed("Expert"))
-        self.cmb_level.setEnabled(usable)
-        self.cmb_level.setToolTip(
-            self._level_box_tip if usable else
-            "Advanced and Expert are bought in the Shop with the points of your CWatM "
-            "account - or tick 'Cheat' in Preferences ▸ Account")
 
     def _page_academy(self):
         page, lay = self._page(
@@ -603,7 +582,6 @@ class PreferencesWindow(QDialog):
             "account_remember": mw.account_remember(),
             "account_count_runs": mw.account_count_runs(),
             "account_share_locations": mw.account_share_locations(),
-            "cheat_levels": getattr(mw, "cheat_levels", lambda: False)(),
             "cheat_animals": getattr(mw, "cheat_animals", lambda: False)(),
         }
 
@@ -636,8 +614,6 @@ class PreferencesWindow(QDialog):
         self.cb_account_remember.setChecked(st["account_remember"])
         self.cb_account_count_runs.setChecked(st["account_count_runs"])
         self.cb_account_locations.setChecked(st["account_share_locations"])
-        self.cb_cheat.setChecked(st["cheat_levels"])
-        self._sync_level_box()
 
     def _from_widgets(self):
         """Read the state the user has dialled in."""
@@ -668,7 +644,6 @@ class PreferencesWindow(QDialog):
             "account_remember": self.cb_account_remember.isChecked(),
             "account_count_runs": self.cb_account_count_runs.isChecked(),
             "account_share_locations": self.cb_account_locations.isChecked(),
-            "cheat_levels": self.cb_cheat.isChecked(),
             "cheat_animals": self.cb_cheat_animals.isChecked(),
         }
 
@@ -702,10 +677,7 @@ class PreferencesWindow(QDialog):
         """
         new = self._from_widgets()
         changed = {k: v for k, v in new.items() if v != self._applied.get(k)}
-        # the Cheat tick first, so a level chosen in the same Apply is allowed
-        if "cheat_levels" in changed:
-            changed = {"cheat_levels": changed.pop("cheat_levels"), **changed}
-        # ...and the animal Cheat before the animal, so a cheated choice sticks
+        # the animal Cheat before the animal, so a cheated choice sticks
         if "cheat_animals" in changed:
             changed = {"cheat_animals": changed.pop("cheat_animals"), **changed}
         if not changed:
@@ -763,8 +735,6 @@ class PreferencesWindow(QDialog):
             mw._set_default_basemap(value)
         elif key == "animal":
             mw._set_animal(value)
-        elif key == "cheat_levels":
-            mw._set_cheat_levels(value)
         elif key == "cheat_animals":
             mw._set_cheat_animals(value)
         elif key == "level":

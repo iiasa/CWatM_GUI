@@ -451,6 +451,17 @@ class WatercycleWindow(PlotlyWindowBase):
             return f"Station {self._station_idx + 1}/{self._nstations}: "
         return "Station: "
 
+    def _station_text(self):
+        """Subtitle line: ``Station: lon: x, lat: y  -  12 km from <city>``. The city
+        part only for a lon/lat station (none for a projected x/y one)."""
+        from src.gui.utils.nearest_city import city_label
+        key = (self.lon, self.lat)
+        if getattr(self, "_city_key", None) != key:
+            self._city_key = key
+            self._city_text = city_label(self.lon, self.lat)
+        city = f"  -  {self._city_text}" if self._city_text else ""
+        return f"{self._station_label()}lon: {self.lon}, lat: {self.lat}{city}"
+
     def _refresh_figure(self):
         """Rebuild the plot (sunburst here; overridden to the Sankey in FlowDiagram)."""
         self._show_sunburst()
@@ -462,8 +473,8 @@ class WatercycleWindow(PlotlyWindowBase):
         self._select_station(idx)
         self._update_station_nav()
         self.sub_label.setText(
-            f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-            f"\n{self._date_range_text()}")
+            self._station_text()
+            + f"\n{self._date_range_text()}")
         self._refresh_figure()
 
     def _prev_station(self):
@@ -506,7 +517,7 @@ class WatercycleWindow(PlotlyWindowBase):
         layout.addWidget(self.header_label)
 
         # Subtitle: "Station: lon: x, lat: y" (with "k/N" when several stations)
-        self.sub_label = QLabel(f"{self._station_label()}lon: {self.lon}, lat: {self.lat}")
+        self.sub_label = QLabel(self._station_text())
         self.sub_label.setAlignment(Qt.AlignCenter)
         self.sub_label.setStyleSheet(
             "font-family: 'Segoe UI', sans-serif; font-size: 12px; "
@@ -591,8 +602,8 @@ class WatercycleWindow(PlotlyWindowBase):
         self.end_lbl.setText(self._fmt_month(self._end_idx))
         # Live subtitle feedback (the heavy sunburst rebuild is debounced).
         self.sub_label.setText(
-            f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-            f"\n{self._date_range_text()}")
+            self._station_text()
+            + f"\n{self._date_range_text()}")
         self._rebuild_timer.start()
 
     # ------------------------------------------------- right-click ▸ Timeseries
@@ -788,8 +799,8 @@ class WatercycleWindow(PlotlyWindowBase):
         # 3rd title line: the date range covered by the csv (after the Station line).
         if getattr(self, "_date_range_str", ""):
             self.sub_label.setText(
-                f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-                f"\n{self._date_range_str}")
+                self._station_text()
+                + f"\n{self._date_range_str}")
         html = fig.to_html(include_plotlyjs=True, full_html=True,
                            config={"responsive": True}, post_script=_HOVER_JS)
         # Make the plot fill the whole page so it always matches the web view height

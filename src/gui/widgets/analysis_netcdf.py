@@ -1165,6 +1165,11 @@ class NetcdfWindow(NetcdfDataBase):
         xl, yl = ("X", "Y") if self._projected else ("Lon", "Lat")
         text = (f"{prefix}{xl}: {display_format.fmt(lonc)} | "
                 f"{yl}: {display_format.fmt(latc)}")
+        if not self._projected:
+            from src.gui.utils.nearest_city import city_label
+            city = city_label(lonc, latc)
+            if city:
+                text += f" ({city})"
         if value:
             vtxt = "no data" if z is None else (
                 display_format.fmt(z) + (f" {self.unit}" if self.unit else ""))

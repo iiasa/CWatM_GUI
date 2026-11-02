@@ -217,11 +217,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         # Experience level (Beginner/Advanced/Expert) - restricts which settings
         # sections can be unfolded; persisted across sessions (editor/level).
         # _preferred_level = the user's choice; _experience_level = the level in
-        # effect: Advanced / Expert are bought in the Shop (or the session's Cheat
-        # tick), see _effective_level, re-run on every login-state/status change.
+        # effect (every level is free, so the same - see _effective_level).
         lvl = self._settings.value("editor/level", "Expert")
         self._preferred_level = lvl if lvl in _EXPERIENCE_LEVELS else "Expert"
-        self._cheat_levels = False          # session only - never persisted
         self._cheat_animals = False         # session only - never persisted
         self._experience_level = self._effective_level()
         rf = self._settings.value("recent_files", [])
@@ -1293,34 +1291,14 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             self.open_academy()
 
     def open_academy(self):
-        """Open (or reuse) the CWatM Academy window - only with a CWatM account
-        login. Every way in (the menu-bar button, Preferences ▸ Enable CWatM
-        Academy, the start-up auto-open) passes here. ``levels_unlocked`` is the
-        login check: a stored login still being restored counts, and without an
-        account server (no key configured) nobody could log in, so it is open."""
-        if not self.levels_unlocked():
-            self._explain_academy_login()
-            return
+        """Open (or reuse) the CWatM Academy window - with or without a login.
+        Every way in (the menu-bar button, Preferences ▸ Enable CWatM Academy, the
+        start-up auto-open) passes here."""
         try:
             from src.gui.widgets.academy_window import open_academy
             open_academy(parent=self)
         except Exception as e:
             print(f"Error opening CWatM Academy: {str(e)}", file=sys.stderr)
-
-    def _explain_academy_login(self):
-        """CWatM Academy without a login: say so and offer the login dialog."""
-        answer = QMessageBox.question(
-            self, "CWatM Academy",
-            "CWatM Academy can only be started when you are logged in to your "
-            "CWatM account.\n\nLog in (or register - it is free), then start "
-            "CWatM Academy again.\n\nLog in now?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        if answer == QMessageBox.Yes:
-            try:
-                self.open_account()
-            except Exception:
-                log.debug("open_account from the Academy login box failed",
-                          exc_info=True)
 
     def _on_use_tabs_toggled(self, checked):
         """Preferences ▸ Editor & Dates ▸ Use Tabs: persist the choice and show or
@@ -1924,12 +1902,28 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         """)
         version_info_label.setWordWrap(True)
         version_info_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        
+
+        # Data credits - GeoNames' CC BY licence asks for this credit (the city
+        # names next to a station's lon/lat in the Analyse windows, nearest_city.py).
+        credits_header = QLabel("Data credits")
+        credits_header.setStyleSheet(version_header.styleSheet())
+        credits_label = QLabel(
+            "City names (nearest city to a station in the Analyse windows): "
+            "GeoNames, www.geonames.org, cities with more than 15,000 people "
+            "(cities15000), licensed under CC BY 4.0 "
+            "(creativecommons.org/licenses/by/4.0)."
+        )
+        credits_label.setStyleSheet(info_text.styleSheet())
+        credits_label.setWordWrap(True)
+        credits_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
         # Add content to scroll area
         content_layout.addWidget(info_text)
         content_layout.addWidget(gui_version_header)
         content_layout.addWidget(version_header)
         content_layout.addWidget(version_info_label)
+        content_layout.addWidget(credits_header)
+        content_layout.addWidget(credits_label)
         content_layout.addStretch()
         
         scroll_area.setWidget(content_widget)
@@ -2355,57 +2349,18 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
 
     # ---------------------------------------------------- experience level
     def cycle_experience_level(self):
-        """Level button: Beginner -> Advanced -> Expert -> Beginner. A level that is
-        not bought is explained (once per click) and skipped."""
+        """Level button: Beginner -> Advanced -> Expert -> Beginner."""
         idx = _EXPERIENCE_LEVELS.index(self._experience_level)
-        nxt = _EXPERIENCE_LEVELS[(idx + 1) % len(_EXPERIENCE_LEVELS)]
-        if not self.level_allowed(nxt):
-            self._explain_level_lock(nxt)
-            nxt = "Beginner"              # the cycle goes on past the locked level(s)
-            if nxt == self._experience_level:
-                return
-        self.set_experience_level(nxt)
+        self.set_experience_level(_EXPERIENCE_LEVELS[(idx + 1) % len(_EXPERIENCE_LEVELS)])
 
     def _effective_level(self):
-        """The preferred level if it may be used, else the highest allowed below it
-        (preferred Expert, only Advanced bought -> Advanced)."""
-        idx = _EXPERIENCE_LEVELS.index(self._preferred_level)
-        for level in reversed(_EXPERIENCE_LEVELS[:idx + 1]):
-            if self.level_allowed(level):
-                return level
-        return "Beginner"
-
-    def _explain_level_lock(self, level="Advanced"):
-        """A level that is not owned was chosen - say how to get it. Logged out:
-        offer the login. Always names the Cheat tick, so a serious user is never
-        stuck (shop.md guiding principle)."""
-        cheat = ("Or tick 'Cheat - and get the Expert level without buying it' in "
-                 "Preferences ▸ Account (for this session).")
-        if not self.levels_unlocked():
-            answer = QMessageBox.question(
-                self, "Skill of user",
-                f"The {level} level is bought with the points of your CWatM account "
-                "(full CWatM runs earn points).\n\n"
-                f"{cheat}\n\nLog in now?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-            if answer == QMessageBox.Yes:
-                self.open_account()
-            return
-        how = ("Buy Advanced first, then Expert, in the Shop."
-               if level == "Expert" and not self.level_allowed("Advanced")
-               else "Buy it in the Shop.")
-        QMessageBox.information(
-            self, "Skill of user",
-            f"You do not own the {level} level yet. {how}\n\n{cheat}")
+        """The level in effect - every level is free, so the preferred one."""
+        return self._preferred_level
 
     def set_experience_level(self, level):
         """Set the experience level (from the level button or Preferences ▸ Editor &
-        Dates ▸ Skill of user) and apply it. Advanced/Expert must be owned (bought
-        in the Shop) or the session's Cheat tick on - see level_allowed."""
+        Dates ▸ Skill of user) and apply it. Every level is free to use."""
         if level not in _EXPERIENCE_LEVELS:
-            return
-        if not self.level_allowed(level):
-            self._explain_level_lock(level)
             return
         self._preferred_level = level
         self._settings.setValue("editor/level", level)

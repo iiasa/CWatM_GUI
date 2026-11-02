@@ -583,6 +583,16 @@ class TimeseriesWindow(PlotlyWindowBase):
                 return m[0], m[1]
         return None, None
 
+    def _city_for(self, lon, lat):
+        """``"12 km from <city> (CC)"`` for a lon/lat station, else ``""``; cached
+        per coordinate pair, since the title is redrawn on every switch."""
+        cache = self.__dict__.setdefault("_city_cache", {})
+        key = (str(lon), str(lat))
+        if key not in cache:
+            from src.gui.utils.nearest_city import city_label
+            cache[key] = city_label(lon, lat)
+        return cache[key]
+
     def _dates_ddmmyyyy(self, dates):
         """Reformat the date axis to ``DD/MM/YYYY`` (CWatM's timeseries date format);
         an unparseable entry is written verbatim."""
@@ -856,6 +866,13 @@ class TimeseriesWindow(PlotlyWindowBase):
             # Point (NetCDF) window: header = the "<var> @ lon.., lat.." label, which is
             # also used verbatim as the legend entry for this series.
             head = str(self.csv_path)
+            # "<var> @ lon.., lat.." -> add the nearest city (not for an "x.., y.."
+            # point of a projected grid).
+            if "@ lon" in head:
+                lon_s, lat_s = self._lonlat_from_name(head.split("@", 1)[1])
+                city = self._city_for(lon_s, lat_s)
+                if city:
+                    head += f"  -  {city}"
         elif n > 1:
             head = f"{os.path.basename(self.csv_path)}  —  {name}  ({self.index + 1} / {n})"
         else:
@@ -878,6 +895,9 @@ class TimeseriesWindow(PlotlyWindowBase):
             lon = self.xlocs[i] if i < len(self.xlocs) else ""
             lat = self.ylocs[i] if i < len(self.ylocs) else ""
             station = f"Station: {name} - lon: {lon} lat:{lat}"
+            city = self._city_for(lon, lat)           # "" for a projected x/y station
+            if city:
+                station += f"  -  {city}"
             _sub = theme.c('text_gray') if theme.is_dark() else '#555'
             title = f"{title}<br><span style='font-size:13px;color:{_sub}'>{station}</span>"
         yaxis_title = f"{long_name} [{self.unit}]" if self.unit else long_name

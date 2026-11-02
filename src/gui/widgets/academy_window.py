@@ -58,7 +58,7 @@ browser.
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget,
-    QListWidgetItem, QTextBrowser, QFrame, QStackedWidget, QMessageBox,
+    QListWidgetItem, QTextBrowser, QFrame, QStackedWidget,
 )
 from PySide6.QtCore import Qt, QDate, QPoint, QSize, QTimer
 from PySide6.QtGui import QGuiApplication, QIcon, QPixmap
@@ -75,9 +75,6 @@ log = get_logger("academy_window")
 
 # Fixed Mikhail palette - not theme.c(), which follows the app's live Mode.
 _C = theme.theme_colors("mikhail")
-
-# From this level on the Academy needs a CWatM account login (_needs_login).
-LOGIN_LEVEL = 4
 
 _PAGE_WELCOME = 0
 _PAGE_BROWSER = 1
@@ -292,13 +289,8 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
             self.show_welcome()
         elif page == _PAGE_BROWSER:
             level_id = getattr(self, "_current_level_id", None)
-            # a refresh (e.g. the login just arrived) re-shows the level quietly
-            self._refreshing = True
-            try:
-                self._populate_level_list()
-                self.go_to_level(level_id or progress.current_level())
-            finally:
-                self._refreshing = False
+            self._populate_level_list()
+            self.go_to_level(level_id or progress.current_level())
 
     def _on_continue_clicked(self):
         self._enter_academy(reset_first=False)
@@ -435,54 +427,6 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
             return
         level_id = self.level_list.item(row).data(Qt.UserRole)
         self._show_level(level_id)
-        # the learner picked (or arrived at) a locked level: say why, offer the login
-        if self._needs_login(level_id) and not getattr(self, "_refreshing", False):
-            QTimer.singleShot(0, self._explain_login_needed)
-
-    def _needs_login(self, level_id):
-        """Level LOGIN_LEVEL and above need a CWatM account login - the same rule
-        (and the same check) as the Advanced / Expert skill levels."""
-        if level_id < LOGIN_LEVEL or self.mw is None:
-            return False
-        unlocked = getattr(self.mw, "levels_unlocked", None)
-        return unlocked is not None and not unlocked()
-
-    def _academy_question(self, title, text):
-        """A Yes/No box in the Academy's own look. It must style itself completely:
-        as a child of this window it inherits the window's ``QDialog`` background
-        (black), while its text colour would come from the app palette - black in
-        Normal mode, i.e. black on black."""
-        c = _C
-        box = QMessageBox(QMessageBox.Question, title, text,
-                          QMessageBox.Yes | QMessageBox.No, self)
-        box.setDefaultButton(QMessageBox.Yes)
-        box.setStyleSheet(f"""
-            QMessageBox {{ background-color: {c['window_bg']}; }}
-            QMessageBox QLabel {{ color: {c['text']}; background: transparent; }}
-            QMessageBox QPushButton {{
-                background-color: {c['panel_bg']}; color: {c['text']};
-                border: 1px solid {c['border']}; border-radius: 5px;
-                padding: 5px 18px; min-width: 60px;
-            }}
-            QMessageBox QPushButton:default {{ border-color: {c['accent']}; }}
-            QMessageBox QPushButton:hover {{
-                background-color: {c['menu_sel_bg']}; color: {c['menu_sel_text']};
-            }}
-        """)
-        return box.exec() == QMessageBox.Yes
-
-    def _explain_login_needed(self):
-        answer = self._academy_question(
-            "CWatM Academy",
-            f"From Level {LOGIN_LEVEL} on, CWatM Academy needs a login.\n\n"
-            "Log in to your CWatM account (or register - it is free) to continue. "
-            "Your progress is then kept in your account and every finished level "
-            "earns points.\n\nLog in now?")
-        if answer:
-            try:
-                self.mw.open_account()
-            except Exception:
-                log.debug("open_account from the Academy failed", exc_info=True)
 
     def _show_level(self, level_id):
         lvl = level_by_id(level_id)
@@ -503,11 +447,7 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
         # stays available - to do it again; a level cannot be skipped ahead of.
         unlocked = already or level_id <= progress.current_level()
         self.complete_button.setEnabled(unlocked)
-        if self._needs_login(level_id):
-            # clickable: it explains the lock and offers the login again
-            self.complete_button.setEnabled(True)
-            self.complete_button.setText("Log in to continue")
-        elif already and level_id in (1, 2):
+        if already and level_id in (1, 2):
             # the interactive levels can be replayed (Level 1 straight into its
             # Field Test, Level 2 the walkthrough)
             self.complete_button.setText("Completed ✓ - do it again")
@@ -523,9 +463,6 @@ class AcademyWindow(GeometryMemoryMixin, QDialog):
     def _on_complete_clicked(self):
         level_id = getattr(self, "_current_level_id", None)
         if level_id is None:
-            return
-        if self._needs_login(level_id):
-            self._explain_login_needed()
             return
         if level_id in progress.completed_levels():
             # a completed level stays available (its points are paid only once)

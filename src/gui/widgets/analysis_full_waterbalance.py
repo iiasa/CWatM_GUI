@@ -311,8 +311,11 @@ class FullWaterbalanceWindow(PlotlyWindowBase):
         self.header_label.setText(res["title"])
         station = (f"Station {res['station'] + 1}/{self._nstations}: "
                    if self._nstations > 1 else "Station: ")
+        from src.gui.utils.nearest_city import city_label
+        city = city_label(res['lon'], res['lat'])   # "" for a projected x/y station
+        city = f"  -  {city}" if city else ""
         self.sub_label.setText(
-            f"{station}lon: {res['lon']:.4f}, lat: {res['lat']:.4f}  |  "
+            f"{station}lon: {res['lon']:.4f}, lat: {res['lat']:.4f}{city}  |  "
             f"{res['area_km2']:.1f} km²  |  {res['period']} ({res['nyears']:.2f} years)")
         self._update_station_nav()
 

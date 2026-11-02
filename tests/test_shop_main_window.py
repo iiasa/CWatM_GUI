@@ -1,6 +1,6 @@
-"""The Shop's rules on the REAL main window (shop.md Step 7): the level button
-refuses a level that is not owned, Preferences ▸ Select animal lists only bought
-animals, and the session-only Cheat tick is off again after a restart.
+"""The Shop's rules on the REAL main window (shop.md Step 7): every skill level is
+free (logged in or not, no Cheat tick), and Preferences ▸ Select animal lists the
+free Trout + Bottle plus the bought animals.
 
 The window's settings go to a throwaway ini file: QSettings("IIASA", "CWatM_GUI")
 always means the registry (setDefaultFormat does not apply to that constructor), so
@@ -53,29 +53,33 @@ def make_window(qapp, tmp_path, monkeypatch):
 
 
 class TestLevelButton:
-    def test_logged_out_the_button_refuses_and_says_how(self, make_window):
+    def test_logged_out_every_level_is_free(self, make_window):
         w = make_window()
-        assert w._experience_level == "Beginner"   # preferred Expert, nothing owned
+        assert w._experience_level == "Expert"     # the preferred level, nothing owned
         w.cycle_experience_level()
         assert w._experience_level == "Beginner"
-        msg = make_window.messages[-1]
-        assert "Advanced" in msg and "Cheat" in msg   # both ways out are named
-
-    def test_set_level_refuses_an_unowned_level(self, make_window):
-        w = make_window()
-        w._on_account_succeeded("restore", _status("advanced"))
-        assert w._experience_level == "Advanced"   # preferred Expert -> highest owned
-        make_window.messages.clear()
-        w.set_experience_level("Expert")
+        w.cycle_experience_level()
         assert w._experience_level == "Advanced"
-        assert "Expert" in make_window.messages[-1]
-        assert "Shop" in make_window.messages[-1]
-
-    def test_buying_expert_switches_to_the_preferred_level(self, make_window):
-        w = make_window()
-        w._on_account_succeeded("restore", _status("advanced"))
-        w._on_account_succeeded("buy", _status("advanced", "expert"))
+        w.cycle_experience_level()
         assert w._experience_level == "Expert"
+        assert make_window.messages == []          # no "buy it" box
+
+    def test_logged_in_without_purchases_every_level_is_free(self, make_window):
+        w = make_window()
+        w._on_account_succeeded("restore", _status())
+        assert w._experience_level == "Expert"
+        w.set_experience_level("Advanced")
+        assert w._experience_level == "Advanced"
+        w.set_experience_level("Expert")
+        assert w._experience_level == "Expert"
+        assert make_window.messages == []
+
+    def test_level_survives_a_logout(self, make_window):
+        w = make_window()
+        w._on_account_succeeded("restore", _status())
+        w.set_experience_level("Advanced")
+        w._on_account_succeeded("logout", None)
+        assert w._experience_level == "Advanced"
 
 
 class TestPreferencesAnimals:
@@ -88,21 +92,25 @@ class TestPreferencesAnimals:
         from src.gui.widgets.preferences_window import PreferencesWindow
         return PreferencesWindow(w)
 
-    def test_none_bought(self, make_window):
+    def test_none_bought_the_free_ones_logged_out(self, make_window):
         w = make_window()
         p = self._prefs(w)
-        assert p.cmb_animal.count() == 1 and not p.cmb_animal.isEnabled()
-        assert "buy one in the Shop" in p.cmb_animal.itemText(0)
-        assert w.discharge_sparkline._animal is None        # the plain dot
+        offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
+        assert offered == ["Fish", "Sailboat"]              # = trout + bottle, free
+        assert p.cmb_animal.isEnabled()
+        assert w.discharge_sparkline._animal == "Fish"      # the default, free
+        p._select_data(p.cmb_animal, "Sailboat")
+        p._apply()                                          # selectable logged out
+        assert w.discharge_sparkline._animal == "Sailboat"
         p.deleteLater()
 
-    def test_only_the_bought_ones(self, make_window):
+    def test_the_free_and_the_bought_ones(self, make_window):
         w = make_window()
         w._on_account_succeeded("restore", _status("otter", "octopus"))
         p = self._prefs(w)
         offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
-        assert offered == ["Otter", "Octopus (for Carla)"]
-        assert w.discharge_sparkline._animal == "Otter"     # Fish chosen, not owned
+        assert offered == ["Fish", "Otter", "Sailboat", "Octopus (for Carla)"]
+        assert w.discharge_sparkline._animal == "Fish"
         p.deleteLater()
 
     def test_animal_cheat_lists_all_and_applies(self, make_window):
@@ -114,7 +122,8 @@ class TestPreferencesAnimals:
         p._apply()                                          # cheat applied first
         assert w.discharge_sparkline._animal == "Beaver"
         p.cb_cheat_animals.setChecked(False)
-        assert p.cmb_animal.itemData(0) is None             # back to "buy one"
+        offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
+        assert offered == ["Fish", "Sailboat"]              # back to the free ones
         p.deleteLater()
 
     def test_image_animals_from_the_assets_folder(self, make_window, monkeypatch):
@@ -141,32 +150,30 @@ class TestPreferencesAnimals:
         p = self._prefs(w)
         assert not hasattr(p, "cb_anim_images")              # no switch any more
         offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
-        assert offered == ["Octopus (Carla)", "Trout"]
+        assert offered == ["Bottle", "Octopus (Carla)", "Trout"]   # Bottle is free
         assert w.discharge_sparkline._animal == "Trout"      # the image default
         p.deleteLater()
 
+    def test_images_logged_out_trout_and_bottle(self, make_window, monkeypatch):
+        from src.gui.widgets import discharge_sparkline as ds
+        monkeypatch.setattr(ds, "USE_IMAGE_ANIMALS", True)
+        w = make_window()
+        p = self._prefs(w)
+        offered = [p.cmb_animal.itemData(i) for i in range(p.cmb_animal.count())]
+        assert offered == ["Bottle", "Trout"]
+        assert w.discharge_sparkline._animal == "Trout"
+        p.deleteLater()
 
-class TestCheat:
-    def test_cheat_is_off_after_a_restart(self, make_window):
-        w1 = make_window()
-        w1._set_cheat_levels(True)
-        w1.set_experience_level("Expert")
-        assert w1._experience_level == "Expert"
-        w1._settings.sync()
-        w2 = make_window()                                  # "the next start"
-        assert w2.cheat_levels() is False
-        assert w2._experience_level == "Beginner"
-        with open(make_window.ini, encoding="utf-8") as f:
-            assert "cheat" not in f.read().lower()          # never persisted
 
-    def test_cheat_in_preferences_enables_the_level_box(self, make_window):
+class TestLevelPreferences:
+    def test_no_level_cheat_and_the_level_box_is_always_usable(self, make_window):
         from src.gui.widgets.preferences_window import PreferencesWindow
         w = make_window()
         p = PreferencesWindow(w)
-        assert not p.cmb_level.isEnabled()
-        p.cb_cheat.setChecked(True)                         # before Apply
-        assert p.cmb_level.isEnabled()
-        p._select_data(p.cmb_level, "Expert")
-        p._apply()                                          # cheat applied first
-        assert w._experience_level == "Expert"
+        assert not hasattr(p, "cb_cheat")
+        assert p.cmb_level.isEnabled()                      # logged out, nothing bought
+        p._select_data(p.cmb_level, "Advanced")
+        p._apply()
+        assert w._experience_level == "Advanced"
+        assert make_window.messages == []
         p.deleteLater()

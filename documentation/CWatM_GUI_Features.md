@@ -425,6 +425,13 @@ A browser of your PathOut folder: **double-click** a result and it opens in the 
 viewer — `.nc` → NetCDF map, `WaterCycle*.csv` → sunburst, other `.csv` → Timeseries. No
 more hunting through file dialogs after a run.
 
+### Nearest city next to a station
+Wherever an Analyse window shows a station's lon/lat (Timeseries, NetCDF, Watercycle,
+Flow Diagram, Full Waterbalance, …) the nearest city and its distance follow it, e.g.
+*lon: 16.61, lat: 48.91 - 26 km from Břeclav (CZ)*. It works offline, from GeoNames'
+list of all places with more than 15,000 people, and the distance is measured from the
+station to the city's centre point. A station on a projected (x/y) grid gets no city.
+
 ### Timeseries (Analyse ▸ Timeseries)
 Plot a result `.csv` (line chart). Step through multiple columns, **Compare** another
 file, **Save as csv** in the CWatM result format, or **Save HTML**. A **range slider**

@@ -266,8 +266,8 @@ class ChordWindow(FlowDiagramWindow):
     def _show_sankey(self):
         fig = self._build_figure()
         self.sub_label.setText(
-            f"{self._station_label()}lon: {self.lon}, lat: {self.lat}"
-            f"\n{self._period_text}")
+            self._station_text()
+            + f"\n{self._period_text}")
         html = fig.to_html(include_plotlyjs=True, full_html=True,
                            config={"responsive": True, "displaylogo": False})
         fill = ("<style>html,body{height:100%;margin:0;padding:0;overflow:hidden;}"

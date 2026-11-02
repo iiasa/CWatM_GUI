@@ -36,6 +36,14 @@ ANIMAL_NAMES = {}
 for _name, _code in ANIMAL_CODES.items():
     ANIMAL_NAMES.setdefault(_code, _name)
 
+# animals everybody may use - no purchase, no login (item codes)
+FREE_ANIMALS = frozenset({"trout", "bottle"})
+
+
+def is_free_animal(name):
+    """Is this sparkline animal (an ANIMAL_CODES name) free for everyone?"""
+    return ANIMAL_CODES.get(name) in FREE_ANIMALS
+
 # a reward item is never sold: claim_reward(<reward>) gives it once
 MODFLOW_REWARD = "modflow_first_run"     # -> the mole
 MODFLOW_REWARD_ANIMAL = "Mole"
@@ -145,15 +153,20 @@ def item_state(item, status):
 
 
 def animals_for_sale(items, status):
-    """The animals the selector offers: affordable and not owned yet (decision 5)."""
+    """The animals the selector offers: affordable and not owned yet (decision 5);
+    never a free one."""
     return [i for i in items
-            if i.get("kind") == "animal" and item_state(i, status) == BUYABLE]
+            if i.get("kind") == "animal" and i.get("code") not in FREE_ANIMALS
+            and item_state(i, status) == BUYABLE]
 
 
 def points_to_cheapest(items, status):
-    """How many more points the cheapest not-owned, unlocked item needs - 0 when
-    something is affordable now, None when everything is owned."""
-    open_items = [i for i in items if item_state(i, status) in (UNAFFORDABLE, BUYABLE)]
+    """How many more points the cheapest not-owned animal for sale needs - 0 when
+    something is affordable now, None when everything is owned. Levels and the
+    free animals are not for sale."""
+    open_items = [i for i in items
+                  if i.get("kind") == "animal" and i.get("code") not in FREE_ANIMALS
+                  and item_state(i, status) in (UNAFFORDABLE, BUYABLE)]
     if not open_items:
         return None
     return max(0, min(int(i.get("price", 0)) for i in open_items) - balance(status))
