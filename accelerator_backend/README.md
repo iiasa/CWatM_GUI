@@ -40,7 +40,18 @@ into a staging area it *does* have ordinary write access to. The workflow
 checks each claim (mirroring what the old Supabase RPC functions already
 validated) and only then writes the real event file, using a service-account
 credential stored as a repo secret - no GitHub credential ever touches the
-client. **Not yet built.**
+client.
+
+**How the write itself happens**: there is no confirmed working direct-
+upload API into an Accelerator project (the S3-multipart endpoints in
+accli's reference client are dead/deprecated, confirmed by the team live,
+2026-10-28). The only confirmed way a new file lands in a project from
+outside it is a dispatched job writing to `/mnt/wdrv`, which Accelerator's
+own infrastructure then auto-uploads once the job finishes - the same
+mechanism the Tauri client's `jobs.ts` already proved live for CWatM's own
+output files. So the validator doesn't call an upload endpoint; it
+dispatches a small job (as its own service-account identity) whose command
+writes the event file and exits.
 
 ## What's here now
 
@@ -59,17 +70,41 @@ client. **Not yet built.**
   confirmed no later migration changes it). Checked against total
   **earned** points (never decreases), not the spendable balance.
 
-Pure logic, both of them - no Accelerator API calls, no file I/O; the
-caller supplies the claim/totals and the user's existing ledger state.
-Run their tests with `pytest accelerator_backend/tests/` (not part of the
+`award_run.py`/`badges.py` are pure logic - no Accelerator API calls, no
+file I/O; the caller supplies the claim/totals and the user's existing
+ledger state. The rest talk to the real API:
+
+- `config.py` - server URLs (duplicated from `src/gui/utils/
+  accelerator_config.py` on purpose - a separate component, not meant to
+  import from `src/gui/`).
+- `service_account.py` - the validator's own Accelerator identity: exchanges
+  the `ACCELERATOR_VALIDATOR_REFRESH_TOKEN` env var (a GitHub Actions
+  secret) for an access token. No keyring, no persistence - a CI run is a
+  fresh container every time.
+- `dispatch.py` - writes a file into the ledger project by dispatching a
+  small job (see "How the write itself happens" above). `build_write_command`
+  is tested against a **real shell + real Python subprocess**
+  (`test_round_trips_through_an_actual_shell_and_python`), not just
+  reasoned about - the exact kind of escaping bug (`json.dumps` vs. a
+  hand-written outer quoter) that broke the TypeScript version live once
+  already. Reuses the proven `cwatm-docker-image` build rather than a
+  separate minimal image, since a file write needs no CWatM-specific
+  dependency and this image is already known to work.
+
+Run the tests with `pytest accelerator_backend/tests/` (not part of the
 main GUI's `pytest` run - `pytest.ini`'s `testpaths = tests` only,
 deliberately, since this is a separate component, same relationship
 `tauri-app/` has to the GUI).
 
 ## Not yet built
 
-- The GitHub Actions workflow itself (claim pickup, validation, the actual
-  ledger write, the service-account credential).
+- The GitHub Actions workflow itself that ties the pieces above together:
+  claim pickup (the GUI's staging-area write - also blocked on `who_am_i()`
+  below), reading the user's existing ledger state, calling `award_run.decide()`/
+  `badges.new_badges()`, dispatching the write.
+- Confirming a dispatched write job actually succeeds (no result-marker
+  polling wired in yet - `dispatch_write_job` returns a job id and nothing
+  more).
 - Everything beyond run-completion points and river badges: feature badges
   (ModFlow/pySnowClim/Glacier), the Field Test badge, the shop, leaderboard
   aggregation, academy progress, run locations.
@@ -80,4 +115,15 @@ deliberately, since this is a separate component, same relationship
   the GUI's own login until that lands - this ledger logic was built ahead
   of it deliberately, since the rule logic itself doesn't depend on how the
   uid was obtained.
-- The ledger Accelerator project itself (not yet created).
+- The ledger Accelerator project and the validator's own Accelerator
+  account (not yet created) - see the setup checklist below.
+
+## Setup checklist (for a human, not something Claude can do)
+
+1. A new, empty Accelerator project for the ledger (e.g. `cwatm-points-ledger`).
+2. A dedicated Accelerator account for the validator - separate from any
+   personal login, added as a collaborator with write access to that
+   project only.
+3. That account's device-flow refresh token, added as a repo secret named
+   `ACCELERATOR_VALIDATOR_REFRESH_TOKEN` (Settings → Secrets and variables
+   → Actions, in `iiasa/CWatM_GUI`).
