@@ -240,6 +240,7 @@ class WatercycleWindow(PlotlyWindowBase):
         self.csv_path = csv_path
         # Window/plot title = the settings-file "Title".
         self.settings_title = self._read_settings_title(csv_path)
+        self._limit_abstraction = self._read_limit_abstraction(csv_path)
 
         # Read the monthly data once; the sunburst is recomputed for the selected
         # [start, end] month window (defaults to the full span). A WaterCycle csv can
@@ -302,19 +303,24 @@ class WatercycleWindow(PlotlyWindowBase):
             log.debug("_read_station: ignored", exc_info=True)
         return lon, lat
 
-    def _title_from_settings_content(self, content):
+    @staticmethod
+    def _value_from_settings_content(content, name):
+        """The value of key ``name`` (case-insensitive, inline comment stripped)."""
         for line in (content or "").split("\n"):
             s = line.strip()
             if s.startswith("#") or s.startswith(";") or "=" not in s:
                 continue
             key, value = s.split("=", 1)
-            if key.strip().lower() == "title":
-                return value.strip()
+            if key.strip().lower() == name.lower():
+                return value.split("#", 1)[0].strip()
         return ""
 
-    def _read_settings_title(self, csv_path):
-        """The settings-file 'Title': from the settings file named in the CSV header
-        (row 1), else the title currently loaded in the main window."""
+    def _title_from_settings_content(self, content):
+        return WatercycleWindow._value_from_settings_content(content, "title")
+
+    def _read_settings_value(self, csv_path, name):
+        """A settings-file value: from the settings file named in the CSV header
+        (row 1), else from the settings currently loaded in the main window."""
         try:
             with open(csv_path, encoding="utf-8", errors="ignore", newline="") as f:
                 first = f.readline()
@@ -325,21 +331,34 @@ class WatercycleWindow(PlotlyWindowBase):
                     if path and os.path.exists(path):
                         with open(path, encoding="utf-8", errors="ignore") as _f:
                             content = _f.read()
-                        t = self._title_from_settings_content(content)
-                        if t:
-                            return t
+                        v = WatercycleWindow._value_from_settings_content(content, name)
+                        if v:
+                            return v
                     break
         except Exception:
-            log.debug("_read_settings_title: ignored", exc_info=True)
+            log.debug("_read_settings_value: ignored", exc_info=True)
         try:
             mw = self.parent()
             if mw is not None and hasattr(mw, "original_content"):
-                t = self._title_from_settings_content(mw.original_content or "")
-                if t:
-                    return t
+                v = WatercycleWindow._value_from_settings_content(
+                    mw.original_content or "", name)
+                if v:
+                    return v
         except Exception:
-            log.debug("_read_settings_title: ignored", exc_info=True)
+            log.debug("_read_settings_value: ignored", exc_info=True)
         return ""
+
+    def _read_settings_title(self, csv_path):
+        """The settings-file 'Title' (see _read_settings_value)."""
+        return WatercycleWindow._read_settings_value(self, csv_path, "title")
+
+    def _read_limit_abstraction(self, csv_path):
+        """[OPTIONS] limitAbstraction of the run. False (also when unknown, like Full
+        Waterbalance): unmet demand is taken from fossil groundwater = an input from
+        outside the basin, and ``unmet_lost`` is the part of it that leaves again.
+        True: unmetDemand is demand never supplied (no input) and unmet_lost is 0."""
+        v = WatercycleWindow._read_settings_value(self, csv_path, "limitAbstraction")
+        return v.strip().lower() in ("true", "1", "yes", "on")
 
     def _load_data(self, csv_path):
         """Read the monthly totals once and cache them, plus the selected window.
@@ -854,6 +873,13 @@ class WatercycleWindow(PlotlyWindowBase):
         ]
         if {'GlacierMelt_sum_m3', 'GlacierRain_sum_m3'}.issubset(df.columns):
             Vars.append([['GlacierMelt', 'GlacierRain'], 'Glacier', ['M3', 'M3'], 'flux', 'Input', 'All'])
+        # Water demand with limitAbstraction = False: the unmet demand is taken from
+        # fossil groundwater (from outside the basin) and part of it disappears again
+        # (unmet_lost). With True there is no fossil water (unmet_lost is 0).
+        # Columns missing from the csv (no water demand) are skipped below.
+        if not getattr(self, "_limit_abstraction", False):
+            Vars.append([['unmetDemand'], 'Fossil groundwater', ['M'], 'flux', 'Input', 'All'])
+            Vars.append([['unmet_lost'], 'Unmet demand lost', ['M'], 'flux', 'Output', 'All'])
         Vars.extend([
             [['sum_actTransTotal'], 'Transpiration', ['M'], 'flux', 'Evapotranspiration', 'All'],
             [['sum_actBareSoilEvap'], 'Bare soil evapo', ['M'], 'flux', 'Evapotranspiration', 'All'],
@@ -1000,6 +1026,7 @@ class WatercycleWindow(PlotlyWindowBase):
             'Bare soil evapo': '#699C4F', 'Interception evapo': '#265312',
             'Open water evapo': '#60C4DE', 'Snow evapo': '#8fd1d1', 'Channel evaporation': '#60C4DE',
             'Forest': '#265312', 'Others': '#81c066', 'Paddy': '#B66934', 'non-Paddy': '#B66934',
+            'Fossil groundwater': '#8B6347', 'Unmet demand lost': '#B83232',
         }
         colors = [
             hub_color if par == ''          # root wedge (station lon/lat)

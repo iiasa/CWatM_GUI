@@ -10,7 +10,7 @@ from src.gui.widgets import analysis_mean_fluxes as mf
 
 pytestmark = pytest.mark.skipif(not mf._FD_AVAILABLE, reason="plotly stack not available")
 
-ALL_COLUMNS = sorted({c for p in mf.PANELS for c in p[2]})
+ALL_COLUMNS = sorted({c.lstrip("-") for p in mf.PANELS for c in p[2]})
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +27,7 @@ def _figure(columns=ALL_COLUMNS):
         _month_dates=list(dates), settings_title="t", csv_path="x.csv", lon=1, lat=2,
         _fmt_month=str)
     host._daily_mm = types.MethodType(mf.MeanFluxesWindow._daily_mm, host)
+    host._shown = lambda: mf.shown_panels()
     return mf.MeanFluxesWindow._build_figure(host), host
 
 
@@ -35,8 +36,8 @@ def _names(fig):
 
 
 def test_panel_table():
-    assert len(mf.PANELS) == 47
-    assert len({p[0] for p in mf.PANELS}) == 47
+    assert len(mf.PANELS) == 49
+    assert len({p[0] for p in mf.PANELS}) == 49
     assert "," not in "".join(p[0] for p in mf.PANELS)     # the stored list is comma-joined
 
 
@@ -69,8 +70,8 @@ def test_every_panel_at_once_can_be_drawn():
     for p in mf.PANELS:
         mf.set_panel_shown(p[0], True)
     fig, _host = _figure()
-    assert len(fig.data) == 47
-    assert fig.layout.annotations[46].text == "au) Return flow"
+    assert len(fig.data) == 49
+    assert fig.layout.annotations[48].text == "aw) Return flow"
 
 
 def test_panel_needs_all_its_columns():

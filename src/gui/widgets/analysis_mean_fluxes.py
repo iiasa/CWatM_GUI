@@ -48,7 +48,9 @@ PANELS = [
     ("Glacier melt", "Glacier melt and rain", ["GlacierMelt_sum_m3", "GlacierRain_sum_m3"], True, "#253494"),
     ("Glacier melt only", "", ["GlacierMelt_sum_m3"], False, "#3f51a8"),
     ("Glacier rain only", "", ["GlacierRain_sum_m3"], False, "#6272c0"),
-    ("Runoff", "", ["runoff_areasum_m3"], True, "#2a9d8f"),
+    ("Runoff", "", ["runoff_m3_sum_m3"], True, "#2a9d8f"),
+    ("Surface Runoff", "", ["sum_directRunoff_areasum_m3"], False, "#3fae9f"),
+    ("Interflow", "", ["sum_interflow_areasum_m3"], False, "#4bb3a5"),
     ("Baseflow", "", ["baseflow_areasum_m3"], False, "#57b8ab"),
     ("Actual ET", "", ["totalET_areasum_m3"], True, "#d4c26a"),
     ("Transpiration", "", ["sum_actTransTotal_areasum_m3"], False, "#7ba84f"),
@@ -182,21 +184,23 @@ def default_panels():
     return {p[0] for p in PANELS if p[3]}
 
 
-def shown_panels():
-    """The panel names ticked in the gear window (the defaults until one was changed)."""
-    raw = _settings().value(SHOWN_KEY)
+def shown_panels(key=SHOWN_KEY, defaults=None):
+    """The panel names ticked in the gear window (the defaults until one was changed).
+    ``key``/``defaults``: another window using the same gear window (Annual bars) keeps
+    its own choice."""
+    raw = _settings().value(key)
     if raw is None:
-        return default_panels()
+        return set(defaults) if defaults is not None else default_panels()
     return {n for n in str(raw).split(",") if n}
 
 
-def set_panel_shown(name, shown):
-    names = shown_panels()
+def set_panel_shown(name, shown, key=SHOWN_KEY, defaults=None):
+    names = shown_panels(key, defaults)
     if shown:
         names.add(name)
     else:
         names.discard(name)
-    _settings().setValue(SHOWN_KEY, ",".join(sorted(names)))
+    _settings().setValue(key, ",".join(sorted(names)))
 
 
 def panel_label(name, remark):
@@ -231,6 +235,15 @@ class MeanFluxesWindow(FlowDiagramWindow):
     _save_fallback = "meanfluxes"
     _save_suffix = "_meanfluxes"
     _csv_name = "meanfluxes.csv"
+    # the gear window's stored choice (a subclass keeps its own)
+    _shown_key = SHOWN_KEY
+    _default_names = None           # None = the PANELS defaults
+
+    def _shown(self):
+        return shown_panels(self._shown_key, self._default_names)
+
+    def _set_shown(self, name, checked):
+        set_panel_shown(name, checked, self._shown_key, self._default_names)
 
     def __init__(self, csv_path, parent=None):
         super().__init__(csv_path, parent)
@@ -272,7 +285,7 @@ class MeanFluxesWindow(FlowDiagramWindow):
         box = QVBoxLayout(dlg)
         box.addWidget(QLabel("Untick a panel to remove it from the display.\n"
                              "The choice is remembered."))
-        shown = shown_panels()
+        shown = self._shown()
         boxes = []
         grid = QGridLayout()
         box.addLayout(grid)
@@ -283,7 +296,7 @@ class MeanFluxesWindow(FlowDiagramWindow):
                 c.setEnabled(not (len(on) == 1 and c is on[0]))
 
         def toggled(name, checked):
-            set_panel_shown(name, checked)
+            self._set_shown(name, checked)
             keep_last_panel()
             self._rebuild_timer.start()
 
@@ -305,11 +318,13 @@ class MeanFluxesWindow(FlowDiagramWindow):
         dlg.exec()
 
     def _daily_mm(self, cols):
-        """mm per day over the basin of the summed columns (None when one is not in the csv)."""
+        """mm per day over the basin of the summed columns (None when one is not in the csv).
+        A column written with a leading ``-`` is subtracted instead of added."""
         df = self._df.iloc[self._start_idx:self._end_idx + 1]
-        if any(c not in df.columns for c in cols):
+        if any(c.lstrip("-") not in df.columns for c in cols):
             return None
-        v = sum(pd.to_numeric(df[c], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        v = sum((-1.0 if c.startswith("-") else 1.0)
+                * pd.to_numeric(df[c.lstrip("-")], errors="coerce").fillna(0.0).to_numpy(dtype=float)
                 for c in cols)
         if cols[0].endswith("_m3s-1"):
             v = v * 86400.0
@@ -333,7 +348,7 @@ class MeanFluxesWindow(FlowDiagramWindow):
         if not available:
             raise ValueError("None of the fluxes is in this csv.")
         # another csv may hold none of the chosen panels: then its defaults, not nothing
-        chosen = shown_panels()
+        chosen = self._shown()
         shown = ([a for a in available if a[0] in chosen]
                  or [a for a in available if a[2]] or available[:1])
         panels = []

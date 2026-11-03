@@ -259,18 +259,26 @@ class MenuBuilderMixin:
             "Show a .nc file on a folium OSM map (EPSG:4326) with an OSM-transparency "
             "slider, colour scale and log scale")
         netcdf_action.triggered.connect(self.open_netcdf_analysis)
+        # Watercycle submenu: every analysis of the WaterCycle table output
+        # (OUT_TSS_AreaSum_Daily = WaterCycle) - Watercycle, Flow Diagram, Chord
+        # Analysis, Mean Weekly Fluxes.
+        watercycle_menu = analyse_menu.addMenu("Watercycle")
+        watercycle_menu.setToolTipsVisible(True)
+        watercycle_menu.menuAction().setToolTip(
+            "Analysis done with OUT_TSS_AreaSum_Daily = WaterCycle")
+        self._watercycle_menu = watercycle_menu
         # Own name: the Tools menu has an "Add output Watercycle" action in the same
         # scope, and both are registered for the Beginner level below.
-        analyse_watercycle_action = analyse_menu.addAction("Watercycle")
+        analyse_watercycle_action = watercycle_menu.addAction("Watercycle")
         analyse_watercycle_action.setToolTip(
             "Show the water balance of a WaterCycle_areasum_monthtot.csv as a sunburst")
         analyse_watercycle_action.triggered.connect(self.open_watercycle_analysis)
-        flowdiagram_action = analyse_menu.addAction("Flow Diagram")
+        flowdiagram_action = watercycle_menu.addAction("Flow Diagram")
         flowdiagram_action.setToolTip(
             "Show the water balance of a WaterCycle_areasum_monthtot.csv as a Sankey flow diagram")
         flowdiagram_action.triggered.connect(self.open_flowdiagram_analysis)
         # Chord Analysis - a test: delete this block + src/gui/widgets/analysis_chord.py
-        chord_action = analyse_menu.addAction("Chord Analysis")
+        chord_action = watercycle_menu.addAction("Chord Analysis")
         chord_action.setToolTip(
             "Show the water balance of a WaterCycle_areasum_monthtot.csv as a chord diagram")
 
@@ -279,7 +287,7 @@ class MenuBuilderMixin:
             open_chord(parent=self)
         chord_action.triggered.connect(_open_chord)
         # Mean Weekly Fluxes - a test: delete this block + src/gui/widgets/analysis_mean_fluxes.py
-        mean_fluxes_action = analyse_menu.addAction("Mean Weekly Fluxes")
+        mean_fluxes_action = watercycle_menu.addAction("Mean Weekly Fluxes")
         mean_fluxes_action.setToolTip(
             "Mean weekly fluxes (mm/week) over the year of a daily WaterCycle csv")
 
@@ -287,6 +295,15 @@ class MenuBuilderMixin:
             from src.gui.widgets.analysis_mean_fluxes import open_mean_fluxes
             open_mean_fluxes(parent=self)
         mean_fluxes_action.triggered.connect(_open_mean_fluxes)
+        # Annual bars - the Mean Weekly Fluxes window (same gear window, own stored
+        # choice) as stacked annual columns: src/gui/widgets/analysis_annual_bars.py
+        annual_bars_action = watercycle_menu.addAction("Annual bars")
+        annual_bars_action.setToolTip("Creates annual bars of different components")
+
+        def _open_annual_bars():
+            from src.gui.widgets.analysis_annual_bars import open_annual_bars
+            open_annual_bars(parent=self)
+        annual_bars_action.triggered.connect(_open_annual_bars)
         analyse_menu.addSeparator()
         full_wb_action = analyse_menu.addAction("Full Waterbalance")
         full_wb_action.setToolTip(
@@ -401,7 +418,7 @@ class MenuBuilderMixin:
         # "Internal C++ object (QAction) already deleted" errors.
         self._menus = [file_menu, settings_menu,
                        tools_menu, run_menu, configure_menu,
-                       analyse_menu, help_menu, info_menu]
+                       analyse_menu, watercycle_menu, help_menu, info_menu]
         # Entries a **Beginner** does not see (Skill of user). The level restricts the
         # settings sections shown in the editor; the same idea applied to the menus -
         # everything a beginner has no use for yet, and could set up wrongly, is out of
@@ -416,6 +433,7 @@ class MenuBuilderMixin:
             hidden_run_action, batch_action,                    # RUN CWATM
             flowdiagram_action, full_wb_action,                 # Analyse
             chord_action, mean_fluxes_action,                   # (tests, see above)
+            annual_bars_action,
         ]
         # Entries only an **Expert** sees. Compare Tab works on the settings-file
         # tabs, and those are Expert-only themselves (Preferences ▸ Use Tabs ×

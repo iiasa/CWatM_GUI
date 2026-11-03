@@ -393,10 +393,13 @@ def build_sankey(nodes, links, valueformat=".1f", lightness_override=None):
     return fig, grad_pairs
 
 
-def _build_balance_links(b):
+def _build_balance_links(b, limit_abstraction=False):
     """Nodes + links for the water-balance Sankey (cells 05-07 of the template).
 
-    ``b`` maps variable name -> long-term average mm/yr (missing keys read as 0)."""
+    ``b`` maps variable name -> long-term average mm/yr (missing keys read as 0).
+    ``limit_abstraction`` = the run's [OPTIONS] limitAbstraction: False = unmet demand
+    is taken from fossil groundwater (input "Other Source" = unmetDemand), part of it
+    disappears again ("Unmet lost" = unmet_lost); True = no fossil water."""
     nodes = [
         {"name": "Precipitation",      "color": "#87CEEB", "x": 0.01, "y": 0.28},
         {"name": "Rain",               "color": "#6AAFE0", "x": 0.17, "y": 0.30},
@@ -412,6 +415,7 @@ def _build_balance_links(b):
         {"name": "Withdrawal",         "color": "#E05252", "x": 0.73, "y": 0.40},
         {"name": "Consumption",        "color": "#B83232", "x": 0.90, "y": 0.40},
         {"name": "Other Source",       "color": "#8B6347", "x": 0.65, "y": 0.40},
+        {"name": "Unmet lost",         "color": "#8B6347", "x": 0.90, "y": 0.55},
     ]
 
     # derived quantities (cell 06) -- guard the division so an empty basin is safe
@@ -433,6 +437,8 @@ def _build_balance_links(b):
     b["glacier"] = glacier_val + (0.001 if show_glacier else 0.0)
     b["addtoevapotrans_areasum_m3"] = 0.0001
     b["runoff"] = b["snow_runoff"] + b["rain_runoff"] + b["baseflow_areasum_m3"] + b["glacier"]
+    fossil = 0.0 if limit_abstraction else b["unmetDemand_areasum_m3"]
+    lost = 0.0 if limit_abstraction else b["unmet_lost_areasum_m3"]
 
     links = [
         ["Rain",               "Precipitation", "Rain",               b["Rain_areasum_m3"]],
@@ -461,14 +467,24 @@ def _build_balance_links(b):
         ["Discharge",          "Waterbodies",   "Discharge",          b["runoff"] - b["EvapWaterBodyM_areasum_m3"] - b["EvapoChannel_areasum_m3"] - b["act_SurfaceWaterAbstract_areasum_m3"]],
         ["Withdrawal Surface", "Waterbodies",   "Withdrawal",         b["act_SurfaceWaterAbstract_areasum_m3"]],
         ["Withdrawal GW",      "Groundwater",   "Withdrawal",         b["nonFossilGroundwaterAbs_areasum_m3"]],
-        ["Withdrawal Fossil GW", "Other Source", "Withdrawal",        b["pot_GroundwaterAbstract_areasum_m3"] - b["nonFossilGroundwaterAbs_areasum_m3"] - b["unmet_lost_areasum_m3"]],
-        ["Return flow",        "Withdrawal",    "Discharge",          b["returnFlow_areasum_m3"] - b["unmet_lost_areasum_m3"]],
+        # fossil groundwater = the unmet demand (only with limitAbstraction = False);
+        # CWatM's returnFlow is already reduced by the lost part, which leaves the
+        # system as its own output (water_demand.py: unmet_lost)
+        ["Withdrawal Fossil GW", "Other Source", "Withdrawal",        fossil],
+        ["Unmet demand lost",  "Withdrawal",    "Unmet lost",         lost],
+        ["Return flow",        "Withdrawal",    "Discharge",          b["returnFlow_areasum_m3"]],
         ["Evap. Withdrawal",   "Withdrawal",    "Evapotranspiration", b["addtoevapotrans_areasum_m3"]],
         ["Consumption",        "Withdrawal",    "Consumption",        b["act_nonIrrConsumption_areasum_m3"] + b["act_totalIrrConsumption_areasum_m3"]],
     ]
     if not show_glacier:
         nodes = [n for n in nodes if n["name"] != "Glacier"]
         links = [l for l in links if l[0] != "Glacier Input"]
+    if fossil <= 0:
+        nodes = [n for n in nodes if n["name"] != "Other Source"]
+        links = [l for l in links if l[0] != "Withdrawal Fossil GW"]
+    if lost <= 0:
+        nodes = [n for n in nodes if n["name"] != "Unmet lost"]
+        links = [l for l in links if l[0] != "Unmet demand lost"]
 
     # storage change (b["ds:<column>"], mm/yr): a store which increased sends water
     # to "Storage (in)", one which decreased gets water from "Storage (out)"
@@ -521,6 +537,9 @@ class FlowDiagramWindow(PlotlyWindowBase):
     _read_station = staticmethod(WatercycleWindow._read_station)
     _title_from_settings_content = WatercycleWindow._title_from_settings_content
     _read_settings_title = WatercycleWindow._read_settings_title
+    _read_limit_abstraction = WatercycleWindow._read_limit_abstraction
+    # class attribute = the default for a window that never read it
+    _limit_abstraction = False
     _load_data = WatercycleWindow._load_data
     _fmt_month = WatercycleWindow._fmt_month
     _date_range_text = WatercycleWindow._date_range_text
@@ -548,6 +567,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
         super().__init__(parent)
         self.csv_path = csv_path
         self.settings_title = self._read_settings_title(csv_path)
+        self._limit_abstraction = self._read_limit_abstraction(csv_path)
 
         # Read the monthly data once; the Sankey is recomputed for the selected
         # [start, end] month window (defaults to the full span). Multiple stations
@@ -753,7 +773,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
             # discharge: the row's mean m3/s -> volume over the row
             bal["discharge_m3s-1"] *= secs[m]
             bal["avgdischarge_m3s-1"] *= secs[m]
-            _nodes, links = _build_balance_links(bal)
+            _nodes, links = _build_balance_links(bal, self._limit_abstraction)
             if storage_link:
                 inc = sum(lk[3] if lk[2] == "Storage (in)" else -lk[3]
                           for lk in links if lk[0] == sector[1])
@@ -829,7 +849,7 @@ class FlowDiagramWindow(PlotlyWindowBase):
                 bal["ds:" + col] = ((full.iloc[end_idx] - full.iloc[baseline_idx])
                                     / cell_area * 1000 / nyears)
 
-        nodes, links = _build_balance_links(bal)
+        nodes, links = _build_balance_links(bal, self._limit_abstraction)
         # Right-click: plotly's node / link pointNumber -> sector (_sector_from_hit)
         self._fig_nodes = [n["name"] for n in nodes]
         self._fig_links = [(lk[0], lk[1], lk[2]) for lk in links]
