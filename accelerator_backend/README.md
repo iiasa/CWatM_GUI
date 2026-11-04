@@ -6,6 +6,15 @@ points/badges/shop/leaderboard/academy progress. Everything resets: no
 migration of existing Supabase accounts (decided explicitly - a clean
 cutover).
 
+**Future direction (not scoped or built yet)**: once real accounts exist,
+the same event-log design extends naturally to broader usage data beyond
+points - anything that helps understand or improve the model, not just
+gamification. Respecting the project's existing privacy stance matters
+here: `CWatM_Account_Privacy.md`/`account_config.PRIVACY_VERSION` already
+spell out exactly what's collected today, and any new category of data
+would need that notice updated and consent asked for, not just quietly
+added. Revisit once the login/points migration itself is done.
+
 ## Why this shape
 
 Accelerator has no general-purpose database service (confirmed against the
