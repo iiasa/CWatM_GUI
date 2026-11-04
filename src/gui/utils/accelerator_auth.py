@@ -9,19 +9,17 @@ there against the real server; mirrored here rather than re-derived):
   3. ``get_access_token()`` exchanges the stored refresh token for a
      short-lived access token, rotating the refresh token each time - every
      authenticated call goes through this.
-  4. ``who_am_i()`` - meant to be the logged-in user's identity
-     (``full_name``, ``email``, ``roles``, ``uid``), to identify the
-     caller to whatever replaces the points/badges backend. Steps 1-3
-     are confirmed live (2026-11-02, real login/access-token/refresh
-     round-trip against the real server) - step 4 is NOT YET POSSIBLE
-     AT ALL: ``GET /v1/auth/user/`` is browser-only (confirmed by the
-     Accelerator team, 2026-11-02 - its "Invalid token" response to our
-     working device-flow access token wasn't a bug on our side). They
-     are adding logged-in-user details to the aterm-cli routes
-     specifically for this, "next deployment cycle", no date given.
-     who_am_i() is a placeholder against that not-yet-shipped endpoint
-     - do not wire it into anything until confirmed live, and update
-     the URL/path here once they announce it.
+  4. ``who_am_i()`` - the logged-in user's identity (``full_name``,
+     ``email``, ``roles``, ``uid``), to identify the caller to whatever
+     replaces the points/badges backend. ``GET /v1/auth/user/`` (tried
+     first) turned out to be browser-only (confirmed by the Accelerator
+     team, 2026-11-02 - its "Invalid token" response to our working
+     device-flow access token wasn't a bug on our side). The team added
+     a proper one under aterm-cli for this exact purpose and sent the
+     link once it shipped (2026-11-04): ``GET
+     /v1/aterm-cli/user/me/`` - same response shape, not yet
+     re-verified live against the real server with this new path
+     (steps 1-3 were, 2026-11-02; update this note once step 4 is too).
 
 Unrelated to ``account_auth``/``account_client.py``'s Supabase-backed CWatM
 account login - a separate identity provider entirely, its own keyring
@@ -148,16 +146,15 @@ def get_access_token():
 
 
 def who_am_i():
-    """The logged-in user's identity: {full_name, email, roles, uid}.
-    Placeholder against an endpoint the Accelerator team hasn't shipped
-    yet - see this module's own doc comment. Will raise AcceleratorAuthError
-    ("Invalid token") against the real server until then."""
+    """The logged-in user's identity: {full_name, email, roles, uid} -
+    GET /v1/aterm-cli/user/me/ (not yet re-verified live with this path -
+    see this module's own doc comment)."""
     import requests
 
     access_token = get_access_token()
     try:
         res = requests.get(
-            f"{config.API_BASE}/auth/user/",
+            f"{config.ATERM_BASE}/user/me/",
             headers={"x-authorization": access_token},
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )

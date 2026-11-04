@@ -169,7 +169,7 @@ class TestWhoAmI:
 
         assert identity == {"full_name": "A Researcher", "email": "a@example.org", "roles": [], "uid": 42}
         _method, url, _body, headers = fake.calls[0]
-        assert url.endswith("/auth/user/")
+        assert url.endswith("/aterm-cli/user/me/")
         assert headers["x-authorization"] == "a-token"
 
     def test_unauthorized_raises(self, monkeypatch):
