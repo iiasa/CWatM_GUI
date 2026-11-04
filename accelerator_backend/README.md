@@ -96,27 +96,34 @@ main GUI's `pytest` run - `pytest.ini`'s `testpaths = tests` only,
 deliberately, since this is a separate component, same relationship
 `tauri-app/` has to the GUI).
 
+## Resolved
+
+- `who_am_i()` (`src/gui/utils/accelerator_auth.py`) - the team shipped
+  `GET /v1/aterm-cli/user/me/` (2026-11-04) and it's confirmed live: a
+  real device-flow login round-trip through login → access-token →
+  identity lookup correctly returned `{'full_name': 'SMILOVIC Mikhail',
+  'email': 'smilovic@iiasa.ac.at', 'roles': ['APP__VIEW'], 'uid': 315}`.
+  The desktop GUI's own login can now be wired to a real `uid` - the one
+  thing every piece of this ledger design was waiting on.
+
 ## Not yet built
 
 - The GitHub Actions workflow itself that ties the pieces above together:
-  claim pickup (the GUI's staging-area write - also blocked on `who_am_i()`
-  below), reading the user's existing ledger state, calling `award_run.decide()`/
-  `badges.new_badges()`, dispatching the write.
+  claim pickup (the GUI's staging-area write), reading the user's
+  existing ledger state, calling `award_run.decide()`/`badges.new_badges()`,
+  dispatching the write.
 - Confirming a dispatched write job actually succeeds (no result-marker
   polling wired in yet - `dispatch_write_job` returns a job id and nothing
   more).
 - Everything beyond run-completion points and river badges: feature badges
   (ModFlow/pySnowClim/Glacier), the Field Test badge, the shop, leaderboard
   aggregation, academy progress, run locations.
-- `who_am_i()` (`src/gui/utils/accelerator_auth.py`) - blocked on an
-  Accelerator endpoint the team hasn't shipped yet (confirmed live,
-  2026-11-02: exposing logged-in-user details on the aterm-cli routes,
-  "next deployment cycle", no date given). Nothing here can be wired into
-  the GUI's own login until that lands - this ledger logic was built ahead
-  of it deliberately, since the rule logic itself doesn't depend on how the
-  uid was obtained.
+- A real login dialog in the desktop GUI itself (`accelerator_auth.py` is
+  not yet wired into any UI - see its module doc comment).
 - The ledger Accelerator project and the validator's own Accelerator
-  account (not yet created) - see the setup checklist below.
+  account (not yet created - blocked live on a 403 Forbidden creating a
+  new Accelerator project, reported to the team, awaiting their reply) -
+  see the setup checklist below.
 
 ## Setup checklist (for a human, not something Claude can do)
 

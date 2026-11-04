@@ -30,7 +30,7 @@ def main():
     access_token = auth.get_access_token()
     print(f"Got an access token ({len(access_token)} chars).")
 
-    print("Calling /v1/auth/user/...")
+    print("Calling who_am_i()...")
     identity = auth.who_am_i()
     print(f"Logged in as: {identity}")
 

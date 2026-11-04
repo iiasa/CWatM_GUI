@@ -14,12 +14,14 @@ there against the real server; mirrored here rather than re-derived):
      replaces the points/badges backend. ``GET /v1/auth/user/`` (tried
      first) turned out to be browser-only (confirmed by the Accelerator
      team, 2026-11-02 - its "Invalid token" response to our working
-     device-flow access token wasn't a bug on our side). The team added
-     a proper one under aterm-cli for this exact purpose and sent the
-     link once it shipped (2026-11-04): ``GET
-     /v1/aterm-cli/user/me/`` - same response shape, not yet
-     re-verified live against the real server with this new path
-     (steps 1-3 were, 2026-11-02; update this note once step 4 is too).
+     device-flow access token wasn't a bug on our side); they added
+     ``GET /v1/aterm-cli/user/me/`` for this exact purpose and sent the
+     link once it shipped (2026-11-04).
+
+All four steps are now confirmed live end to end (2026-11-04): a real
+device-flow login returned ``{'full_name': 'SMILOVIC Mikhail', 'email':
+'smilovic@iiasa.ac.at', 'roles': ['APP__VIEW'], 'uid': 315}``, and the
+cached access token correctly avoided a second network call on reuse.
 
 Unrelated to ``account_auth``/``account_client.py``'s Supabase-backed CWatM
 account login - a separate identity provider entirely, its own keyring
@@ -147,8 +149,7 @@ def get_access_token():
 
 def who_am_i():
     """The logged-in user's identity: {full_name, email, roles, uid} -
-    GET /v1/aterm-cli/user/me/ (not yet re-verified live with this path -
-    see this module's own doc comment)."""
+    GET /v1/aterm-cli/user/me/. Confirmed live (2026-11-04)."""
     import requests
 
     access_token = get_access_token()
