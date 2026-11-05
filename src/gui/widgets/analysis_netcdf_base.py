@@ -106,6 +106,37 @@ _DEFAULT_PLAY_SPEED = "Normal"
 # units ... or installing cftime").
 _TIME_FILL_LIMIT = 1e30
 
+# "<months|years> since <date>" - written by older CWatM runs (e.g. ISIMIP monthly
+# output: "Months since 1901-01-01"). CF/xarray/cftime accept month/year units only
+# for a 360_day calendar, so with any other calendar the decode fails and the time
+# axis would stay raw numbers (1368, 1369, ...). Decoded here as calendar months.
+_MONTH_YEAR_UNITS_RE = re.compile(
+    r"^\s*(months?|years?)\s+since\s+(\d{1,4})-(\d{1,2})(?:-(\d{1,2}))?", re.IGNORECASE)
+
+
+def _decode_month_year_time(vals, units):
+    """Raw ``months/years since <date>`` values -> ``datetime64[ns]`` array, or
+    ``None`` if ``units`` is not such a unit. Whole steps are calendar months
+    (years = 12 months) added to the reference date; a fractional part is spread
+    over the target month's days."""
+    m = _MONTH_YEAR_UNITS_RE.match(str(units or ""))
+    if not m:
+        return None
+    per = 12.0 if m.group(1).lower().startswith("year") else 1.0
+    y0, mo0 = int(m.group(2)), int(m.group(3))
+    d0 = int(m.group(4) or 1)
+    vals = np.asarray(vals, dtype="float64") * per
+    whole = np.floor(vals)
+    frac = vals - whole
+    # datetime64[M] counts months since 1970-01
+    months = ((y0 - 1970) * 12 + (mo0 - 1)) + whole.astype("int64")
+    start = months.astype("datetime64[M]")
+    nxt = (start + np.timedelta64(1, "M")).astype("datetime64[D]")
+    start_d = start.astype("datetime64[D]")
+    month_days = (nxt - start_d).astype("float64")
+    offset_ns = ((d0 - 1) + frac * month_days) * 86400e9
+    return start_d.astype("datetime64[ns]") + offset_ns.astype("int64").astype("timedelta64[ns]")
+
 
 def _open_dataset_safe(path, chunks=None):
     """``xr.open_dataset`` that survives fill values in the time axis.
@@ -139,6 +170,21 @@ def _open_dataset_safe(path, chunks=None):
             if bad.any() and not bad.all():
                 # Keep only the written time steps (usually the leading ones).
                 ds = ds.isel({var.dims[0]: np.nonzero(~bad)[0]})
+        # "months/years since" (older CWatM / ISIMIP output): decode by hand, since
+        # xarray refuses these units outside a 360_day calendar.
+        for name, var in list(ds.variables.items()):
+            if var.ndim != 1:
+                continue
+            try:
+                decoded = _decode_month_year_time(var.values, var.attrs.get("units"))
+            except Exception:
+                log.debug("_open_dataset_safe: month/year decode failed", exc_info=True)
+                decoded = None
+            if decoded is None:
+                continue
+            attrs = {k: v for k, v in var.attrs.items() if k not in ("units", "calendar")}
+            ds = ds.assign_coords({name: (var.dims, decoded, attrs)}) if name in ds.coords \
+                else ds.assign({name: (var.dims, decoded, attrs)})
         return xr.decode_cf(ds)
     except Exception:
         return ds  # undecoded times (raw numbers) - degrade gracefully
@@ -350,21 +396,21 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
         return ""
 
     def _read_settings_title(self, ds):
-        """The settings-file 'Title': read from the CWatM 'version_settingsfile' global
-        attribute (which stores the settings content); fall back to the settings
-        currently loaded in the main window. Empty string if neither is available."""
+        """The title of the NetCDF file itself: its global ``title`` attribute (any
+        case), else the 'Title' inside the CWatM ``version_settingsfile`` global
+        attribute (the settings content stored with the run). Never the settings
+        loaded in the main window - that may belong to a different run. Empty
+        string if the file has neither."""
+        try:
+            for key, value in ds.attrs.items():
+                if str(key).strip().lower() == "title" and str(value).strip():
+                    return str(value).strip()
+        except Exception:
+            log.debug("_read_settings_title: ignored", exc_info=True)
         try:
             content = ds.attrs.get("version_settingsfile", "")
             if content:
                 t = self._title_from_settings_content(content)
-                if t:
-                    return t
-        except Exception:
-            log.debug("_read_settings_title: ignored", exc_info=True)
-        try:
-            mw = self.parent()
-            if mw is not None and hasattr(mw, "original_content"):
-                t = self._title_from_settings_content(mw.original_content or "")
                 if t:
                     return t
         except Exception:
