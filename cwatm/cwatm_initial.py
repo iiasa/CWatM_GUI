@@ -33,10 +33,10 @@ from cwatm.hydrological_modules.water_demand.wastewater import waterdemand_waste
 from cwatm.hydrological_modules.capillarRise import capillarRise
 from cwatm.hydrological_modules.interception import interception
 from cwatm.hydrological_modules.runoff_concentration import runoff_concentration
-from cwatm.hydrological_modules.lakes_res_small import lakes_res_small
+from cwatm.hydrological_modules.routing_reservoirs.lakes_res_small import lakes_res_small
 from cwatm.hydrological_modules.environflow import environflow
 from cwatm.hydrological_modules.routing_reservoirs.routing_kinematic import routing_kinematic
-from cwatm.hydrological_modules.lakes_reservoirs import lakes_reservoirs
+from cwatm.hydrological_modules.routing_reservoirs.lakes_reservoirs import lakes_reservoirs
 from cwatm.hydrological_modules.waterquality1 import waterquality1
 from cwatm.management_modules.output import *
 from cwatm.management_modules.data_handling import *
@@ -52,8 +52,6 @@ class Variables:
     
     Attributes
     ----------
-    initmap : dict
-        Dictionary storing initial condition maps during calibration mode
     loadInit : bool
         Flag indicating whether to load initial conditions from netCDF files
     initLoadFile : str
@@ -88,8 +86,6 @@ class Variables:
             
         Notes
         -----
-        During calibration mode (Flags['calib']), loaded initial maps are stored
-        in the initmap dictionary for potential reuse across calibration runs.
         Multi-layer variables are identified by appending the layer number to
         the base variable name.
         """
@@ -98,10 +94,7 @@ class Variables:
             name = name + str(number)
 
         if self.loadInit:
-            map = readnetcdfInitial(self.initLoadFile, name, default, warn)
-            if Flags['calib']:
-                self.initmap[name] = map
-            return map
+            return readnetcdfInitial(self.initLoadFile, name, default, warn)
         else:
             return default
 
@@ -355,9 +348,9 @@ class CWATModel_ini(DynamicModel):
         self.lakes_res_small_module.initial()
 
         if checkOption('includeWaterBodies'):
-            self.lakes_reservoirs_module.initWaterbodies()
-            self.lakes_reservoirs_module.initial_lakes()
-            self.lakes_reservoirs_module.initial_reservoirs()
+            self.lakes_reservoirs_module.initial()
+        # points of the water body output OUT_RES<n>_... (outlets are known only after lakes_reservoirs.initial)
+        self.output_module.initial_res()
         self.waterdemand_module.initial()
         self.environflow_module.initial()
         self.waterquality1.initial()

@@ -168,13 +168,15 @@ class CWATModel_dyn(DynamicModel):
         """ up to here it was fun, now the real stuff starts
         """
 
-        if checkOption('calc_environflow') and not returnBool('calc_ef_afterRun'):
-            # if only the dis is used for calculation of EF
+        if checkOption('calc_environflow') and not returnBool('calc_ef_afterRun') and not Flags['check']:
+            # if only the dis is used for calculation of EF (with -c: normal one day check of the input)
             self.environflow_module.dynamic()
             self.output_module.dynamic(ef=True)
             header = "\n\n ======================== CWATM ONLY EF calculation===========\n"
             print(header + "done with Environmental Flow\n")
-            sys.exit(400)
+            # a normal end of the run: this was the last time step
+            self.lastStep = self.currentStep
+            return
 
         self.readmeteo_module.dynamic()
         timemeasure("Read meteo")  # 1. timing after read input maps
@@ -201,7 +203,7 @@ class CWATModel_dyn(DynamicModel):
         self.lakes_reservoirs_module.dynamic()
 
         # ***** READ land use fraction maps***************************
-        self.landcoverType_module.dynamic_fracIrrigation(init=dateVar['newYear'], dynamic=self.var.dynamicLandcover)
+        self.landcoverType_module.dynamic_fracIrrigation(init=dateVar['newYear'], dynamic=self.var.dynamicLandcover, move=True)
 
         # ***** RAIN AND SNOW *****************************************
         if self.var.usepySnowClim:
@@ -234,6 +236,9 @@ class CWATModel_dyn(DynamicModel):
 
             self.routing_kinematic_module.dynamic()
             timemeasure("Routing_Kin")  # 10. timing
+
+            # variables only for the output (human use, averages per adminSegment) - only if they are in the output
+            self.waterdemand_module.dynamic_output()
 
             self.waterquality1.dynamic()
 

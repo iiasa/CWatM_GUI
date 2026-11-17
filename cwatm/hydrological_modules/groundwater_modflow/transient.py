@@ -27,7 +27,7 @@ def renamed_key(name, old_name):
     if name in binding:
         return name
     if old_name in binding:
-        print(CWATMWarning("Warning: " + old_name + " is a former name - please use " + name))
+        print_cwatm_warning("Warning: " + old_name + " is a former name - please use " + name)
         return old_name
     return None
 
@@ -280,12 +280,11 @@ class groundwater_modflow:
         for old, solver in [('use_super_complex_solver_for_modflow', 'super_complex'),
                             ('use_complex_solver_for_modflow', 'complex')]:
             if old in option:
-                msg = ("Warning: " + old + " in [OPTIONS] is not used any more - use modflow_solver = " + solver +
-                       " in [GROUNDWATER_MODFLOW]")
+                msg = "Warning: " + old + " in [OPTIONS] is not used any more"
                 if option_bool(old) and 'modflow_solver' not in binding:
                     self.solver = solver
                     msg += " (" + solver + " is used for this run)"
-                print(CWATMWarning(msg))
+                print_cwatm_warning(msg)
         # water balance check of the CWatM - ModFlow exchange: written to ModFlow_DiscrepancyError.txt
         self.var.writeerror = setting_bool('writeModflowError')
         if self.verbose:
@@ -362,8 +361,8 @@ class groundwater_modflow:
 
         if restart_head is not None:
             if self.var.load_init_water_table:
-                print(CWATMWarning("Warning: init_water_table is not used - the MODFLOW head saved with the "
-                                   "init file is used: " + restart_head))
+                print_cwatm_warning("Warning: init_water_table is not used - the MODFLOW head saved with the "
+                                    "init file is used: " + restart_head)
             head_modflow = self.grid.read_map(restart_head, self.nlay)
             # CWatM works with float32 heads (as after each MODFLOW step), MODFLOW gets the float64 head
             return head_modflow.astype(np.float32), head_modflow
@@ -405,8 +404,8 @@ class groundwater_modflow:
         # correctPumpingDiscrepancy (Dor's version) removed 2026-10-10: the pumping split gives ModFlow exactly the
         # CWatM abstraction (difference < 1e-8), there is nothing left to scale
         if 'correctPumpingDiscrepancy' in binding:
-            print(CWATMWarning("Warning: correctPumpingDiscrepancy is not used any more - MODFLOW gets the CWatM "
-                               "pumping without scaling"))
+            print_cwatm_warning("Warning: correctPumpingDiscrepancy is not used any more - MODFLOW gets the CWatM "
+                                "pumping without scaling")
         if not self.var.GW_pumping:
             return None
         # wells_index: flat index (row * ncol + col) of each well (in the order of the MODFLOW wells: layer by layer)
@@ -464,10 +463,13 @@ class groundwater_modflow:
 
     def river_drains(self):
         """
-        Drain elevation with the water depth of the main rivers (Dor's version, formula as in waterquality1.py):
-        drains + water depth from the discharge (no flood plain), at most the top of the aquifer
+        Drain elevation with the water depth of the main rivers (Dor's version, formula of van Vliet et al. 2012):
+        drains + water depth from the discharge (no flood plain), at most the top of the aquifer.
+        Above the discharge which fills the cross section the depth stays the same: the width of the formula grows with
+        the discharge, with a fixed cross section the depth would fall with rising discharge
         """
         discharge = np.maximum(self.var.discharge, 0.0001)
+        discharge = np.minimum(discharge, (self.var.totalCrossSectionArea / 0.4148) ** (1 / 0.898))
         width = 1.22 * discharge ** 0.557
         cross_section = np.minimum(0.4148 * discharge ** 0.898, self.var.totalCrossSectionArea)
         depth = self.grid.to_modflow(np.where(self.river_main, cross_section / width, 0.), nanvalue=0)
@@ -607,6 +609,13 @@ class groundwater_modflow:
         self.var.modflow_compteur = 0  # number of the MODFLOW run (water balance check file)
         # percentage discrepancy error of each MODFLOW run: (number of the MODFLOW run, date, error in %)
         self.var.modflowdiscrepancy = []
+
+        # observed groundwater depth and depth adjuster for layer_outputs (before 2026-11 read in soil.initial)
+        if 'gw_depth_observations' in binding:
+            self.var.gwdepth_observations = readnetcdfWithoutTime(cbinding('gw_depth_observations'),
+                                                                  value='Groundwater depth')
+        if 'gw_depth_sim_obs' in binding:
+            self.var.gwdepth_adjuster = loadmap('gw_depth_sim_obs')
 
         # water table (layer 1) at ModFlow resolution and converted into CWatM map; head<n>, gwdepth<n> of each layer
         self.var.modflow_watertable = np.copy(head[0])
@@ -812,9 +821,9 @@ class groundwater_modflow:
         self.modflow.step()
         # outer iterations at MXITER without convergence (before 2026-10-11 only noticed if the head was nan, Error 152)
         if not self.modflow.converged:
-            print(CWATMWarning("Warning: MODFLOW did not converge on " + dateVar['currDatestr'] + " (MODFLOW run " +
-                               str(self.var.modflow_compteur) + ") - results of this step are not reliable; use "
-                               "another modflow_solver (cooley, complex, super_complex) or a smaller modflow_timestep"))
+            print_cwatm_warning("Warning: MODFLOW did not converge on " + dateVar['currDatestr'] + " (MODFLOW run " +
+                                str(self.var.modflow_compteur) + ") - results of this step are not reliable; use "
+                                "another modflow_solver (cooley, complex, super_complex) or a smaller modflow_timestep")
 
         # extracting the new simulated hydraulic head of each layer (nlay, nrow, ncol)
         head = self.modflow.decompress(self.modflow.head.astype(np.float32)).reshape(
@@ -875,9 +884,9 @@ class groundwater_modflow:
         error = self.water_balance(groundwater_recharge_modflow, (capillar + baseflow) * self.var.modflow_timestep,
                                    self.storage_total - storage_total0, actual_pumping_modflow_array)
         if abs(error) > 1:
-            print(CWATMWarning("Warning: MODFLOW budget error of " + str(error) + " % on " + dateVar['currDatestr'] +
-                               " (MODFLOW run " + str(self.var.modflow_compteur) + ") - results of this step are not "
-                               "reliable; use a smaller modflow_timestep or another modflow_solver"))
+            print_cwatm_warning("Warning: MODFLOW budget error of " + str(error) + " % on " + dateVar['currDatestr'] +
+                                " (MODFLOW run " + str(self.var.modflow_compteur) + ") - results of this step are not "
+                                "reliable; use a smaller modflow_timestep or another modflow_solver")
         if self.var.writeerror:
             self.var.modflowdiscrepancy.append((self.var.modflow_compteur, dateVar['currDatestr'], error))
 

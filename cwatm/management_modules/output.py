@@ -32,7 +32,7 @@ class outputTssMap(object):
     Main CWatM output system class handling time series and map output generation.
 
     This class manages all output operations for the CWatM hydrological model, including
-    NetCDF map writing, time series extraction at gauge points, CSV/TSS file generation,
+    NetCDF map writing, time series extraction at gauge points, CSV file generation,
     and progress reporting. It handles various temporal aggregations (daily, monthly,
     annual) and spatial aggregations (point values, catchment averages/sums).
 
@@ -47,7 +47,7 @@ class outputTssMap(object):
     -----
     The output system supports multiple output formats:
     - NetCDF maps for spatial data with temporal aggregation
-    - Time series files (TSS/CSV) for gauge point data
+    - Time series files (CSV) for gauge point data and for the outlets of lakes / reservoirs (OUT_RES<n>_...)
     - Text dumps for debugging and analysis
     - Progress monitoring for GUI integration
     
@@ -70,19 +70,20 @@ class outputTssMap(object):
     ===================================  ==========    ======================================================================  =====
     Variable [self.var]                  Type          Description                                                             Unit 
     ===================================  ==========    ======================================================================  =====
-    dirUp                                Array         river network in upstream direction                                     --   
+    dirshort                             Array         index of the downstream cell (-1 at pits)                               --   
     fracGlacierCover                     Array         Fraction of glacier cover in a grid cell                                %    
     meteo                                Array         store all meteo data in memeory for warm start (eg calibration)         compl
     sampleAdresses                       List          outflowpoints as 1D index                                               --   
     outpoints                            List          output points (Gauges)                                                  --   
     noOutpoints                          Number        number of output points                                                 --   
+    resAdresses                          Dictionary    OUT_RES<n>_: outlet cell of each water body ID of type n (key n)        --   
+    resOutpoints                         Dictionary    OUT_RES<n>_: x, y of these outlets [x1, y1, x2, y2 ...] (key n)         --   
     evalCatch                            Array         indeces of a subbasin in the mask                                       --   
     catcharea                            Array         catchment area of the subbaSIN                                          m2   
     watercycle                           List          WaterCycle columns: [variable, sum type, flux/storage type]             --   
     waterbalance                         List          WaterBalance columns: watercycle + waterbalance_extra                   --   
     waterbalance_extra                   List          Soil layer and land cover columns only in WaterBalance                  --   
     waterbalanceOut                      Flag          WaterBalance output is written                                          bool 
-    netcdfasindex                        Flag          save netcdf file in a compressed way - for splitting runs in several b  bool 
     firstout                             Number        discharge of the first gauge                                            m3 s-
     discharge                            Array         Channel discharge                                                       m3 s-
     usepySnowClim                        Flag          Flag to use pySnowClim                                                  --   
@@ -172,23 +173,15 @@ class outputTssMap(object):
             """
 
             sampleAdresses = {}
-            outp = []
-            # allpoints = np.where(maskinfo["mask"].data == False)
-            allpoints = np.where(maskinfo["mask"] == False)
 
             for i in np.flatnonzero(out > 0):
                 if out[i] in sampleAdresses:
                     msg = "Gauge number " + str(out[i]) + " is used for more than one cell in the gauge map - only the last cell is used"
-                    print(CWATMWarning(msg))
+                    print_cwatm_warning(msg)
                 sampleAdresses[out[i]] = i
 
             # coordinates in the same order as the output columns (sorted gauge numbers)
-            for key in sorted(sampleAdresses):
-                i = sampleAdresses[key]
-                outx = allpoints[1][i] * maskmapAttr['cell'] + maskmapAttr['x'] + maskmapAttr['cell'] / 2
-                outy = maskmapAttr['y'] - allpoints[0][i] * maskmapAttr['cell'] - maskmapAttr['cell'] / 2
-                outp.append(outx)
-                outp.append(outy)
+            outp = self.cellcoords([sampleAdresses[key] for key in sorted(sampleAdresses)])
 
             return sampleAdresses, outp
 
@@ -214,7 +207,7 @@ class outputTssMap(object):
             -----
             Creates file paths and metadata structures for each configured output.
             For maps: sets up NetCDF file paths and variable creation flags.
-            For time series: configures CSV or TSS file formats based on settings.
+            For time series: sets up the CSV file paths.
             Validates output directory existence and creates error messages for
             missing paths.
             """
@@ -225,6 +218,9 @@ class outputTssMap(object):
                     i = 0
                     for var in out[key]:
                         info = []
+                        if sec not in outDir:
+                            msg = "Error 168: Output: \"" + key + "\" needs a line OUT_Dir in the section [" + sec + "]"
+                            raise CWATMError(msg)
                         if os.path.exists(outDir[sec]):
                             if ismap:
                                 info.append(os.path.join(outDir[sec], str(var) + "_" + type + ".nc"))
@@ -234,30 +230,19 @@ class outputTssMap(object):
                                 info.append(False)
 
                             else:
-                                # TimeoutputTimeseries(binding[tss], self.var, outpoints, noHeader=Flags['noheader'])
-                                # info.append(os.path.join(outDimpontr[sec], str(var) + "_daily.tss"))
-                                newcsvformat = True
-                                suffix = ".csv"
-                                # WaterCycle and WaterBalance are always written as csv (writeTssFileNew with flagCycle)
-                                if 'reportOldTss' in option and var not in ['WaterCycle', 'WaterBalance']:
-                                    newcsvformat = not(checkOption('reportOldTss'))
-                                if not(newcsvformat):
-                                    suffix = ".tss"
-
-                                name = os.path.join(outDir[sec], str(var) + "_" + type + suffix)
-                                # info.append(TimeoutputTimeseries2(name, self.var, outpoints, noHeader=False))
-                                info.append(name)
+                                info.append(os.path.join(outDir[sec], str(var) + "_" + type + ".csv"))
                                 info.append(var)
-                                # flag set True for writing times series in csv format
-                                info.append(newcsvformat)
+                                # third place as for maps (not used for time series)
+                                info.append(True)
                         else:
                             msg = "Error 220: Checking output file path \n"
                             raise CWATMFileError(outDir[sec], msg)
 
                         placeholder = []
                         info.append(placeholder)
-                        if ismap:
-                            info.append(type)  # set type to create variable later on first timestep
+                        # type: maps create the variable on the first timestep; time series: kind of points
+                        # e.g. "daily", "areasum_daily", "res2_daily"
+                        info.append(type)
                         out[key][i] = info
                         i += 1
 
@@ -292,11 +277,11 @@ class outputTssMap(object):
             if os.path.exists(outpoints):
                 outpoints = loadmap(where, local=localGauges).astype(np.int64)
                 # gauges on cells outside the mask are lost when the map is compressed -> warning
-                gaugemap = np.nan_to_num(np.ma.filled(loadmap(where, compress=False, local=localGauges), 0).astype(np.float64))
+                gaugemap = np.nan_to_num(np.ma.filled(loadmap(where, compress=False, local=localGauges, masked=True), 0).astype(np.float64))
                 lost = np.setdiff1d(gaugemap[gaugemap > 0].astype(np.int64), outpoints[outpoints > 0])
                 if lost.size > 0:
                     msg = "Gauges " + ", ".join(str(g) for g in lost) + " in \"Gauges\" are on cells outside the mask map - no output for them"
-                    print(CWATMWarning(msg))
+                    print_cwatm_warning(msg)
             else:
                 if len(coord) == 1:
                     msg = "Error 221: Checking output-points file\n"
@@ -304,12 +289,10 @@ class outputTssMap(object):
                     msg = "Error 129: Coordinates are not pairs\n"
                 raise CWATMFileError(outpoints, msg, sname="Gauges")
 
-            # self.var.Tss[tss] = TimeoutputTimeseries(cbinding(tss), self.var, outpoints, noHeader=Flags['noheader'])
             outpoints[outpoints < 0] = 0
             self.var.sampleAdresses, self.var.outpoints = getlocOutpoints(outpoints)  # for key in sorted(mydict):
 
         self.var.noOutpoints = len(self.var.sampleAdresses)
-        # catch = subcatchment1(self.var.dirUp,outpoints,self.var.UpArea1)
 
         # check if catchment area calculation is necessary (areaavg, areasum or WaterCycle output)
         calcCatch = False
@@ -333,7 +316,7 @@ class outputTssMap(object):
                 outp = globals.inZero.copy()
                 outp[self.var.sampleAdresses[key]] = key
 
-                self.var.evalCatch[key] = catchment1(self.var.dirUp, outp)
+                self.var.evalCatch[key] = catchment1(self.var.dirshort, outp)
                 self.var.catcharea[key] = np.bincount(self.var.evalCatch[key], weights=self.var.cellArea)[key]
                 self.var.catchIndex[key] = np.flatnonzero(self.var.evalCatch[key] == key)
                 self.var.catchZero[key] = np.zeros(len(self.var.catchIndex[key]), dtype=np.int64)
@@ -342,7 +325,9 @@ class outputTssMap(object):
         # for storing water cycle variable the list of variables if pulled together
         self.var.watercycle = [['precipitation_sn', 'areasum_m3', 'flux'], ['Rain', 'areasum_m3', 'flux'], ['Snow', 'areasum_m3', 'flux'],
                       ['SnowMelt','areasum_m3','flux'],['IceMelt', 'areasum_m3', 'flux'],
-                      ['runoff', 'areasum_m3','flux'], ['runoff_m3','sum_m3', 'flux'], ['baseflow', 'areasum_m3', 'flux'],
+                      ['runoff', 'areasum_m3','flux'], ['runoff_m3','sum_m3', 'flux'],
+                      ['sum_directRunoff', 'areasum_m3', 'flux'], ['sum_interflow', 'areasum_m3', 'flux'],
+                      ['baseflow', 'areasum_m3', 'flux'],
                       ['totalET', 'areasum_m3', 'evap'], ['sum_actTransTotal', 'areasum_m3', 'evap'],
                       ['sum_actBareSoilEvap','areasum_m3', 'evap'], ['sum_interceptEvap', 'areasum_m3', 'evap'], ['sum_openWaterEvap', 'areasum_m3', 'evap'],
                       ['snowEvap', 'areasum_m3', 'evap'], ['EvapoChannel', 'areasum_m3', 'evap'],
@@ -439,7 +424,7 @@ class outputTssMap(object):
             self.var.watercycle.extend(temp)
 
         # WaterBalance output = WaterCycle columns + interception (throughfall), the 3 soil layers, the soil of each
-        # land cover, potential ET, runoff concentration inputs, snow pack (pySnowClim), precipitation on glaciers
+        # land cover, potential ET, snow pack (pySnowClim), precipitation on glaciers
         # (cell means, calculated in waterbalance_cellmeans only if WaterBalance is written)
         temp = [['sum_throughfall', 'areasum_m3', 'flux'],
                 ['sum_w1', 'areasum_m3', 'storage'], ['sum_w2', 'areasum_m3', 'storage'], ['sum_w3', 'areasum_m3', 'storage'],
@@ -463,9 +448,6 @@ class outputTssMap(object):
         # potential transpiration (after interception evaporation), reference ET of crops and open water
         temp += [['sum_totalPotET', 'areasum_m3', 'evap'], ['sum_potTranspiration', 'areasum_m3', 'evap'],
                  ['ETRef', 'areasum_m3', 'evap'], ['EWRef', 'areasum_m3', 'evap']]
-        # runoff concentration: inputs direct runoff and interflow (baseflow, leakageIntoRunoff, runoff and
-        # gridcell_storage are WaterCycle columns)
-        temp += [['sum_directRunoff', 'areasum_m3', 'flux'], ['sum_interflow', 'areasum_m3', 'flux']]
         if self.var.usepySnowClim:
             # snow pack: snow water equivalent (packwater is the other part of SnowCover)
             temp += [['snowSWE', 'areasum_m3', 'storage']]
@@ -587,10 +569,60 @@ class outputTssMap(object):
                 if entry != "None":
                     self.outvarparsed[entry[1]] = parseoutvar(entry[1])
 
-        # save netcdf as index maps (not lar/lon) but only the valid cells
-        self.var.netcdfasindex = False
-        if "netcdfasindex" in option:
-            self.var.netcdfasindex = checkOption('netcdfasindex')
+
+    def cellcoords(self, cells):
+        """
+        x, y of the cell centres (model projection) of compressed cell indices: [x1, y1, x2, y2, ...]
+        (used for the gauges and the outlets of the water bodies)
+        """
+        allpoints = np.where(maskinfo["mask"] == False)
+        outp = []
+        for i in cells:
+            outp.append(allpoints[1][i] * maskmapAttr['cell'] + maskmapAttr['x'] + maskmapAttr['cell'] / 2)
+            outp.append(maskmapAttr['y'] - allpoints[0][i] * maskmapAttr['cell'] - maskmapAttr['cell'] / 2)
+        return outp
+
+    def initial_res(self):
+        """
+        Points of the water body output OUT_RES<n>_<type>: the outlet cells of the water bodies of type n
+        (0 = all types 1-6, 1 = lakes, 2 = reservoirs, 3 = lake and reservoir, 4, 5 = reservoir types 4, 5,
+        6 = wetlands), columns R<ID> sorted by the water body ID.
+        The type is the one of the map / Excel (waterBodyTyp_unchanged), also for a reservoir without
+        volume which is run as a lake.
+        Called after lakes_reservoirs.initial (in output.initial the water bodies are not known yet).
+        No water body of type n -> warning and no output.
+        """
+        self.var.resAdresses = {}
+        self.var.resOutpoints = {}
+        for tss in list(outTss.keys()):
+            kind = tss.split('_')[-2]
+            if kind[:3] != "res":
+                continue
+            n = int(kind[3:])
+            # settings key for the messages: sec_out_tss_res<n>_<type> -> OUT_RES<n>_<type> in section [SEC]
+            sec = tss.split("_out_tss_")[0].upper()
+            key = "OUT_" + kind.upper() + "_" + tss.split('_')[-1]
+            for i in range(len(outTss[tss])):
+                if outTss[tss][i] == "None":
+                    continue
+                if outTss[tss][i][1] in ["WaterCycle", "WaterBalance"]:
+                    msg = "Error 182: Output: \"" + key + " = " + outTss[tss][i][1] + "\" in section [" + sec + "] is not possible!\n"
+                    msg += "WaterCycle and WaterBalance are catchment balances (OUT_TSS_...), not values of a water body"
+                    raise CWATMError(msg)
+                if n not in self.var.resAdresses:
+                    adresses = {}
+                    if checkOption('includeWaterBodies'):
+                        for cell in np.flatnonzero(self.var.waterBodyOut):
+                            typ = self.var.waterBodyTyp_unchanged[cell]
+                            if (n == 0 and 1 <= typ <= 6) or typ == n:
+                                adresses[int(self.var.waterBodyOut[cell])] = cell
+                    self.var.resAdresses[n] = dict(sorted(adresses.items()))
+                    self.var.resOutpoints[n] = self.cellcoords(list(self.var.resAdresses[n].values()))
+                if not self.var.resAdresses[n]:
+                    msg = "Output: \"" + key + " = " + outTss[tss][i][1] + "\" in section [" + sec + "]: "
+                    msg += ("no water body" if n == 0 else "no water body of type " + str(n)) + " in the model - no output"
+                    print_cwatm_warning(msg)
+                    outTss[tss][i] = "None"
 
 
     def soil_terms(self):
@@ -651,7 +683,9 @@ class outputTssMap(object):
             ids, types = self.var.waterBodyID_C[order], self.var.waterBodyTypCTemp[order]
 
             def islake(idmap):
-                pos = np.minimum(np.searchsorted(ids, idmap), ids.size - 1)
+                if ids.size == 0:
+                    return np.zeros(idmap.shape, dtype=bool)
+                pos =np.minimum(np.searchsorted(ids, idmap), ids.size - 1)
                 typ = np.where((idmap > 0) & (ids[pos] == idmap), types[pos], 0)
                 return (typ == 1) | (typ == 6)
 
@@ -701,7 +735,7 @@ class outputTssMap(object):
                 np.add.at(transit, self.var.decompress_LR,
                           np.where(typLake, 0.5 * self.var.lakeInflowOldC * self.var.dtRouting, 0.))
             # small lakes (lakes_res_small.py): Puls inflow (new + old) / 2 -> half of the inflow of the day is still on
-            # its way (smallLakedaycorrect); it is taken from the runoff, but not yet in smalllakeStorage
+            # its way; it is taken from the runoff, but not yet in smalllakeStorage
             if returnBool('useSmallLakes'):
                 transit += 0.5 * self.var.smalllakeInflowOld * self.var.DtSec
             self.var.lakeInflowTransit = transit
@@ -802,6 +836,16 @@ class outputTssMap(object):
             """
             return np.bincount(self.var.catchZero[key], weights=weights[self.var.catchIndex[key]], minlength=1)[0]
 
+        def points(expression):
+            """
+            Points of a time series output: the gauges, or for OUT_RES<n>_... the outlets of the water bodies of type n
+            :return: addresses {key: cell index} (sorted keys = columns), x/y list of the points, column prefix
+            """
+            kind = expression[4].split('_')[0]
+            if kind[:3] == "res":
+                n = int(kind[3:])
+                return self.var.resAdresses[n], self.var.resOutpoints[n], "R"
+            return self.var.sampleAdresses, self.var.outpoints, "G"
 
         def sample3(expression, map, daymonthyear):
             """
@@ -824,13 +868,13 @@ class outputTssMap(object):
             Notes
             -----
             Handles three types of spatial aggregation:
-            - Point values: Direct sampling at gauge coordinates
+            - Point values: Direct sampling at gauge coordinates, or for OUT_RES<n>_... at the outlets of the
+              water bodies of type n (see points)
             - Area averages: Catchment-weighted mean values
             - Area sums: Catchment-weighted total values
-            
+
             Accumulates values during simulation and writes complete time series
-            to file at the end of the simulation period. Supports both CSV and
-            traditional TSS formats.
+            to a CSV file at the end of the simulation period.
             """
 
             #if dateVar['checked'][dateVar['currwrite'] - 1] >= daymonthyear:
@@ -847,7 +891,8 @@ class outputTssMap(object):
             if areatype in ['areaavg','areasum']:
                 # weights calculated once and used for all gauges
                 weights = map * self.var.cellArea
-            for key in sorted(self.var.sampleAdresses):
+            adresses = points(expression)[0]
+            for key in sorted(adresses):
                 if areatype in ['areaavg','areasum']:
                     # value from catchment
                     v = catchsum(weights, key)
@@ -857,16 +902,13 @@ class outputTssMap(object):
                             v = 0.
                         else:
                             v = v / self.var.catcharea[key]
-                else: # from single cell
-                   v = map[self.var.sampleAdresses[key]]
+                else: # from single cell (gauge or outlet of a water body)
+                   v = map[adresses[key]]
                 value.append(v)
             expression[3].append(value)
 
             if dateVar['laststep']:
-                if expression[2]:
-                    writeTssFileNew(expression, daymonthyear)
-                else:
-                    writeTssFile(expression, daymonthyear)
+                writeCsvFile(expression, daymonthyear)
 
             return expression
 
@@ -900,8 +942,7 @@ class outputTssMap(object):
             - Area sums: Catchment-weighted total values
 
             Accumulates values during simulation and writes complete time series
-            to file at the end of the simulation period. Supports both CSV and
-            traditional TSS formats.
+            to a CSV file at the end of the simulation period.
             """
 
             # the values of this time step are the same for all WaterCycle/WaterBalance outputs (daily, monthtot,
@@ -951,14 +992,14 @@ class outputTssMap(object):
                 expression[3].append([v[:n] for v in watercycleToday[0]])
 
             if dateVar['laststep']:
-               writeTssFileNew(expression, daymonthyear,True)
+               writeCsvFile(expression, daymonthyear,True)
 
             return expression
 
 
-        def writeTssFile(expression, daymonthyear):
+        def writeCsvFile(expression, daymonthyear, flagCycle = False):
             """
-            Write traditional TSS format time series file with PCRaster-style header.
+            Write a time series file in CSV format with date headers.
 
             Parameters
             ----------
@@ -969,113 +1010,60 @@ class outputTssMap(object):
 
             Notes
             -----
-            Creates traditional PCRaster TSS format files with:
-            - Metadata header with model version and run information
-            - Column count and timestep numbering
-            - Fixed-width numeric formatting
-            - Missing value handling with 1e31 sentinel
-            
-            Only outputs timesteps matching the specified temporal aggregation level
-            based on the dateVar checking system.
-            """
-
-            outputFilename = expression[0]
-
-            #if expression[2]: now new csv if true
-            writeFileHeader(outputFilename,expression)
-            outputFile = open(outputFilename, "a")
-
-            assert outputFile
-            if len(expression[3]):
-                numbervalues = len(expression[3][0])
-
-                for timestep in range(dateVar['intSpin'], dateVar['intEnd'] + 1):
-                    if dateVar['checked'][timestep - dateVar['intSpin']] >= daymonthyear:
-                    #if dateVar['checked'][timestep - 1] >= daymonthyear:
-                        row = ""
-                        row += " %8g" % timestep
-                        for i in range(numbervalues):
-                            value = expression[3][timestep-1][i]
-                            if isinstance(value, Decimal):
-                                row += "           1e31"
-                            else:
-                                row += " %14g" % value
-                        row += "\n"
-                        outputFile.write(row)
-
-            outputFile.close()
-
-        def writeTssFileNew(expression, daymonthyear, flagCycle = False):
-            """
-            Write modern CSV format time series file with date headers.
-
-            Parameters
-            ----------
-            expression : list
-                Output configuration with filename, variable info, and accumulated data
-            daymonthyear : int
-                Temporal filter level: 0=daily, 1=monthly, 2=annual
-
-            Notes
-            -----
-            Creates modern CSV format files with:
+            Creates CSV files with:
             - Comma-separated values
             - Date column in DD/MM/YYYY format
             - Human-readable headers with gauge coordinates
             - Model version and run metadata
             
             Date formatting adjusts to aggregation level (daily dates, month start
-            for monthly data, year start for annual data). Preferred format for
-            modern applications and data analysis.
+            for monthly data, year start for annual data).
             """
 
             outputFilename = expression[0]
 
-            if expression[2]:
-                if flagCycle:
-                    writeFileHeaderWaterCycle(outputFilename, expression)
-                    # pandas resample needs real dates -> only standard calendar
-                    if dateVar['calendar'] not in ['standard', 'gregorian', 'proleptic_gregorian']:
-                        msg = "Error 139: WaterCycle output in: \"" + outputFilename + "\" needs a standard calendar in the precipitation maps\n"
-                        msg += "Calendar is: \"" + dateVar['calendar'] + "\""
-                        raise CWATMError(msg)
-                    d0 = dateVar['dateStart']
-                    dates = pd.date_range(start=datetime.datetime(d0.year, d0.month, d0.day), periods=dateVar['diffdays'], freq="D")
-                    # reformat expression: not the best solution
-                    # expression: 1: timesteps 2: stations 3: 79 vars eg expression[3][211][0][78]
-                    #expression[3] = np.array(expression[3]).transpose(1, 0, 2)
-                    # DF 29092026
-                    expression[3] = np.array(expression[3][(dateVar['intSpin'] - 1):(dateVar['intEnd'])]).transpose(1, 0, 2)
-                    totals = []
-                    storage = []
-                    means = []
+            if flagCycle:
+                writeFileHeaderWaterCycle(outputFilename, expression)
+                # pandas resample needs real dates -> only standard calendar
+                if dateVar['calendar'] not in ['standard', 'gregorian', 'proleptic_gregorian']:
+                    msg = "Error 139: WaterCycle output in: \"" + outputFilename + "\" needs a standard calendar in the precipitation maps\n"
+                    msg += "Calendar is: \"" + dateVar['calendar'] + "\""
+                    raise CWATMError(msg)
+                d0 = dateVar['dateStart']
+                dates = pd.date_range(start=datetime.datetime(d0.year, d0.month, d0.day), periods=dateVar['diffdays'], freq="D")
+                # reformat expression: not the best solution
+                # expression: 1: timesteps 2: stations 3: 79 vars eg expression[3][211][0][78]
+                #expression[3] = np.array(expression[3]).transpose(1, 0, 2)
+                # DF 29092026
+                expression[3] = np.array(expression[3][(dateVar['intSpin'] - 1):(dateVar['intEnd'])]).transpose(1, 0, 2)
+                totals = []
+                storage = []
+                means = []
 
-                    # DF 29092026
-                    if version.parse(pd.__version__) >= version.parse("2.2.0"):
-                        FREQ_MONTH = "ME"
-                        FREQ_YEAR = "YE"
-                    else:
-                        FREQ_MONTH = "M"
-                        FREQ_YEAR = "Y"
-                    
-                    for k in range(len(self.var.sampleAdresses)):
-                        df = pd.DataFrame(expression[3][k], index=dates)
-                        if daymonthyear == 1:
-                            freq = FREQ_MONTH
-                        elif daymonthyear == 2:
-                            freq = FREQ_YEAR
-                        else:
-                            freq = "D"
-                        totals.append(df.resample(freq).sum())
-                        storage.append(df.resample(freq).last())
-                        # discharge [m3/s]: average of the month / year (not the sum of the days)
-                        means.append(df.resample(freq).mean())
-                    
+                # DF 29092026
+                if version.parse(pd.__version__) >= version.parse("2.2.0"):
+                    FREQ_MONTH = "ME"
+                    FREQ_YEAR = "YE"
                 else:
-                    writeFileHeaderNew(outputFilename,expression)
-                outputFile = open(outputFilename, "a")
+                    FREQ_MONTH = "M"
+                    FREQ_YEAR = "Y"
+                
+                for k in range(len(self.var.sampleAdresses)):
+                    df = pd.DataFrame(expression[3][k], index=dates)
+                    if daymonthyear == 1:
+                        freq = FREQ_MONTH
+                    elif daymonthyear == 2:
+                        freq = FREQ_YEAR
+                    else:
+                        freq = "D"
+                    totals.append(df.resample(freq).sum())
+                    storage.append(df.resample(freq).last())
+                    # discharge [m3/s]: average of the month / year (not the sum of the days)
+                    means.append(df.resample(freq).mean())
+                
             else:
-                outputFile = open(outputFilename, "w")
+                writeFileHeaderCsv(outputFilename,expression)
+            outputFile = open(outputFilename, "a")
 
             assert outputFile
             if len(expression[3]):
@@ -1091,7 +1079,11 @@ class outputTssMap(object):
                     ismean = kind == "discharge"
                     values = [np.select([islast, ismean], [storage[k].to_numpy(), means[k].to_numpy()], totals[k].to_numpy())
                               for k in range(len(self.var.sampleAdresses))]
-                    for i, timestamp in enumerate(totals[0].index):
+                    # the last month / year can end before the end of the calendar month / year:
+                    # label it with the last simulated day (checkers count days from the labels)
+                    labels = list(totals[0].index)
+                    labels[-1] = min(labels[-1], dates[-1])
+                    for i, timestamp in enumerate(labels):
                         row = timestamp.strftime('%d/%m/%Y')
                         for k in range(len(self.var.sampleAdresses)):
                             for j in range(numbervalues):
@@ -1120,7 +1112,7 @@ class outputTssMap(object):
 
             outputFile.close()
 
-        def writeFileHeaderNew(outputFilename, expression):
+        def writeFileHeaderCsv(outputFilename, expression):
             """
             Write CSV-style header with metadata and gauge coordinates.
 
@@ -1136,10 +1128,10 @@ class outputTssMap(object):
             Creates comprehensive CSV header with:
             - Model run metadata (settings file, execution time, version info)
             - Git branch and hash information for reproducibility
-            - Longitude coordinates row for all gauges
-            - Latitude coordinates row for all gauges
-            - Column headers with gauge identifiers (G1, G2, etc.)
-            
+            - Longitude coordinates row for all gauges (or water body outlets)
+            - Latitude coordinates row for all gauges (or water body outlets)
+            - Column headers with gauge identifiers (G1, G2, etc.) or water body IDs (R4000006 etc.)
+
             Header provides all information needed to interpret time series data
             and reproduce the model run that generated the output.
             """
@@ -1149,12 +1141,12 @@ class outputTssMap(object):
             # outputFile.write("timeseries " + self._spatialDatatype.lower() + "\n")
             header = "Timeseries," + "settingsfile: " + os.path.realpath(settingsfile[0]) + ",Runnning date: " + xtime.ctime(
                 xtime.time())
-            header += ",CWATM: " + versioning['exe'] + " Git-Branch:" + versioning['git']["git_branch"] + " Hash:" + versioning['git']["git_hash"]
+            header += ",CWATM: " + versioning['exe'] + " Git-Branch:" + versioning['git']["git_branch"] + " Hash:" + versioning['git']["git_short_hash"] + " " + versioning['git']["state"]
             header += "\n"
 
             outputFile.write(header)
 
-            loc = self.var.outpoints
+            adresses, loc, prefix = points(expression)
             xrow = "xloc"
             yrow = "yloc"
             head = "Date"
@@ -1164,8 +1156,8 @@ class outputTssMap(object):
             for y in loc[1::2]:
                 yrow = yrow +"," + "%#.4f" % round(y, 4)
             yrow = yrow + "\n"
-            for key in sorted(self.var.sampleAdresses):
-                head = head + ",G" + str(key)
+            for key in sorted(adresses):
+                head = head + "," + prefix + str(key)
             head = head + "\n"
 
             outputFile.write(xrow)
@@ -1203,7 +1195,7 @@ class outputTssMap(object):
             # outputFile.write("timeseries " + self._spatialDatatype.lower() + "\n")
             header = "Timeseries," + "settingsfile: " + os.path.realpath(settingsfile[0]) + ",Runnning date: " + xtime.ctime(
                 xtime.time())
-            header += ",CWATM: " + versioning['exe'] + " Git-Branch:" + versioning['git']["git_branch"] + " Hash:" + versioning['git']["git_hash"]
+            header += ",CWATM: " + versioning['exe'] + " Git-Branch:" + versioning['git']["git_branch"] + " Hash:" + versioning['git']["git_short_hash"] + " " + versioning['git']["state"]
             header += "\n"
 
             outputFile.write(header)
@@ -1235,52 +1227,6 @@ class outputTssMap(object):
 
 
 
-
-        def writeFileHeader(outputFilename, expression):
-            """
-            Write PCRaster TSS-style header with run metadata and gauge count.
-
-            Parameters
-            ----------
-            outputFilename : str
-                Full path to output TSS file
-            expression : list
-                Output configuration containing gauge information and metadata
-
-            Notes
-            -----
-            Creates traditional PCRaster TSS header format with:
-            - Single line metadata (settings, date, version, git info)
-            - Number of data columns (timestep + gauge columns)
-            - Column identifiers starting with 'timestep'
-            - Gauge IDs as column headers
-            
-            Maintains compatibility with PCRaster and traditional CWatM
-            time series processing tools.
-            """
-
-            outputFile = open(outputFilename, "w")
-            # header
-            # outputFile.write("timeseries " + self._spatialDatatype.lower() + "\n")
-            header = "timeseries " + " settingsfile: " + os.path.realpath(settingsfile[0]) + " date: " + xtime.ctime(xtime.time())
-            header += " CWATM: " + versioning['exe']  + ", " +versioning['lastdate']
-            try:
-                import git
-                header += "git commit " + git.Repo(search_parent_directories=True).head.object.hexsha
-            except:
-                ii = 1
-            header += "\n"
-
-            outputFile.write(header)
-            if len(expression[3]):
-                numbervalues = len(expression[3][0]) + 1
-            else: numbervalues = 0
-
-            outputFile.write(str(numbervalues) + "\n")
-            outputFile.write("timestep\n")
-            for key in sorted(self.var.sampleAdresses):
-                outputFile.write(str(key) + "\n")
-            outputFile.close()
 
         # ************************************************************
         # ***** WRITING RESULTS: TIME SERIES *************************
@@ -1336,13 +1282,13 @@ class outputTssMap(object):
         varnameCollect = []
         # water cycle values of this time step: calculated once and used for all WaterCycle outputs (daily, monthtot ...)
         watercycleToday = []
-        # set this tru if only the valid cell are stored in netcdf
-        nindex = self.var.netcdfasindex
         # number of days which are summed up in the current month/year for monthavg/annualavg
         # (less than the days of the month/year if output starts in the middle of a month/year, e.g. after spin-up)
         daysWritten = max(1, dateVar['currwrite'])
         daysMonthAvg = min(dateVar['currDate'].day, daysWritten)
         daysYearAvg = min(dateVar['doy'], daysWritten)
+        # maps of the types "once" and "12month": at the end of the run, or at once if only environmental flow is calculated
+        writeOnceNow = dateVar['currDate'] == dateVar['dateEnd'] or (checkOption('calc_environflow') and not returnBool('calc_ef_afterRun'))
         if dateVar['curr'] >= dateVar['intSpin'] or ef:
             for map in list(outMap.keys()):
                 for i in range(outMap[map].__len__()):
@@ -1369,11 +1315,11 @@ class outputTssMap(object):
 
                         if map[-5:] == "daily":
                             outMap[map][i][2] = writenetcdf(netfile, varname,"", "undefined", getoutvar(self.var, checkname, index),  dateVar['currDate'],dateVar['currwrite'],
-                                                            flag, True, dateVar['diffdays'],netcdfindex=nindex)
+                                                            flag, True, dateVar['diffdays'])
                         if map[-8:] == "monthend":
                             if dateVar['checked'][dateVar['currwrite'] - 1]>0:
                                 outMap[map][i][2] = writenetcdf(netfile, varname, "_monthend", "undefined", getoutvar(self.var, checkname, index),  dateVar['currDate'], dateVar['currMonth'],
-                                                                flag,True,dateVar['diffMonth'],netcdfindex=nindex)
+                                                                flag,True,dateVar['diffMonth'])
                         if map[-8:] == "monthtot":
                             # sum up daily value to monthly values
                             vars(self.var)[varname2 + "_monthtot"] = vars(self.var)[varname2 + "_monthtot"] +  getoutvar(self.var, checkname, index)
@@ -1381,35 +1327,33 @@ class outputTssMap(object):
                             vars(self.var)[varname2 + "_monthavg"] = vars(self.var)[varname2 + "_monthavg"] +  getoutvar(self.var, checkname, index)
 
                         if map[-4:] == "once":
-                            if (returnBool('calc_ef_afterRun') == False) or (dateVar['currDate'] == dateVar['dateEnd']):
-                                # either load already calculated discharge or at the end of the simulation
+                            if writeOnceNow:
                                 outMap[map][i][2] = writenetcdf(netfile, varname,"", "undefined", getoutvar(self.var, checkname, index),
-                                                            dateVar['currDate'], dateVar['currwrite'], flag, False,netcdfindex=nindex)
+                                                            dateVar['currDate'], dateVar['currwrite'], flag, False)
                         if map[-7:] == "12month":
-                            if (returnBool('calc_ef_afterRun') == False) or (dateVar['currDate'] == dateVar['dateEnd']):
-                                # either load already calculated discharge or at the end of the simulation
+                            if writeOnceNow:
                                 flag1 = False # create new netcdf file
                                 for j in range(12):
                                     date1 = datetime.datetime(dateVar['dateEnd'].year, j+1, 1, 0, 0)
                                     outMap[map][i][2] = writenetcdf(netfile, varname,"", "undefined", getoutvar(self.var, checkname, index)[j], date1, j+1,
-                                                                    flag1, True,12,netcdfindex=nindex)
+                                                                    flag1, True,12)
                                     flag1 = True # now append to netcdf file
 
                         # if end of month is reached
                         if dateVar['checked'][dateVar['currwrite'] - 1]>0:
                             if map[-8:] == "monthtot":
                                 outMap[map][i][2] = writenetcdf(netfile, varname,"_monthtot", "undefined", vars(self.var)[varname2 + "_monthtot"], dateVar['currDate'],
-                                                                dateVar['currMonth'], flag, True, dateVar['diffMonth'],dateunit="months",netcdfindex=nindex)
+                                                                dateVar['currMonth'], flag, True, dateVar['diffMonth'],dateunit="months")
                             if map[-8:] == "monthavg":
                                 #days = calendar.monthrange(dateVar['currDate'].year, dateVar['currDate'].month)[1]
                                 avgmap = vars(self.var)[varname2 + "_monthavg"] / daysMonthAvg
                                 outMap[map][i][2] = writenetcdf(netfile, varname,"_monthavg", "undefined", avgmap,dateVar['currDate'], dateVar['currMonth'],
-                                                                flag, True,dateVar['diffMonth'],dateunit="months",netcdfindex=nindex)
+                                                                flag, True,dateVar['diffMonth'],dateunit="months")
 
                         if map[-9:] == "annualend":
                             if dateVar['checked'][dateVar['currwrite'] - 1]==2:
                                 outMap[map][i][2] = writenetcdf(netfile, varname,"_annualend", "undefined", getoutvar(self.var, checkname, index),  dateVar['currDate'], dateVar['currYear'],
-                                                                flag,True,dateVar['diffYear'], dateunit="years", netcdfindex=nindex)
+                                                                flag,True,dateVar['diffYear'], dateunit="years")
                         if map[-9:] == "annualtot":
                             vars(self.var)[varname2 + "_annualtot"] = vars(self.var)[varname2 + "_annualtot"] + getoutvar(self.var, checkname, index)
                         if map[-9:] == "annualavg":
@@ -1418,11 +1362,11 @@ class outputTssMap(object):
                         if dateVar['checked'][dateVar['currwrite'] - 1]==2:
                             if map[-9:] == "annualtot":
                                     outMap[map][i][2] = writenetcdf(netfile, varname,"_annualtot", "undefined", vars(self.var)[varname2 + "_annualtot"], dateVar['currDate'], dateVar['currYear'], flag, True,
-                                                                    dateVar['diffYear'], dateunit="years", netcdfindex=nindex)
+                                                                    dateVar['diffYear'], dateunit="years")
                             if map[-9:] == "annualavg":
                                         avgmap = vars(self.var)[varname2 + "_annualavg"] / daysYearAvg
                                         outMap[map][i][2] = writenetcdf(netfile, varname,"_annualavg", "undefined", avgmap, dateVar['currDate'], dateVar['currYear'], flag, True,
-                                                                        dateVar['diffYear'],dateunit="years", netcdfindex=nindex)
+                                                                        dateVar['diffYear'],dateunit="years")
 
                         if map[-8:] == "totaltot":
                             if dateVar['curr'] >= dateVar['intSpin']:
@@ -1430,7 +1374,7 @@ class outputTssMap(object):
                                 if dateVar['currDate'] == dateVar['dateEnd']:
                                     # at the end of simulation write this map
                                     outMap[map][i][2] = writenetcdf(netfile, varname,"_totaltot", "undefined", vars(self.var)[varname2 + "_totaltot"],
-                                                                dateVar['currDate'], dateVar['currwrite'], flag, False, netcdfindex=nindex)
+                                                                dateVar['currDate'], dateVar['currwrite'], flag, False)
 
                         if map[-8:] == "totalavg":
                             if dateVar['curr'] >= dateVar['intSpin']:
@@ -1438,14 +1382,14 @@ class outputTssMap(object):
                                 if dateVar['currDate'] == dateVar['dateEnd']:
                                     # at the end of simulation write this map
                                     outMap[map][i][2] = writenetcdf(netfile, varname,"_totalavg", "undefined", vars(self.var)[varname2 + "_totalavg"],
-                                                                    dateVar['currDate'], dateVar['currwrite'], flag, False, netcdfindex=nindex)
+                                                                    dateVar['currDate'], dateVar['currwrite'], flag, False)
 
                         if map[-8:] == "totalend":
                             if dateVar['currDate'] == dateVar['dateEnd']:
                                 # at the end of simulation write this map
                                 vars(self.var)[varname2 + "_totalend"] = getoutvar(self.var, checkname, index)
                                 outMap[map][i][2] = writenetcdf(netfile, varname,"_totalend","undefined", getoutvar(self.var, checkname, index),
-                                                                dateVar['currDate'], dateVar['currwrite'], flag, False, netcdfindex=nindex)
+                                                                dateVar['currDate'], dateVar['currwrite'], flag, False)
 
 
                                 # ************************************************************

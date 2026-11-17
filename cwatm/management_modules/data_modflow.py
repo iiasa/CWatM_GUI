@@ -12,6 +12,7 @@ import rasterio
 from netCDF4 import Dataset
 
 from cwatm.management_modules.messages import CWATMError, CWATMFileError, CWATMDirError
+from cwatm.version import version_attributes
 
 
 def raster_crs(filename):
@@ -42,7 +43,9 @@ def on_modflow_grid(filename, shape, transform):
     """True if filename is a raster with the ModFlow grid (same shape and transform as modflow_basin)"""
     try:
         with rasterio.open(filename) as src:
-            return src.shape == shape and src.transform.almost_equals(transform)
+            # coefficients by name: almost_equals() iterates the Affine, which fails with affine 3.x + attrs < 23.2
+            t = src.transform
+            return src.shape == shape and all(abs(getattr(t, k) - getattr(transform, k)) < 1e-5 for k in 'abcdef')
     except Exception:
         return False
 
@@ -56,6 +59,7 @@ def write_modflow_netcdf(filename, name, data, units, long_name, transform, crs)
     nrow, ncol = np.shape(data)[-2:]
     with Dataset(filename, 'w', format='NETCDF4') as nc:
         nc.title = 'CWatM - MODFLOW: ' + long_name
+        nc.setncatts(version_attributes())
         nc.createDimension('y', nrow)
         nc.createDimension('x', ncol)
         for axis, size, start, step in (('y', nrow, transform.f, transform.e),

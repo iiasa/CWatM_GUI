@@ -312,6 +312,14 @@ datas = [
     # web_assets.py, security.md #2) - nothing is downloaded and run at run time
     (os.path.join(spec_root, 'assets', 'web', '*'), 'assets/web'),
     (os.path.join(spec_root, 'cwatm', 'metaNetcdf.xml'), 'cwatm'),
+    # MODFLOW coupling: modflow6.mf6_input_hash() hashes its OWN source text
+    # (read_binary(__file__)) to decide whether the MODFLOW input files must be
+    # rewritten. Frozen, the code lives only in the PYZ, so __file__ points at a
+    # .py that does not exist -> FileNotFoundError. Ship that one file as data at
+    # its package path (the import itself still comes from the PYZ); the hash then
+    # equals a source run's.
+    (os.path.join(spec_root, 'cwatm', 'hydrological_modules', 'groundwater_modflow', 'modflow6.py'),
+     'cwatm/hydrological_modules/groundwater_modflow'),
     # Documentation shown by the Help menu
     (os.path.join(spec_root, 'documentation', 'CWatM_GUI_Documentation.md'), 'documentation'),
     (os.path.join(spec_root, 'documentation', 'CWatM_GUI_Features.md'), 'documentation'),
