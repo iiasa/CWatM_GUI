@@ -1074,7 +1074,9 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
                       file=sys.stderr)
                 return
 
-            new_mask = np.where(result[0].data != 1, 0, 1)
+            # np.ma.filled, not .data: CWatM's catchment() returns a plain
+            # ndarray now, whose .data is a memoryview (see basin_viewer.py).
+            new_mask = np.where(np.asarray(np.ma.filled(result[0], 0)) != 1, 0, 1)
             if new_mask.shape != self.basin_data.shape:
                 x, y = result[1], result[2]
                 big = np.zeros(self.basin_data.shape)

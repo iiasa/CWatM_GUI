@@ -761,9 +761,13 @@ class BasinViewer:
                         except Exception:
                             log.debug("_load_mask_data: ignored", exc_info=True)
                 if mask_result:
-                    mask_data = mask_result[0].data
+                    # CWatM's catchment() returns a plain ndarray now (a masked
+                    # array before). ndarray.data is a memoryview, which made
+                    # np.where return a 0-d array -> "tuple index out of range".
+                    # np.ma.filled handles both types.
+                    mask_data = np.asarray(np.ma.filled(mask_result[0], 0))
                     mask_data = np.where(mask_data != 1, 0, 1)
-                    if mask_data.shape != upsshape:
+                    if mask_data.shape != tuple(upsshape):
                         x = mask_result[1]
                         y = mask_result[2]
                         maskbig = np.zeros(upsshape)

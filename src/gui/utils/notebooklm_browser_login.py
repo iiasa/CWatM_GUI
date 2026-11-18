@@ -103,9 +103,14 @@ def main(argv=None):
     from notebooklm.config import get_base_url
     from notebooklm.io import atomic_write_json
     from notebooklm.paths import get_storage_path
+    # notebooklm-py 0.8 moved these helpers out of cli.services.playwright_login;
+    # windows_playwright_event_loop now lives only in its private _browser package.
+    from notebooklm.auth import filter_storage_state_cookies_by_domain_policy
     from notebooklm.cli.services.playwright_login import (
-        GOOGLE_ACCOUNTS_URL, filter_storage_state_cookies_by_domain_policy,
-        repair_playwright_account_metadata, windows_playwright_event_loop)
+        repair_playwright_account_metadata)
+    from notebooklm._browser.playwright_event_loop import (
+        windows_playwright_event_loop)
+    GOOGLE_ACCOUNTS_URL = "https://accounts.google.com/"
 
     storage_path = get_storage_path()
     storage_path.parent.mkdir(parents=True, exist_ok=True)
