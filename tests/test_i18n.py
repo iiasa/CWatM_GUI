@@ -71,6 +71,13 @@ def test_english_of_reverses_translations_but_never_english_keys():
     assert cat.english_of("Save") is None
 
 
+def test_chinese_label_gets_full_width_colon():
+    zh = i18n.load_catalog("zh")
+    assert zh.translate("Language") == "语言"
+    assert zh.translate("Language:") == "语言："          # full-width, not ASCII
+    assert i18n.load_catalog("de").translate("Language:") == "Sprache:"
+
+
 def test_shipped_table_is_consistent():
     path = i18n.csv_path()
     with open(path, encoding="utf-8-sig", newline="") as fh:

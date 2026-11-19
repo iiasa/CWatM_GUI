@@ -18,7 +18,9 @@ from PySide6.QtWidgets import QFileDialog, QMessageBox
 from src.gui.utils.cwatm_worker import CWatMWorker
 from src.gui.utils.cwatm_process_worker import CWatMProcessWorker
 from src.gui.utils import display_format
+from src.gui.utils import model_launcher
 from src.gui.utils import run_ledger
+from src.gui.utils import theme
 from src.gui.utils.gui_log import get_logger
 
 log = get_logger("run_controller")
@@ -26,6 +28,48 @@ log = get_logger("run_controller")
 
 class RunControllerMixin:
     """Run/stop CWatM, track its progress and clean up afterwards."""
+
+    # ------------------------------------------- user-defined model (Expert tick)
+    def refresh_model_indicator(self):
+        """Show in red next to RUN CWATM when the main run uses a USER-DEFINED CWatM
+        (Windowed Run ▸ gear ▸ User defined + the Expert tick); hidden otherwise."""
+        label = getattr(self, "model_indicator_label", None)
+        if label is None:
+            return
+        try:
+            cmd = model_launcher.main_run_user_command()
+        except Exception:
+            log.debug("reading the model choice failed", exc_info=True)
+            cmd = None
+        if cmd is None:
+            label.setText("")
+            label.setToolTip("")
+            label.setVisible(False)
+            self.run_cwatm_button.setToolTip("")
+            return
+        short = os.path.basename(cmd.strip().strip('"')) or cmd
+        label.setText(f"⚠ User-defined CWatM: {short}")
+        tip = ("RUN CWATM and Run CWatM + error message run a user-defined CWatM:\n"
+               f"{cmd}\n\nChange it in RUN CWATM ▸ Windowed Run CWatM ▸ ⚙ "
+               "(untick the red Expert box for the standard CWatM).")
+        label.setToolTip(tip)
+        self.run_cwatm_button.setToolTip(tip)
+        label.setStyleSheet(
+            f"QLabel {{ color: {theme.c('out_error')}; font-weight: bold; }}")
+        label.setVisible(True)
+
+    def _main_run_command(self):
+        """``None`` = the standard CWatM, or ``(program, prefix_args)`` of the
+        user-defined model. Raises ValueError (with the reason) when the user-defined
+        model is chosen but cannot be started."""
+        cmd = model_launcher.main_run_user_command()
+        if cmd is None:
+            return None
+        if not getattr(self, "_run_subprocess_enabled", True):
+            raise ValueError("'Run model in separate process' is off - an outside "
+                             "CWatM can only run as its own process.")
+        from src.gui.utils.cwatm_process_worker import _console_python
+        return model_launcher.parse_command(cmd, _console_python())
 
     def open_hidden_run(self, settings_path=None):
         """RUN CWATM > Windowed Run CWatM: open an independent window that runs CWatM
@@ -169,6 +213,16 @@ class RunControllerMixin:
         if not self._run_guard_ok(file_path, "Run CWatM", "run"):
             return
 
+        # Which CWatM: the standard one, or (Expert tick) the user-defined model
+        try:
+            user_command = self._main_run_command()
+        except ValueError as e:
+            QMessageBox.warning(
+                self, "Run CWatM",
+                "The main run is set to a user-defined CWatM (RUN CWATM ▸ Windowed "
+                f"Run CWatM ▸ ⚙), but it cannot be started:\n\n{e}")
+            return
+
         # Clear previous output first
         self._pending_output.clear()
         self._last_was_progress = False
@@ -242,7 +296,14 @@ class RunControllerMixin:
         self._run_time_timer.start()
 
         print(f"Starting CWatM with settings file: {file_path}")
-        self.status_bar.showMessage(f"Settings file: {file_path} - Starting run")
+        if user_command is None:
+            self.status_bar.showMessage(f"Settings file: {file_path} - Starting run")
+        else:
+            # user-defined CWatM (Expert tick): name the whole model command
+            self.status_bar.showMessage(
+                "CWatM: %s   Settings file: %s - Starting run" % (
+                    model_launcher.display(user_command[0], user_command[1]),
+                    file_path))
         
         # Set running state
         self.cwatm_running = True
@@ -255,15 +316,27 @@ class RunControllerMixin:
         # §3.1 - real Stop, crash isolation, fresh interpreter each run); the
         # Configure > "Run model in separate process" toggle falls back to the
         # old in-process QThread worker.
-        flags = ['-lg', '-e'] if extended_errors else ['-lg']
+        if user_command is None:
+            flags = ['-lg', '-e'] if extended_errors else ['-lg']
+        else:
+            flags = model_launcher.USER_FLAGS + (['-e'] if extended_errors else [])
         if extended_errors:
             print("Extended error messages on (-e)")
+        # A user-defined model sends no progress markers: the date in its
+        # per-timestep line drives the clock (output_box.append_to_cwatminfo).
+        self._user_model_window = (model_launcher.run_window(run_content or "")
+                                   if user_command is not None else None)
+        if user_command is not None:
+            self.append_to_cwatminfo(
+                "Model (user defined): %s\n" % model_launcher.display(
+                    user_command[0], list(user_command[1]) + [file_path] + flags),
+                True)
         if getattr(self, "_run_subprocess_enabled", True):
             # Run from the working directory (File > Change Working Dir; by default
             # the settings file's own folder) so relative paths resolve from there.
             self.cwatm_worker = CWatMProcessWorker(
                 file_path, self, working_dir=self.working_dir() or None,
-                flags=flags)
+                flags=flags, command=user_command)
         else:
             self.cwatm_worker = CWatMWorker(file_path, flags, self)
         self.cwatm_worker.finished.connect(self.on_cwatm_finished)

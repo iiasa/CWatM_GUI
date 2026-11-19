@@ -48,8 +48,6 @@ from src.gui.components.account_ui import AccountMixin
 # after only the PySide6 + stdlib imports. cwatm_gui.py warms the heavy modules
 # up in a background thread once the window is shown.
 
-import cwatm.version as version
-
 log = get_logger("main_window")
 
 # Experience level (Beginner -> Advanced -> Expert -> Beginner). Each level
@@ -205,6 +203,9 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         # Restore the initial map-transparency setting (Configure > Transparency).
         display_format.set_transparency(
             self._settings.value("display/transparency", 100, type=int))
+        # Resolution of Save PNG in the Analyse windows (Preferences > Editor & Dates)
+        display_format.set_png_dpi(self._settings.value(
+            "display/png_dpi", display_format.PNG_DPI_DEFAULT, type=int))
         # Settings-editor font size in px ('Font+' / 'Font-' buttons right of Down,
         # and Preferences > Display > Font size), persisted (editor/font_size)
         self._editor_font_size = max(6, min(32,
@@ -670,6 +671,12 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         self.run_cwatm_button.clicked.connect(self.run_cwatm)
         run_cwatm_layout.addWidget(self.run_cwatm_button)
 
+        # Red indicator: RUN CWATM runs a USER-DEFINED CWatM (Windowed Run's gear,
+        # Expert tick) - hidden while the standard model is used. refresh_model_indicator
+        self.model_indicator_label = QLabel("")
+        self.model_indicator_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        run_cwatm_layout.addWidget(self.model_indicator_label)
+
         # "Save changes to use them!" hint right of RUN CWatM: shown whenever there
         # are unsaved edits (editor / left-window field / Excel), hidden after a save.
         self.save_hint_label = QLabel("")
@@ -699,6 +706,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
         run_cwatm_layout.addStretch()
         parent_layout.addLayout(run_cwatm_layout)
         parent_layout.addSpacing(1)  # Minimal spacing after run button
+        self.refresh_model_indicator()
         
         # CWatM info area and progress clock layout.
         # Always stack vertically so the progress clock sits *under* the output box.
@@ -1872,19 +1880,22 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
             }}
         """)
         
-        # Get version information
+        # The CWatM commit gui\cwatm was copied from - recorded by /cwatm2gui in
+        # src/gui/cwatm_source.py (only a pushed, clean GitHub commit is copied).
+        # Not cwatm/version.py: inside the GUI that finds the GUI's own git.
         try:
-            version_info = version.get_version_info()
+            from src.gui import cwatm_source as src_info
             version_text = (
-                f"Source code on Github: https://github.com/iiasa/CWatM\n"
-                f"Branch: {version_info['git_branch']}\n"
-                f"Git Hash: {version_info['git_hash']}\n"
-                f"Build on: {version_info['build_timestamp']}"
+                f"Source code on Github: {src_info.REPO_URL}\n"
+                f"Branch: {src_info.BRANCH}\n"
+                f"Commit: {src_info.SHORT_HASH} ({src_info.COMMIT_DATE})\n"
+                f"Copied into the GUI on: {src_info.SYNCED}"
             )
-        except Exception as e:
+        except Exception:
+            log.debug("cwatm_source not available", exc_info=True)
             version_text = (
                 "Source code on Github: https://github.com/iiasa/CWatM\n"
-                "Version information unavailable"
+                "Branch / commit: unknown (not copied with /cwatm2gui yet)"
             )
         
         version_info_label = QLabel(version_text)
@@ -2443,6 +2454,7 @@ class CWatMMainWindow(MenuBuilderMixin, RunControllerMixin,
                 f"QLabel {{ color: {theme.c('warn_color')}; font-weight: bold; }}")
             self.save_hint_label.setStyleSheet(
                 f"QLabel {{ color: {theme.c('warn_color')}; font-weight: bold; }}")
+            self.refresh_model_indicator()
             self._apply_filename_state()
             # buttons: regenerate the cached styles, re-apply by current state
             self._modern_button_style = self._build_modern_button_style()

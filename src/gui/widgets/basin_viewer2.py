@@ -617,8 +617,7 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         """The JS driven by the Python actions: WMS basemap, markers (folium.Icon
         pins), overlay opacity/visibility, mask update, basemap switch, clicks."""
         dec = display_format.get_decimals()
-        gauges = [[lat, lon, self._ups_text(lon, lat)]
-                  for lon, lat in self._gauges]
+        gauges = self._gauge_markers()
         blue_init = ""
         if self._blue_pt:
             blue_init = ("window.setBlue(%f,%f,%s);"
@@ -649,6 +648,9 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
                  +'</span></div>',
             iconSize:[s,s], iconAnchor:[ax,ay], tooltipAnchor:[0,-b]});}
           var GAUGE_PIN=27, MASK_PIN=18;
+          // a gauge name comes from the settings file: shown as text, never as HTML
+          function esc(s){return String(s).replace(/[&<>"']/g,function(c){
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
           function tip(lon,lat,ups,label){
             return label+' '+lon.toFixed(DEC)+' '+lat.toFixed(DEC)
                    +(ups?'<br>UPS: '+ups:'');}
@@ -657,7 +659,8 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
             arr.forEach(function(g,i){
               var mk=L.marker([g[0],g[1]],{icon:pin('#e74c3c',String(i+1),GAUGE_PIN)})
                .addTo(window.redGroup)
-               .bindTooltip(tip(g[1],g[0],g[2],'Gauge '+(i+1))+'<br>(click to remove)');
+               .bindTooltip(tip(g[1],g[0],g[2],'Gauge '+(i+1)+(g[3]?': <b>'+esc(g[3])+'</b>':''))
+                            +'<br>(click to remove)');
               mk.on('click',function(ev){L.DomEvent.stopPropagation(ev);
                 document.title='B2DEL '+i+' '+Date.now();});});};
           window.setRed=function(lat,lon,ups){window.setRedAll([[lat,lon,ups]]);};
@@ -792,11 +795,29 @@ class BasinWindow2(BasinDataHelpers, GeometryMemoryMixin, QDialog):
         except Exception:
             log.debug("basin2 JS failed", exc_info=True)
 
+    def _gauge_markers(self):
+        """[[lat, lon, ups text, name], ...] for the red gauge pins. The name is the
+        settings' GaugesNames entry of the gauge at that place (matched by
+        coordinates, so a gauge added here has none and a removed one takes its name
+        with it); the settings are the editor's live text."""
+        from src.gui.widgets.basin_viewer import gauge_names, gauge_name_at
+        content = ""
+        mw = self._main_window()
+        try:
+            if mw is not None and getattr(mw, "text_area", None) is not None:
+                content = mw.text_area.toPlainText()
+            elif self.settings_file:
+                with open(self.settings_file, encoding="utf-8", errors="ignore") as fh:
+                    content = fh.read()
+        except Exception:
+            log.debug("_gauge_markers: no settings text", exc_info=True)
+        names = gauge_names(content)
+        return [[lat, lon, self._ups_text(lon, lat), gauge_name_at(names, lon, lat)]
+                for lon, lat in self._gauges]
+
     def _refresh_markers(self):
         """RED = the working gauge list (numbered), BLUE = mask start, BLACK cleared."""
-        arr = [[lat, lon, self._ups_text(lon, lat)]
-               for lon, lat in self._gauges]
-        self._js("if(window.setRedAll) setRedAll(%s);" % json.dumps(arr))
+        self._js("if(window.setRedAll) setRedAll(%s);" % json.dumps(self._gauge_markers()))
         self._blue_pt = self._mask_start_point()
         if self._blue_pt:
             lon, lat = self._blue_pt

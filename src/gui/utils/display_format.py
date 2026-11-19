@@ -23,6 +23,29 @@ _MAX = 12
 # / data fully opaque; 100 = OSM fully visible / data 50% opaque on top.
 _TRANSPARENCY = 100
 
+# Resolution of a saved PNG (Save PNG in the Analyse windows), in dots per inch
+# (Preferences ▸ Editor & Dates ▸ PNG dpi, persisted as display/png_dpi). Plotly
+# draws at 96 dpi on screen, so the image is rendered at scale png_dpi / 96.
+PNG_DPI_DEFAULT = 150
+PNG_DPI_MIN = 50
+PNG_DPI_MAX = 1200
+_PNG_DPI = PNG_DPI_DEFAULT
+
+
+def get_png_dpi():
+    """Current dpi for saved PNG images."""
+    return _PNG_DPI
+
+
+def set_png_dpi(n):
+    """Set the PNG dpi (clamped to PNG_DPI_MIN..PNG_DPI_MAX). Ignores bad input."""
+    global _PNG_DPI
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return
+    _PNG_DPI = max(PNG_DPI_MIN, min(PNG_DPI_MAX, n))
+
 
 def get_transparency():
     """Current initial map-transparency percentage (0-100)."""

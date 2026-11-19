@@ -102,9 +102,14 @@ class CWatMProcessWorker(QObject):
     progress = Signal(int)           # progress value 0-100
 
     def __init__(self, file_path, gui_window=None, output_sink=None,
-                 working_dir=None, flags=None):
+                 working_dir=None, flags=None, command=None):
         super().__init__(gui_window)
         self.file_path = file_path
+        # command: (program, prefix_args) of a user-defined model (Windowed Run's gear
+        # window) - started as program + prefix + [settings] + flags. Such a model may
+        # not speak the marker protocol (CWatM's own run_cwatm.py does not), so its
+        # exit code (0 = success) decides when no RESULT marker arrives.
+        self._command = command
         # flags: CWatM flags for the child (None = the runner's default '-lg').
         self._flags = flags
         # working_dir: the directory the child process is started in, so relative
@@ -143,6 +148,9 @@ class CWatMProcessWorker(QObject):
     def start(self):
         """Spawn the model child process."""
         program, args, workdir = model_command(self.file_path, self._flags)
+        if self._command is not None:
+            program, prefix = self._command
+            args = list(prefix) + [self.file_path] + list(self._flags or ["-lg"])
         if self._working_dir and os.path.isdir(self._working_dir):
             workdir = self._working_dir
         env = QProcessEnvironment.systemEnvironment()
@@ -279,6 +287,9 @@ class CWatMProcessWorker(QObject):
             self.finished.emit(success, last_dis)
         elif exit_status == QProcess.CrashExit:
             self.error.emit("CWatM process crashed")
+        elif self._command is not None:
+            # a user-defined model without the marker protocol: exit code decides
+            self.finished.emit(exit_code == 0, None)
         else:
             self.error.emit(
                 "CWatM process ended without a result (exit code %s)" % exit_code)

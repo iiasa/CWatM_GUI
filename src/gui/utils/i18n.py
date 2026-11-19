@@ -41,7 +41,7 @@ LANGUAGES = [
     ("English", "en"), ("Deutsch", "de"), ("Français", "fr"), ("Español", "es"),
     ("Italiano", "it"), ("Magyar", "hu"), ("Română", "ro"), ("Srpski", "sr"),
     ("Hrvatski", "hr"), ("Slovenčina", "sk"), ("Български", "bg"), ("Čeština", "cs"),
-    ("Українська", "uk"),
+    ("Українська", "uk"), ("简体中文", "zh"),
 ]
 DEFAULT = "en"
 _SETTINGS_KEY = "display/language"
@@ -51,7 +51,11 @@ _COLUMNS = {
     "de": "German", "fr": "French", "es": "Spanish", "it": "Italian",
     "hu": "Hungarian", "ro": "Romanian", "sr": "Serbian", "hr": "Croatian",
     "sk": "Slovak", "bg": "Bulgarian", "cs": "Czech", "uk": "Ukrainian",
+    "zh": "Chinese",                     # Simplified Chinese
 }
+# The colon a 'Label:' row gets after its translated bare entry: Chinese writes the
+# full-width '：' (开始日期：), every other language the ASCII one.
+_COLON = {"zh": "："}
 
 _PLACEHOLDER = re.compile(r"\{[^{}]*\}")
 _NUMBER_PREFIX = re.compile(r"(\d[\d,.]*) (.+)", re.S)
@@ -89,7 +93,8 @@ class Catalog:
 
     _CACHE_MAX = 4096
 
-    def __init__(self, pairs):
+    def __init__(self, pairs, colon=":"):
+        self._colon = colon
         self._exact = {}
         self._reverse = {}
         patterns = []
@@ -135,7 +140,7 @@ class Catalog:
         if exact is not None:
             return exact
         if text.endswith(":") and text[:-1] in self._exact:     # 'Language:' rows
-            return self._exact[text[:-1]] + ":"
+            return self._exact[text[:-1]] + self._colon
         for _literal, regex, groups, target in self._patterns:
             m = regex.fullmatch(text)
             if m:
@@ -178,7 +183,8 @@ def load_catalog(language, path=None):
     try:
         with open(path, encoding="utf-8-sig", newline="") as fh:
             rows = csv.DictReader(fh)
-            return Catalog((r.get("English", ""), r.get(column, "")) for r in rows)
+            return Catalog(((r.get("English", ""), r.get(column, "")) for r in rows),
+                           colon=_COLON.get(language, ":"))
     except Exception:
         log.warning("cannot read the translation table %s", path, exc_info=True)
         return None

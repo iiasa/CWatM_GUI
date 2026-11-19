@@ -53,6 +53,14 @@ class OutputBoxMixin:
                     spark.add_from_progress_line(text)
                 except Exception:
                     log.debug("sparkline feed failed", exc_info=True)
+            # A user-defined model (Expert tick) sends no progress markers: its
+            # date against StepStart/StepEnd drives the progress clock instead.
+            window = getattr(self, "_user_model_window", None)
+            if window is not None and getattr(self, "cwatm_running", False):
+                from src.gui.utils.model_launcher import progress_from_line
+                pct = progress_from_line(text, window)
+                if pct is not None and pct > getattr(self, "_last_progress_value", 0):
+                    self.on_cwatm_progress(pct)
 
         # Filter out "Worker:" messages
         text_stripped = text.strip()

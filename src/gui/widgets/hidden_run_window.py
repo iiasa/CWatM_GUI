@@ -28,9 +28,9 @@ import time
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QPlainTextEdit,
     QFileDialog, QSizePolicy, QProgressBar, QMessageBox, QApplication,
-    QInputDialog,
+    QInputDialog, QToolButton, QCheckBox, QButtonGroup, QLineEdit, QGridLayout,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import (
     QIcon, QTextCursor, QTextCharFormat, QShortcut, QKeySequence,
 )
@@ -39,9 +39,13 @@ from src.gui.utils import theme
 from src.gui.utils import run_ledger
 from src.gui.utils.gui_log import get_logger
 from src.gui.utils.window_geometry import GeometryMemoryMixin, scaled_default_size
-from src.gui.utils.cwatm_process_worker import CWatMProcessWorker
+from src.gui.utils.cwatm_process_worker import CWatMProcessWorker, _console_python
+from src.gui.utils import model_launcher
 
 log = get_logger("hidden_run_window")
+
+USER_FLAGS = model_launcher.USER_FLAGS
+_run_window = model_launcher.run_window
 
 
 def _fmt_dur(seconds):
@@ -82,6 +86,8 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         self._pathout = ""            # resolved PathOut (ledger + folder creation)
         self._title = ""              # settings Title (window title + ledger)
         self._find_text = ""          # last "Find in output" search (Ctrl+F / F3)
+        self._marker_progress = False  # the model sends progress markers itself
+        self._step_window = (None, None)  # StepStart/StepEnd for date-based progress
         self._tick = QTimer(self)
         self._tick.setInterval(1000)
         self._tick.timeout.connect(self._update_times)
@@ -170,6 +176,19 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         top.addWidget(self.settings_label, 1)
         top.addWidget(self.current_button)
         top.addWidget(self.load_button)
+        # Gear (like Analyse > Watercycle > Annual bars): how CWatM is run
+        self.model_button = QToolButton(self)
+        self.model_button.setText("⚙")
+        self.model_button.setToolTip("How CWatM is run: the predefined (installed) "
+                                     "model or a user-defined one")
+        self.model_button.setCursor(Qt.PointingHandCursor)
+        self.model_button.setStyleSheet(
+            f"QToolButton {{ font-size: 18pt; color: {theme.c('text')}; border: none;"
+            " background: transparent; }"
+            f"QToolButton:hover {{ color: {theme.c('accent')}; }}"
+            f"QToolButton:disabled {{ color: {theme.c('text_muted')}; }}")
+        self.model_button.clicked.connect(self._choose_model)
+        top.addWidget(self.model_button)
         layout.addLayout(top)
 
         # Row: what this run will actually produce - the settings Title and the
@@ -325,6 +344,149 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         if not open_path(self._pathout):
             self._append_output("Could not open %s\n" % self._pathout, True)
 
+    # ------------------------------------------------------------ model (gear)
+    def _choose_model(self):
+        """The gear window: predefined (installed) model or a user-defined command.
+        Changes are buffered: only **Apply** stores them, Close discards the rest.
+        The main RUN CWATM uses the user-defined model only with the red Expert tick."""
+        if self._running:
+            return
+        use_predefined, user_cmd = model_launcher.load_choice()
+        main_run = model_launcher.load_main_run()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("How CWatM is run")
+        box = QVBoxLayout(dlg)
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        box.addLayout(grid)
+
+        cb_pre = QCheckBox("Use predefined")
+        cb_pre.setToolTip("Run the CWatM included in this GUI (the frozen model when\n"
+                          "the GUI runs as an executable, the python one from source)")
+        cb_user = QCheckBox("User defined")
+        cb_user.setToolTip(
+            "Run another CWatM: a CWatM_model.exe, a CWatM folder, or a command line\n"
+            "such as  python P:\\watmodel\\cwatmpublic\\develop\\run_cwatm.py\n"
+            "The settings file and the flag -l are added at the end.")
+        edit = QLineEdit(user_cmd)
+        edit.setPlaceholderText(
+            r"e.g. P:\watmodel\CWatM_model.exe  or  python P:\...\run_cwatm.py")
+        edit.setMinimumWidth(420)
+        browse = QPushButton("Browse…")
+        status = QLabel("")
+        status.setWordWrap(True)
+
+        group = QButtonGroup(dlg)
+        group.setExclusive(True)
+        group.addButton(cb_pre)
+        group.addButton(cb_user)
+        (cb_pre if use_predefined else cb_user).setChecked(True)
+
+        grid.addWidget(cb_pre, 0, 0, 1, 3)
+        grid.addWidget(cb_user, 1, 0)
+        grid.addWidget(edit, 1, 1)
+        grid.addWidget(browse, 1, 2)
+        cb_main = QCheckBox("WARNING: Expert only. Use this model for the main "
+                            "RUN CWATM too")
+        cb_main.setChecked(main_run)
+        cb_main.setStyleSheet(
+            f"QCheckBox {{ color: {theme.c('out_error')}; font-weight: bold; }}")
+        cb_main.setToolTip(
+            "Ticked: the main window's RUN CWATM and Run CWatM + error message run\n"
+            "this user-defined model as well (shown in red next to RUN CWATM).\n"
+            "Unticked: they always run the standard CWatM of this GUI.")
+        grid.addWidget(cb_main, 2, 1, 1, 2)
+        box.addWidget(status)
+        note = QLabel("Without the red tick only Windowed Run CWatM uses this choice - "
+                      "RUN CWATM runs the standard CWatM.")
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {theme.c('text_muted')}; font-size: 11px;")
+        box.addWidget(note)
+
+        applied = {"state": (bool(use_predefined), user_cmd.strip(), main_run)}
+        apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("Use this model for the next run")
+
+        def current():
+            return (cb_pre.isChecked(), edit.text().strip(), cb_main.isChecked())
+
+        def check():
+            user = cb_user.isChecked()
+            edit.setEnabled(user)
+            browse.setEnabled(user)
+            cb_main.setEnabled(user)
+            valid = True
+            if not user:
+                status.setText("")
+            else:
+                try:
+                    program, args = model_launcher.parse_command(
+                        edit.text(), _console_python())
+                    status.setStyleSheet(f"color: {theme.c('ok_color')};")
+                    status.setText("Runs: " + model_launcher.display(
+                        program, args + ["<settings.ini>"] + USER_FLAGS))
+                except ValueError as e:
+                    valid = False
+                    status.setStyleSheet(f"color: {theme.c('out_error')};")
+                    status.setText(str(e))
+            # Apply only a change, and never a user-defined model that cannot run
+            apply_btn.setEnabled(valid and current() != applied["state"])
+
+        def apply():
+            use_pre, cmd, main = current()
+            model_launcher.save_choice(use_pre, cmd)
+            model_launcher.save_main_run(main)
+            applied["state"] = (use_pre, cmd, main)
+            self._append_output(
+                "Windowed Run model: %s\n" % (
+                    "predefined" if use_pre else "user defined - " + cmd), False)
+            if not use_pre and main:
+                self._append_output("Main RUN CWATM uses it too (Expert).\n", True)
+            # the main window shows (in red) when its run uses this model
+            try:
+                self._main.refresh_model_indicator()
+            except Exception:
+                log.debug("model indicator refresh failed", exc_info=True)
+            check()
+
+        def pick():
+            start = edit.text().strip().split(" ")[-1].strip('"') or ""
+            path, _ = QFileDialog.getOpenFileName(
+                dlg, "CWatM model", os.path.dirname(start),
+                "CWatM (*.exe *.py);;All files (*)")
+            if path:
+                path = os.path.normpath(path)
+                edit.setText(f'"{path}"' if " " in path else path)
+
+        cb_pre.toggled.connect(lambda _c: check())
+        cb_main.toggled.connect(lambda _c: check())
+        edit.textChanged.connect(lambda _t: check())
+        browse.clicked.connect(pick)
+        check()
+
+        apply_btn.clicked.connect(apply)
+        close = QPushButton("Close")
+        close.setToolTip("Close - a change not applied is discarded")
+        close.clicked.connect(dlg.accept)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(apply_btn)
+        row.addWidget(close)
+        box.addLayout(row)
+        dlg.adjustSize()
+        pos = (self.model_button.mapToGlobal(self.model_button.rect().bottomRight())
+               - QPoint(dlg.width(), 0))
+        dlg.move(max(pos.x(), self.screen().availableGeometry().left()), pos.y())
+        dlg.exec()
+
+    def _model_choice(self):
+        """``None`` (predefined) or ``(program, prefix_args)``; raises ValueError for a
+        user-defined command that cannot run."""
+        use_predefined, user_cmd = model_launcher.load_choice()
+        if use_predefined:
+            return None
+        return model_launcher.parse_command(user_cmd, _console_python())
+
     def _on_use_current(self):
         """Take the file the main window has loaded **now** - this window otherwise
         keeps the one it was opened with."""
@@ -401,6 +563,14 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
     def _start_run(self):
         if not self._preflight():
             return
+        try:
+            command = self._model_choice()
+        except ValueError as e:
+            self._append_output(
+                f"User-defined CWatM cannot be started (gear button):\n{e}\n", True)
+            return
+        self._marker_progress = False
+        self._step_window = _run_window(self._content)
         self._running = True
         self._last_was_progress = False
         self._started = time.time()
@@ -412,14 +582,21 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         self.run_button.setStyleSheet(self._run_button_style(running=True))
         self.load_button.setEnabled(False)
         self.current_button.setEnabled(False)
+        self.model_button.setEnabled(False)
         self._append_output(
             "\n=== Running: %s ===\n" % self._settings_path, False)
+        if command is not None:
+            self._append_output("Model (user defined): %s\n" % model_launcher.display(
+                command[0], list(command[1]) + [self._settings_path] + USER_FLAGS),
+                False)
 
         # Independent of the main window (incl. its File > Change Working Dir):
         # relative paths in THIS settings file resolve against ITS own folder.
+        # The predefined model keeps its default flags (-lg, the GUI progress hook).
         self._worker = CWatMProcessWorker(
-            self._settings_path, self, output_sink=self._append_output,
-            working_dir=self._settings_dir() or None)
+            self._settings_path, self, output_sink=self._on_run_output,
+            working_dir=self._settings_dir() or None, command=command,
+            flags=USER_FLAGS if command is not None else None)
         self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._on_finished)
         self._worker.error.connect(self._on_error)
@@ -427,8 +604,22 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
 
     # ------------------------------------------------------------ progress/time
     def _on_progress(self, pct):
+        if pct > 0:
+            self._marker_progress = True
         self._pct = max(0, min(100, int(pct)))
         self.progress_bar.setValue(self._pct)
+
+    def _on_run_output(self, text, is_error=False):
+        """The worker's output sink. A user-defined model (e.g. CWatM's own
+        run_cwatm.py) sends no progress markers - then the date in its per-timestep
+        '\\r' line, against StepStart/StepEnd, drives the progress bar."""
+        if (not self._marker_progress and not is_error
+                and text.lstrip(" \t").startswith("\r")):
+            pct = model_launcher.progress_from_line(text, self._step_window)
+            if pct is not None:
+                self._pct = pct
+                self.progress_bar.setValue(pct)
+        self._append_output(text, is_error)
 
     def _update_times(self):
         """Elapsed, and - once there is enough progress to extrapolate from - the
@@ -506,6 +697,7 @@ class HiddenRunWindow(GeometryMemoryMixin, QDialog):
         self.run_button.setText("Run CWatM")
         self.run_button.setStyleSheet(self._run_button_style(running=False))
         self.load_button.setEnabled(True)
+        self.model_button.setEnabled(True)
         self.current_button.setEnabled(bool(self._current_main_settings()))
         if self._worker is not None:
             self._worker.deleteLater()

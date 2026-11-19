@@ -65,6 +65,34 @@ are persisted keys or file names.
 
 ## Fixes and regressions behind current rules
 
+### `OUT_suffix` was refused as "Error 135" before CWatM started
+Rule: `run_guard.is_output_list_key` - only `OUT_` keys that hold a variable list are
+checked (not `*_Dir`, not `OUT_suffix`); Check settingsfile treats `OUT_suffix` as a
+file-name suffix (Error 184 characters only). CWatM develop added `OUT_suffix`
+(configuration.py: appended to every output file name). The GUI's pre-run check
+treated it like `OUT_TSS_…` and refused values such as `scenario-1` with an Error 135
+message, so a Windowed Run with the develop model never reached the model - which
+looked like the old CWatM still running. When CWatM gains another non-list `OUT_` key,
+add it to `run_guard.NOT_OUTPUT_LISTS` and to `settings_check`.
+
+### NetCDF: the unit came only from metaNetcdf.xml
+Rule: `NetcdfDataBase._var_meta` - the variable's own `units` / `long_name` attributes
+first, `cwatm/metaNetcdf.xml` only for what the file does not say; the point Timeseries
+gets them passed in (`TimeseriesWindow.from_point(unit=, long_name=)`). The lookup was
+by variable name in metaNetcdf alone, so every variable it does not list under that
+exact name (`discharge_monthavg`, `discharge_mean` from Calculate mean, …) showed no
+unit on the colour bar or the Timeseries y-axis, although CWatM writes `units` into
+every output file. `tests/test_netcdf_var_meta.py`.
+
+### NetCDF Compare A−B: Log scale painted the whole basin red
+Rule: `analysis_netcdf.color_norm` uses a **symmetric** log on a difference map.
+The ordinary log mapping shifts by zmin (`log1p(z − zmin) / log1p(zmax − zmin)`) so it
+works with a zero or negative minimum. On an A−B map (zmin = −zmax) that puts a zero
+difference at `log1p(v)/log1p(2v)` ≈ 0.8 of the scale, so nearly every cell came out
+dark red. Difference maps now use `sign(z)·log1p(|z|/c) / log1p(vmax/c)` around the
+middle, with `c` three decades below the largest difference (`_SYMLOG_DECADES`).
+`tests/test_netcdf_log_scale.py`.
+
 ### Startup: `basin_viewer` pulled in the whole model during `__init__`
 Rule in `CLAUDE.md`: *lazy-importing the module is not enough on its own.*
 `basin_viewer.py` used to import `xarray`/`rasterio`/`cwatm.run_cwatm` at its own

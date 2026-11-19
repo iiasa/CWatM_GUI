@@ -33,6 +33,7 @@ the rendering/interaction is implemented here. The selected points are drawn as
 import os
 import sys
 import json
+import re
 import time
 import base64
 import tempfile
@@ -82,6 +83,36 @@ from src.gui.widgets.basin_viewer2 import (
     _read_geojson_file, _read_shapefile,
 )
 from src.gui.widgets.basin_viewer import grid_is_latlon
+
+# Log scale on an A−B difference map: how many decades below the largest |difference|
+# the symmetric log still separates (smaller differences all sit next to white).
+_SYMLOG_DECADES = 3
+
+
+def color_norm(z, zmin, zmax, log=False, diverging=False):
+    """Map the values ``z`` to 0..1 for the colour lookup (NaN -> 0; the caller makes
+    those cells transparent).
+
+    * linear: (z − zmin) / (zmax − zmin), clipped;
+    * log: log1p(z − zmin) / log1p(zmax − zmin) - shifted by zmin so a zero or
+      negative minimum works too;
+    * log + ``diverging`` (the A−B difference, zmin = −zmax): a **symmetric** log, so
+      0 stays at the middle (white) and the sign decides the side. The shifted log
+      above must not be used there - it puts a zero difference at ~0.8 of the scale,
+      which painted the whole basin red."""
+    finite = np.isfinite(z)
+    if log and diverging:
+        vmax = max(abs(float(zmin)), abs(float(zmax))) or 1.0
+        c = vmax * 10.0 ** -_SYMLOG_DECADES
+        a = np.clip(np.where(finite, z, 0.0), -vmax, vmax)
+        s = np.sign(a) * np.log1p(np.abs(a) / c) / np.log1p(vmax / c)
+        return np.where(finite, 0.5 + 0.5 * s, 0.0)
+    if log:
+        den = np.log1p(max(zmax - zmin, 0.0)) or 1.0
+        a = np.clip(z, zmin, zmax)
+        return np.where(finite, np.log1p(a - zmin) / den, 0.0)
+    denom = (zmax - zmin) or 1.0
+    return np.where(finite, np.clip((z - zmin) / denom, 0.0, 1.0), 0.0)
 
 
 def _geojson_points(obj):
@@ -225,7 +256,7 @@ class NetcdfWindow(NetcdfDataBase):
         (self.varname, self.lons, self.lats, self.frames,
          self.time_labels, self.zmin, self.zmax,
          self.settings_title) = self._load(nc_path)
-        self.unit, self.long_name, self.description = self._lookup_meta(self.varname)
+        self.unit, self.long_name, self.description = self._var_meta(self.varname)
 
         self._multi = len(self.frames) > 1
         self._clicked = None
@@ -302,17 +333,12 @@ class NetcdfWindow(NetcdfDataBase):
 
     def _colorize(self, ti):
         """Colour timestep ``ti`` to a north-up, west->east RGBA image. When
-        ``_log_scale`` the value->colour mapping is logarithmic (log1p of the value
-        shifted by zmin, so it works for a zero/negative minimum too)."""
+        ``_log_scale`` the value->colour mapping is logarithmic - symmetric around 0
+        on an A−B difference map (``color_norm``)."""
         z = self.frames[ti]
         finite = np.isfinite(z)
-        if self._log_scale:
-            den = np.log1p(max(self.zmax - self.zmin, 0.0)) or 1.0
-            a = np.clip(z, self.zmin, self.zmax)
-            norm = np.where(finite, np.log1p(a - self.zmin) / den, 0.0)
-        else:
-            denom = (self.zmax - self.zmin) or 1.0
-            norm = np.where(finite, np.clip((z - self.zmin) / denom, 0.0, 1.0), 0.0)
+        norm = color_norm(z, self.zmin, self.zmax, log=self._log_scale,
+                          diverging=getattr(self, "_compare_mode", False))
         idx = np.clip((norm * 255).astype(np.int32), 0, 255)
         rgb = self._lut(self._colorscale_name)[idx]
         rgba = np.zeros((z.shape[0], z.shape[1], 4), dtype=np.uint8)
@@ -554,6 +580,9 @@ class NetcdfWindow(NetcdfDataBase):
         act_save_html = file_menu.addAction("Save HTML", self._save_html)
         act_save_html.setToolTip(
             "Save the map as a self-contained HTML file (opens in any browser)")
+        act_save_png = file_menu.addAction("Save PNG", self._save_png)
+        act_save_png.setToolTip(
+            "Save the map as shown (with colour bar and points) as a PNG image")
         act_load_json = file_menu.addAction("Load JSON", self._load_json)
         act_load_json.setToolTip("Load a GeoJSON file and display it on the map")
         act_load_shape = file_menu.addAction("Load Shapefile", self._load_shape)
@@ -779,10 +808,15 @@ class NetcdfWindow(NetcdfDataBase):
             html:'<div class="nc-gauge"><span>'+(label||'')+'</span></div>',
             iconSize:[17,17], iconAnchor:[8,16], tooltipAnchor:[0,-14]});}
           window.gaugeGroup=L.layerGroup().addTo(MAP);
+          // a gauge name comes from a file: shown as text, never as HTML
+          function esc(s){return String(s).replace(/[&<>"']/g,function(c){
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
           window.setGauges=function(arr){window.gaugeGroup.clearLayers();
             arr.forEach(function(g,i){
+              var tip='Gauge '+(i+1)+(g[2]?': <b>'+esc(g[2])+'</b>':'')
+                +(g[3]?'<br>Upstream area: '+esc(g[3]):'')+'<br>(click to select)';
               L.marker([g[0],g[1]],{icon:gpin(String(i+1))}).addTo(window.gaugeGroup)
-               .bindTooltip('Gauge '+(i+1)+' (click to select)')
+               .bindTooltip(tip)
                .on('click',function(ev){L.DomEvent.stopPropagation(ev);
                  document.title='NC2 '+g[1]+'|'+g[0]+'|'+Date.now();});
             });};
@@ -873,11 +907,23 @@ class NetcdfWindow(NetcdfDataBase):
             self._js(code)
         self._refresh_gauges()
 
+    def _file_gauges(self):
+        """[(lon, lat, name, ups)] from the file's global attribute ``Gauges`` (the
+        gauges of the run that wrote it, with name and upstream area); [] for an
+        older file without it."""
+        from src.gui.widgets.basin_viewer import parse_gauges_attribute
+        src = getattr(self, "_point_source", None) or {}
+        return parse_gauges_attribute(src.get("gauges", ""))
+
     def _gauge_stations(self):
-        """(lon, lat) gauge pairs from the main-window Gauges box (the parent), shown
-        on the map as small red numbered reference pins."""
+        """(lon, lat) gauge pairs shown on the map as small red numbered pins: the
+        file's own ``Gauges`` attribute, else - an older file without it - the
+        main-window Gauges box (the settings file)."""
         try:
             from src.gui.widgets.basin_viewer import _parse_coord_pairs
+            from_file = self._file_gauges()
+            if from_file:
+                return [(lon, lat) for lon, lat, _n, _u in from_file]
             mw = self._gauges_main_window()
             if mw is not None:
                 return _parse_coord_pairs(mw.gauges_field.text()) or []
@@ -885,9 +931,51 @@ class NetcdfWindow(NetcdfDataBase):
             log.debug("netcdf: reading gauges failed", exc_info=True)
         return []
 
+    def _settings_text(self):
+        """(settings text, working dir) of the main window - for gauge names and the
+        upstream area. ('', '') when the viewer has no main window."""
+        mw = self._gauges_main_window()
+        if mw is None:
+            return "", ""
+        try:
+            text = mw.text_area.toPlainText()
+        except Exception:
+            text = ""
+        try:
+            base = mw.working_dir() or ""
+        except Exception:
+            base = ""
+        return text, base
+
+    def _gauge_markers(self):
+        """[[lat, lon, name, upstream area text], ...] for the gauge pins. A file
+        with the ``Gauges`` attribute brings name and upstream area itself; for an
+        older file the names are the settings' GaugesNames (matched by coordinates)
+        and the upstream area is read from ups.nc of the settings (as Show Basin),
+        once per gauge set."""
+        def area(u):
+            return "" if u is None else "%s km²" % f"{u:,.0f}"
+
+        from_file = self._file_gauges()
+        if from_file:
+            return [[lat, lon, name, area(ups)] for lon, lat, name, ups in from_file]
+        from src.gui.widgets.basin_viewer import gauge_names, gauge_name_at, ups_at_points
+        pts = self._gauge_stations()
+        if not pts:
+            return []
+        text, base = self._settings_text()
+        names = gauge_names(text)
+        key = (tuple(pts), hash(text), base)
+        if getattr(self, "_ups_cache_key", None) != key:
+            self._ups_cache_key = key
+            self._ups_cache = ups_at_points(text, pts, base) if text else [None] * len(pts)
+        ups = self._ups_cache
+        return [[lat, lon, gauge_name_at(names, lon, lat),
+                 area(ups[i] if i < len(ups) else None)]
+                for i, (lon, lat) in enumerate(pts)]
+
     def _refresh_gauges(self):
-        arr = [[lat, lon] for lon, lat in self._gauge_stations()]
-        self._js("if(window.setGauges) setGauges(%s);" % json.dumps(arr))
+        self._js("if(window.setGauges) setGauges(%s);" % json.dumps(self._gauge_markers()))
 
     def _js(self, code):
         if not self._map_ready:
@@ -1347,7 +1435,7 @@ class NetcdfWindow(NetcdfDataBase):
         self.lons, self.lats = lons, lats
         self.frames, self.time_labels = frames, labels
         self.zmin, self.zmax = zmin, zmax
-        self.unit, self.long_name, self.description = self._lookup_meta(varname)
+        self.unit, self.long_name, self.description = self._var_meta(varname)
         self._ti = 0
         self._displayed_points = []
         self._clicked = None
@@ -1366,6 +1454,8 @@ class NetcdfWindow(NetcdfDataBase):
         self.setWindowTitle(f"\U0001F5FA NetCDF: {os.path.basename(path)}")
         if not same_grid:
             self._rebuild_for_new_grid()
+        else:
+            self._refresh_gauges()      # the new file may carry other gauges
         self._apply_data_swap(head)
         self.info_label.setText(f"Shown: {path}")
 
@@ -1751,7 +1841,8 @@ class NetcdfWindow(NetcdfDataBase):
         first = pts[0]
         win = TimeseriesWindow.from_point(
             dates, series_list[0], self._point_name(first), self.varname,
-            self.settings_title, first[0], first[1], parent=self)
+            self.settings_title, first[0], first[1], parent=self,
+            unit=self.unit, long_name=self.long_name)
         win.setModal(False)
         if not getattr(win, "_geometry_was_restored", False):
             win.resize(*scaled_default_size(win, 740, 520))
@@ -1818,6 +1909,27 @@ class NetcdfWindow(NetcdfDataBase):
                 f.write(self._page_html)
         except Exception as e:
             QMessageBox.warning(self, "Save HTML", f"Could not save the file:\n{e}")
+
+    def _save_png(self):
+        """File > Save PNG: the map as it is on screen (a Leaflet map, not a Plotly
+        figure - so it keeps the screen's pixels; the PNG dpi goes into the header)."""
+        from .analysis_timeseries import resolved_pathout_dir
+        from src.gui.utils import png_export
+        stem = os.path.splitext(os.path.basename(self.nc_path))[0]
+        label = (self.time_labels[self._ti] if self.time_labels and
+                 0 <= self._ti < len(self.time_labels) else "")
+        if label:
+            stem += "_" + re.sub(r"[^\w\-]+", "", label)
+        default = os.path.join(resolved_pathout_dir(self), stem + "_map.png")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save map as PNG", default, "PNG images (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        err = png_export.save_widget_png(self.web_view, path)
+        if err:
+            QMessageBox.warning(self, "Save PNG", f"Could not save the image:\n{err}")
 
     def _load_json(self):
         """File > Load JSON: open a GeoJSON file and draw it on the map, same as

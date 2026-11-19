@@ -59,6 +59,14 @@ def test_options_section_and_dir_keys_are_not_output_entries():
     assert _problems("discharge") == []
 
 
+@pytest.mark.parametrize("key", ["OUT_suffix", "out_Suffix", "OUT_SUFFIX"])
+@pytest.mark.parametrize("value", ["scenario-1", "v1.2", "$(FILE_PATHS:PathRoot)", "2050"])
+def test_out_suffix_is_a_file_name_suffix_not_a_variable_list(key, value):
+    # configuration.py: OUT_suffix (any case) is added to every output file name
+    content = INI.format(tss="discharge") + f"{key} = {value}\n"
+    assert G.output_problems(content) == []
+
+
 def test_a_continuation_line_is_part_of_the_value():
     content = INI.format(tss="discharge,\n    evil[__import__('os')]")
     assert [p[2] for p in G.output_problems(content)] == ["evil[__import__('os')]"]

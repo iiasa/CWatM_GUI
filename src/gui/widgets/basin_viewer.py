@@ -838,6 +838,114 @@ def _parse_coord_pairs(value: str):
         return []
 
 
+def gauge_names_from_pairs(gauges_value, names_value):
+    """{(lon, lat) rounded to 4 decimals: name} from a Gauges value ('lon lat lon lat
+    ...') and a GaugesNames value. Paired in order exactly as CWatM's output.py does:
+    names split on blanks or commas, a gauge without a name stays unnamed, a name
+    without a gauge is ignored. Empty when Gauges is not coordinates (e.g. a map)."""
+    pairs = _parse_coord_pairs(gauges_value or "")
+    names = str(names_value or "").replace(",", " ").split()
+    return {(round(lon, 4), round(lat, 4)): name for (lon, lat), name in zip(pairs, names)}
+
+
+def gauge_names(config_content):
+    """Gauge names of a settings file (``GaugesNames``, matched to ``Gauges``) as
+    {(lon, lat): name} - see gauge_names_from_pairs. Empty without GaugesNames."""
+    try:
+        config = configparser.ConfigParser(interpolation=None, strict=False)
+        config.read_string(config_content or "")
+    except Exception:
+        return {}
+    names = _find_setting_value(config, "GaugesNames")
+    gauges = _find_setting_value(config, "Gauges")
+    if not names or not gauges:
+        return {}
+    return gauge_names_from_pairs(_resolve_settings_placeholders(gauges, config),
+                                  _resolve_settings_placeholders(names, config))
+
+
+_GAUGE_LABEL = re.compile(r"^G\d+(?:_(.*))?$")
+
+
+def parse_gauges_attribute(text):
+    """The ``Gauges`` global attribute CWatM writes into its output NetCDFs
+    (data_handling.py): ``"G1_outletMorava 48.1916 16.9750 26695.0; G2 48.9396
+    16.8918 275.7"`` - entries joined by '; ', each ``<label> <lat> <lon> <upstream
+    area km2>`` (y x on a projected grid); the label is G<n>, or G<n>_<name> with the
+    settings' GaugesNames. Returns [(lon, lat, name, ups)] - name '' for a plain G<n>,
+    ups None if missing; [] when the text is not in this form (an entry that cannot
+    be read is skipped)."""
+    out = []
+    for entry in str(text or "").split(";"):
+        parts = entry.split()
+        if len(parts) < 3:
+            continue
+        try:
+            lat, lon = float(parts[1]), float(parts[2])
+        except ValueError:
+            continue
+        try:
+            ups = float(parts[3]) if len(parts) > 3 else None
+        except ValueError:
+            ups = None
+        m = _GAUGE_LABEL.match(parts[0])
+        name = (m.group(1) or "") if m else parts[0]
+        out.append((lon, lat, name, ups))
+    return out
+
+
+def gauge_name_at(names, lon, lat, tol=1e-3):
+    """The name in ``names`` ({(lon, lat): name}) of the gauge at (lon, lat): exact at
+    4 decimals, else the nearest one within ``tol`` degrees. '' if there is none."""
+    if not names:
+        return ""
+    key = (round(float(lon), 4), round(float(lat), 4))
+    if key in names:
+        return names[key]
+    best, dist = "", tol
+    for (glon, glat), name in names.items():
+        d = max(abs(glon - float(lon)), abs(glat - float(lat)))
+        if d <= dist:
+            best, dist = name, d
+    return best
+
+
+def ups_at_points(config_content, points, base_dir=""):
+    """Upstream area (ups.nc next to the settings' Ldd map, as Show Basin reads it)
+    at each (lon, lat) in ``points``: a list of floats, None where unknown. Reads
+    only the nearest cells (xarray, lazily) - ups.nc may be a large grid."""
+    out = [None] * len(points)
+    if not points:
+        return out
+    try:
+        viewer = BasinViewer(config_content)
+        ups_path = viewer._find_ups_path()
+        if not ups_path:
+            return out
+        path = viewer._resolve_placeholders(ups_path) or ups_path
+        if not os.path.isabs(path) and base_dir:
+            path = os.path.join(base_dir, path)
+        if not os.path.exists(path):
+            return out
+        import xarray as xr                       # lazy - fast-startup rule
+        with xr.open_dataset(path) as ds:
+            var = next((v for v in ds.data_vars if ds[v].ndim >= 2), None)
+            if var is None:
+                return out
+            da = ds[var]
+            lon_name = next((d for d in da.dims if d.lower() in ("lon", "longitude", "x")), None)
+            lat_name = next((d for d in da.dims if d.lower() in ("lat", "latitude", "y")), None)
+            if lon_name is None or lat_name is None:
+                return out
+            for i, (lon, lat) in enumerate(points):
+                val = float(da.sel({lon_name: float(lon), lat_name: float(lat)},
+                                   method="nearest").values.squeeze())
+                out[i] = val if np.isfinite(val) else None
+    except Exception:
+        log.debug("ups_at_points failed", exc_info=True)
+    return out
+
+
 def build_mask_context(settings_file: str, config_content: str):
     """Build an in-memory mask for gauge-in-basin checks.
 

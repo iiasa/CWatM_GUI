@@ -240,3 +240,24 @@ class TestRobustness:
         for row, msg in problems(host, "StepStart = rubbish\n"):
             assert row is None or isinstance(row, int)
             assert isinstance(msg, str) and msg
+
+
+class TestOutSuffix:
+    """OUT_suffix (configuration.py): a suffix for every output file name - not an
+    output key with a variable list. Only a character a file name cannot hold is a
+    problem (CWatM: Error 184)."""
+
+    OUT = BASE_DATES + "[OUTPUT]\nOUT_TSS_Daily = discharge\n"
+
+    @pytest.mark.parametrize("value", ["scenario-1", "v1.2", "2050",
+                                       "$(FILE_PATHS:ScenarioName)"])
+    def test_a_valid_suffix_is_not_flagged(self, host, value):
+        assert messages(host, self.OUT + f"OUT_suffix = {value}\n") == []
+
+    def test_any_case_of_the_key(self, host):
+        assert messages(host, self.OUT + "out_Suffix = a\n") == []
+
+    @pytest.mark.parametrize("value", ["a/b", "x:y", "what?"])
+    def test_a_character_impossible_in_a_file_name(self, host, value):
+        assert has(messages(host, self.OUT + f"OUT_suffix = {value}\n"),
+                   "OUT_suffix", "Error 184")

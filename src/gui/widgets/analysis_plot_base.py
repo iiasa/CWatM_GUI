@@ -7,7 +7,9 @@ copies that same self-contained file to wherever the user asks. Only the figure 
 suggested file name differ, so everything else lives here. **Save CSV** (Watercycle and
 Flow Diagram, bottom-left) writes the numbers behind the plot: the window sets
 ``_csv_data`` = (meta, header, rows) whenever it rebuilds the figure, and ``_csv_name``
-is the suggested file name.
+is the suggested file name. **Save PNG** (`_save_png`, a button left of Save HTML, or
+File ▸ Save PNG in Timeseries) renders the figure(s) in the page at the PNG dpi of
+the Preferences - see `src/gui/utils/png_export.py`.
 
 Subclasses set two class attributes and inherit the rest::
 
@@ -114,16 +116,60 @@ class PlotlyWindowBase(TempPageMixin, GeometryMemoryMixin, QDialog):
         except Exception as e:
             QMessageBox.warning(self, "Save CSV", f"Could not save the file:\n{e}")
 
+    def _save_stem(self):
+        """Suggested file name (no extension) for Save HTML / Save PNG."""
+        base = os.path.splitext(os.path.basename(str(self.csv_path)))[0]
+        base = base or self._save_fallback
+        # Point labels contain "@" and "," - keep the suggested name a valid file name.
+        return re.sub(r'[^\w\-.]+', '_', base).strip('_') + self._save_suffix
+
+    def _make_save_png_button(self, style):
+        """The Save PNG button - same look as Save HTML; the caller places it left
+        of Save HTML."""
+        from PySide6.QtWidgets import QPushButton
+        btn = QPushButton("Save PNG")
+        btn.setStyleSheet(style)
+        btn.setToolTip("Save the plot as a PNG image (resolution: Preferences ▸ "
+                       "Editor & Dates ▸ PNG dpi, default 150)")
+        btn.clicked.connect(self._save_png)
+        self.save_png_button = btn
+        return btn
+
+    def _save_png(self):
+        """Save the plot(s) on screen as a .png at the PNG dpi of the Preferences."""
+        if not self._temp_html or not os.path.exists(self._temp_html):
+            QMessageBox.information(self, "Save PNG", "Nothing to save yet.")
+            return
+        from src.gui.utils import display_format, png_export
+        dpi = display_format.get_png_dpi()
+        default = os.path.join(resolved_pathout_dir(self), self._save_stem() + ".png")
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Save plot as PNG ({dpi} dpi)", default, "PNG images (*.png)")
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        btn = getattr(self, "save_png_button", None)
+        if btn is not None:
+            btn.setEnabled(False)
+
+        def done(err):
+            try:
+                if btn is not None:
+                    btn.setEnabled(True)
+                if err:
+                    QMessageBox.warning(self, "Save PNG", f"Could not save the image:\n{err}")
+            except RuntimeError:
+                log.debug("_save_png: window gone", exc_info=True)
+
+        png_export.export_plotly_page(self.web_view, path, done, dpi)
+
     def _save_html(self):
         """Save the currently rendered plot HTML to a user-chosen file."""
         if not self._temp_html or not os.path.exists(self._temp_html):
             QMessageBox.information(self, "Save HTML", "Nothing to save yet.")
             return
-        base = os.path.splitext(os.path.basename(str(self.csv_path)))[0]
-        base = base or self._save_fallback
-        # Point labels contain "@" and "," - keep the suggested name a valid file name.
-        base = re.sub(r'[^\w\-.]+', '_', base).strip('_') + self._save_suffix
-        default = os.path.join(resolved_pathout_dir(self), base + ".html")
+        default = os.path.join(resolved_pathout_dir(self), self._save_stem() + ".html")
         path, _ = QFileDialog.getSaveFileName(
             self, "Save plot as HTML", default, "HTML files (*.html)")
         if not path:

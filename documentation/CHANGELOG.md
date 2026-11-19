@@ -4,6 +4,74 @@ Release notes, newest first. The version itself lives in `src/gui/__init__.py`
 (`__version__`), which the About dialog reads and the installer scrapes at compile time.
 
 
+## CWatM GUI 1.15 — what is new
+
+*Released 19 November 2026. Previous release: 1.14 (2 November 2026).*
+
+This release brings a much newer bundled CWatM model, a reorganised Analyse menu with a
+new water-balance view, PNG export of every plot, and a way to run your own CWatM.
+
+---
+
+### 1. CWatM model (bundled)
+
+- Updated to CWatM **develop eb32b3a** (19 November 2026). **Info ▸ About CWatM** now
+  shows the GitHub branch and commit of the CWatM inside the GUI.
+- Lakes, reservoirs, wetlands and reservoir transfers are now in one routing/reservoir
+  module. Water demand is split into sector demand, surface-water and groundwater
+  abstraction, and irrigation agents. Soil, snow, evaporation, routing, output and data
+  handling were updated as well.
+- **Scenario names in output files**: the new key `OUT_suffix` is appended to every
+  output file name. The GUI's pre-run check and Check settingsfile accept it.
+- **Station names**: CWatM writes the gauges with their names (`GaugesNames`) and
+  upstream area into the output NetCDF. The NetCDF and Show Basin gauge pins show them.
+- Frozen (installed) MODFLOW runs work again. Before, they stopped because
+  `modflow6.py` could not be found.
+
+### 2. Running CWatM
+
+- **RUN CWATM ▸ Run CWatM + error message**: the same run with CWatM's `-e` flag. An
+  error also names the code lines where it happened.
+- **Use your own CWatM** (Windowed Run ▸ ⚙ gear): *User defined* runs another CWatM, such
+  as a `CWatM_model.exe`, a CWatM folder or a command like `python …\run_cwatm.py`. Experts
+  can also use it for the main RUN CWATM after ticking a red warning box. The main window
+  then shows **⚠ User-defined CWatM** next to the RUN button.
+
+### 3. Analyse
+
+- **Analyse ▸ Watercycle ▸** is now a submenu. It holds Watercycle, Flow Diagram, Chord
+  Analysis, Mean Weekly Fluxes and the new **Annual bars**.
+- **Annual bars**: one stacked column per complete year, for example how runoff splits
+  into surface runoff, interflow and baseflow. The ⚙ gear picks the components.
+- **Mean Weekly Fluxes**: new Surface Runoff and Interflow panels. Runoff is now the
+  total runoff.
+- **Fossil groundwater**: with `limitAbstraction = False`, Watercycle and Flow Diagram
+  count the demand the model could not meet as an input (*Fossil groundwater* / *Other
+  source*) and the part of it that is lost as an output. The Flow Diagram no longer
+  subtracts that loss twice from return flow.
+- **Save PNG** in Watercycle, Flow Diagram, Chord, Mean Weekly Fluxes, Annual bars, Flow
+  duration, Flow regime, Timeseries and NetCDF. Preferences ▸ Editor & Dates ▸ **PNG dpi**
+  sets the resolution (default 150).
+- **NetCDF**:
+  - Units and long names come from the file itself, so derived files such as
+    `discharge_mean.nc` show their unit too.
+  - Time axes in "Months since …" and "Years since …" (older CWatM and ISIMIP output)
+    show real dates.
+  - The title comes from the NetCDF file, not from the settings loaded in the main
+    window.
+  - **Log scale on a Compare A−B map** no longer paints the whole basin red.
+
+### 4. Fixes and more
+
+- **Basin from a MaskMap point** (a coordinate MaskMap) works again in the gauge check
+  and Show Basin. Before, it failed with "tuple index out of range".
+- **CWatM AI**: the login works with notebooklm-py 0.8.
+- **Language**: the GUI is now also available in **简体中文 (Simplified Chinese)**.
+- Updated user documentation, with new screenshots and a guide to the Analyse menu.
+
+---
+
+
 ## CWatM GUI 1.14 — what is new
 
 *Released 2 November 2026. Previous release: 1.13 (20 October 2026).*

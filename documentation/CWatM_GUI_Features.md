@@ -166,6 +166,17 @@
   model crash cannot take the GUI down.
 - **Stop/Start Control**: interrupt a run mid-execution.
 - **Progress Tracking**: the progress clock advances based on actual model dates.
+- **The RUN CWATM menu**: *Run CWATM* (Ctrl+R) · *Run CWatM + error message* (the same
+  run with CWatM's `-e` flag: an error also names the code lines where it happened) ·
+  *Journal of Runs* · *Windowed Run CWatM* · *Batch Run…* · *Create batch* (Expert only:
+  writes a Windows `.bat` that runs the current settings file without the GUI).
+- **Which CWatM runs (Windowed Run ▸ ⚙ gear)**: *Use predefined* runs the CWatM that comes
+  with the GUI; *User defined* runs another one — a `CWatM_model.exe`, a CWatM folder or a
+  command line like `python P:\…\run_cwatm.py` (the settings file and `-l` are added).
+  Press **Apply** to use it. It is for Windowed Runs only, unless you also tick the red
+  **"WARNING: Expert only. Use this model for the main RUN CWATM too"** — then RUN CWATM
+  and Run CWatM + error message use it as well, the main window shows **⚠ User-defined
+  CWatM: …** in red next to the RUN button, and the status line names the full command.
 - **Windowed Run CWatM** (RUN CWATM ▸ Windowed Run CWatM): open one or more **separate**
   windows that each run CWatM in their own process, independent of the main window — so
   several runs can go in parallel while you keep working. Each has a bold-green settings
@@ -194,8 +205,8 @@
   the full grid of combinations.
 - **Live discharge sparkline**: next to the progress clock, a small live plot of the
   discharge at the first gauge for the last ~3 months (older values fade out). Now and
-  then a little animal (Preferences ▸ Display ▸ **Select animal**: Fish / Otter / Beaver / Sailboat)
-  briefly swims along the trace.
+  then a little animal (Preferences ▸ Display ▸ **Select animal**) briefly swims along
+  the trace.
 
 ### Journal of Runs (RUN CWATM ▸ Journal of Runs — 2nd item)
 A table of your past runs — time, Title, PathOut, duration, success and last discharge —
@@ -254,8 +265,6 @@ More on the same table:
 - **Settings Restoration**: **Restore settings from discharge map** (enabled once a
   discharge NetCDF is selected) opens that file in **Restore settingsfile**, where you
   can preview, compare and restore the settings it carries.
-
-![Check Data](figures/screenshot_checkdata.png)
 
 ### Add output variables (Tools menu)
 Pick what CWatM should write, without looking anything up:
@@ -357,15 +366,13 @@ and shows what is inside:
   runs it, whatever is in its folder.
 - The **Progress** column is a bar, so a long table can be read at a glance.
 
-## Maps, Excel and Result Analysis
+## Basin map and Excel editor (Tools menu)
 
 ### Show Basin (Tools ▸ Show Basin)
 The catchment on an OpenStreetMap map (EPSG:4326): the `ups.nc` river network and the
 green mask overlay, numbered red gauge pins, a blue mask-start pin. Click to read
 coordinates/area; create/copy the mask and gauges; overlay a GeoJSON (**Load JSON**);
 fade the OSM basemap with the transparency slider.
-
-![Show Basin](figures/screenshot_basin.png)
 
 ### Excel editor (Tools ▸ Excel Crops/Reservoirs)
 Edit the settings `Excel_settings_file` in a table that **reproduces the Excel cell
@@ -416,21 +423,41 @@ colours** — and works like Excel:
 sheet are written back, preserving all other sheets and styling; large sheets load
 instantly (lazy).
 
-![Excel — Crops](figures/screenshot_excel_crops.png)
+## The Analyse menu
 
-![Excel — Reservoirs](figures/screenshot_excel_reservoirs.png)
+Everything that looks at the results of a run, in the order of the menu:
+
+| Analyse ▸ … | Opens | Needs |
+|-------------|-------|-------|
+| Open PathOut Folder | the output folder in the file manager | – |
+| Output Explorer | a browser of the output folder | – |
+| Timeseries | a line chart of a result `.csv` | any CWatM `.csv` result |
+| NetCDF | a map of a result `.nc`, animated over time | any CWatM `.nc` result |
+| Watercycle ▸ Watercycle | the water balance as a sunburst | WaterCycle csv |
+| Watercycle ▸ Flow Diagram | the water balance as a Sankey flow diagram | WaterCycle csv |
+| Watercycle ▸ Chord Analysis | the water balance as a chord diagram | WaterCycle csv |
+| Watercycle ▸ Mean Weekly Fluxes | the mean seasonal cycle, week by week | daily WaterCycle or WaterBalance csv |
+| Watercycle ▸ Annual bars | one stacked column per year | daily WaterCycle or WaterBalance csv |
+| Full Waterbalance | the balance of every part of the water cycle | WaterBalance csv |
+
+**The WaterCycle csv** comes from the output `OUT_TSS_AreaSum_Daily = WaterCycle`, which
+**Tools ▸ Add output Watercycle** writes into your settings file; after the run it is
+`WaterCycle_areasum_daily.csv` in the output folder (a `…_MonthTot` or `…_AnnualTot`
+output works for the first three too). **The WaterBalance csv** comes from
+**Tools ▸ Add output WaterBalance** (`OUT_TSS_AreaSum_Daily = WaterBalance`). Every one
+of these windows opens its file dialog in the output folder.
+
+Under the **Beginner** skill level the Analyse menu is shorter: Flow Diagram, Chord
+Analysis, Mean Weekly Fluxes, Annual bars and Full Waterbalance are hidden, Watercycle
+stays (the CWatM Academy uses it).
+
+### Open PathOut Folder (Analyse ▸ Open PathOut Folder)
+Opens the run's output folder (PathOut, placeholders resolved) in the file manager.
 
 ### Output Explorer (Analyse ▸ Output Explorer)
 A browser of your PathOut folder: **double-click** a result and it opens in the matching
-viewer — `.nc` → NetCDF map, `WaterCycle*.csv` → sunburst, other `.csv` → Timeseries. No
-more hunting through file dialogs after a run.
-
-### Nearest city next to a station
-Wherever an Analyse window shows a station's lon/lat (Timeseries, NetCDF, Watercycle,
-Flow Diagram, Full Waterbalance, …) the nearest city and its distance follow it, e.g.
-*lon: 16.61, lat: 48.91 - 26 km from Břeclav (CZ)*. It works offline, from GeoNames'
-list of all places with more than 15,000 people, and the distance is measured from the
-station to the city's centre point. A station on a projected (x/y) grid gets no city.
+viewer — `.nc` → NetCDF map, `WaterCycle*.csv` → Watercycle sunburst, other `.csv` →
+Timeseries. No more hunting through file dialogs after a run.
 
 ### Timeseries (Analyse ▸ Timeseries)
 Plot a result `.csv` (line chart). Step through multiple columns, **Compare** another
@@ -440,57 +467,93 @@ an observed series and shows goodness-of-fit metrics — **KGE / NSE / PBIAS / R
 computed over the period the slider selects. **Flow duration** and **Flow regime**
 (Action menu) open a dedicated window for the column currently on screen, over the
 **displayed period** — move the slider and an open Flow duration / Flow regime window is
-recalculated for the new period. See below.
-
-![Timeseries](figures/screenshot_timeseries.png)
+recalculated for the new period (see *Flow duration / Flow regime* below).
 
 ### NetCDF (Analyse ▸ NetCDF)
-A result `.nc` as a raster overlay on an OSM map with a timestep slider + Play,
-colour-scale, **Log scale**, OSM-transparency slider, and click-to-read. **Left-click a cell
-(or a gauge pin) to select it** - it gets a numbered pin; click more cells to add more
-stations, and click a selected cell or its pin again to remove it. Two ways to plot
-the selected cells' series: **Fast Display Timeserie** (quick, the map's timesteps only, with
-gaps) or **Total Timeseries** (every timestep — can take a while, so a progress bar with
-elapsed time and a **Cancel** button shows while it reads). **Right-click anywhere on the
-map** for the same menu. **Compare A−B** loads a second
-`.nc` on the same grid and shows the **difference** (this − other) per timestep on a
-red/blue diverging scale — ideal for comparing two scenarios you just ran.
+A result `.nc` as a raster overlay on an OpenStreetMap map with a timestep slider +
+**Play**, **Log scale**, an OSM-transparency slider, and click-to-read; colour scale and
+background map are in the **Display** window. **Left-click a cell (or a gauge pin) to
+select it** - it gets a numbered pin; click more cells to add more stations, and click a
+selected cell or its pin again to remove it. **Right-click anywhere on the map** for the
+same menu as **Action**:
+- **Fast Display Timeserie** (quick, the map's timesteps only, with gaps) or **Total
+  Timeseries** (every timestep — can take a while, so a progress bar with elapsed time and
+  a **Cancel** button shows while it reads) plot the selected cells' series.
+- **Compare A−B** loads a second `.nc` on the same grid and shows the **difference**
+  (this − other) per timestep on a red/blue scale — ideal for two scenarios you just ran.
+- **Flow duration / Flow regime** for the last clicked point (see below).
+- **Remove gauges** clears every selected point and closes their Timeseries.
+- **Calculate mean** / **Calculate percentile** reduce the whole time axis to one map -
+  the mean, or a percentile you choose (e.g. 50 = median) - and save it as a new NetCDF
+  next to the original (`discharge_mean.nc` / `discharge_50_percentile.nc`, name
+  changeable). The new file keeps all metadata of the original plus where it came from,
+  and the map switches to it.
+- **Save as a .tif** writes the map of the shown timestep as a GeoTIFF.
+
 **File ▸ Load netcdf** opens another `.nc` (starting in the current file's folder) in the
-same window. **Calculate mean** / **Calculate percentile** (Action menu) reduce the whole time axis to
-one map - the mean, or a percentile you choose (e.g. 50 = median) - and save it as a new
-NetCDF next to the original (`discharge_mean.nc` / `discharge_50_percentile.nc`, name
-changeable). The new file keeps all metadata of the original plus where it came from
-(file name, folder, creation time), and the map switches to it.
+same window; **Load JSON** / **Load Shapefile** draw an outline (e.g. a basin border) on
+the map. A grid in projected x/y coordinates (e.g. UTM) is shown without the OSM map.
 
-**Flow duration / Flow regime** (Action menu, on the map, or from Timeseries above) plot
-the **last point you clicked** — never several at once. **Flow duration** ranks each
-year's values into an exceedance-probability curve; **Flow regime** shows the seasonal
-cycle (day-of-year or month-of-year). Both show every year as a thin line plus a black
-cross-year average, with buttons to hide the single years, show light-gray 0–100 %/40–60 %
-percentile bands, save the per-year table as csv, or save the plot as HTML.
+### Flow duration / Flow regime (Timeseries or NetCDF ▸ Action)
+Both plot one series — the column on screen in Timeseries, the **last point you
+clicked** on the NetCDF map. **Flow duration** ranks each year's values into an
+exceedance-probability curve; **Flow regime** shows the seasonal cycle (day-of-year or
+month-of-year). Both show every year as a thin line plus a black cross-year average, with
+buttons to hide the single years, show light-gray 0–100 %/40–60 % percentile bands, save
+the per-year table as csv, or save the plot as HTML.
 
-![NetCDF](figures/screenshot_netcdf.png)
+### The Watercycle submenu (Analyse ▸ Watercycle ▸ …)
+Five views of the same water balance of the basin (or of each station). They share:
+- **Backward / Forward** buttons when the csv holds several stations; the title is the
+  settings `Title`, the subtitle the station's lon/lat and the nearest city;
+- a **month range slider** that sets the period that is analysed;
+- **Save HTML** (the plot) and **Save CSV** (the numbers behind it), suggested in the
+  output folder;
+- **Fossil groundwater**: when the run did not limit abstraction
+  (`limitAbstraction = False`), the demand the model could not meet is counted as an
+  input *Fossil groundwater* (Sankey: *Other source*), and what of it is lost as an
+  output *Unmet demand lost*.
 
-### Watercycle (Analyse ▸ Watercycle)
-The water balance of a `WaterCycle_areasum_monthtot.csv` as a **sunburst**, over a
-month range slider. **Save CSV** (lower left) stores the numbers behind the plot
-(suggested name `watercycle.csv`), **Save HTML** the plot itself. **Right-click a
-sector** (e.g. Rain, Outputs, Balance) ▸ **Timeseries** to plot that sector month by
-month over the whole file — fluxes in mm/month, storage in mm, river discharge in m³/s.
-**Add to timeseries** (same menu) draws another sector into the last opened one; it is
-greyed out while no Timeseries is open or when that sector is already shown. River
-discharge stays in m³/s only while it is alone — once a second sector joins, it is
-converted to mm/month.
+#### Watercycle (Analyse ▸ Watercycle ▸ Watercycle)
+The water balance as a **sunburst**: inputs, outputs, evapotranspiration and storage
+change in mm/year (river discharge in m³/s). **Right-click a sector** (e.g. Rain,
+Outputs, Balance) ▸ **Timeseries** to plot that sector month by month over the whole
+file — fluxes in mm/month, storage in mm, river discharge in m³/s. **Add to timeseries**
+(same menu) draws another sector into the last opened one; it is greyed out while no
+Timeseries is open or when that sector is already shown. River discharge stays in m³/s
+only while it is alone — once a second sector joins, it is converted to mm/month.
 
-![Watercycle](figures/screenshot_watercycle.png)
+#### Flow Diagram (Analyse ▸ Watercycle ▸ Flow Diagram)
+The same water balance as a **Sankey** flow diagram: Precipitation → Rain / Snow → Soil,
+Groundwater, Runoff → Waterbodies → Discharge, with withdrawal, consumption and glacier
+flows. **Save CSV** stores one row per flow in mm/year. **Right-click a node or a flow** ▸
+**Timeseries** / **Add to timeseries** works as in Watercycle: the monthly series of that
+node or flow in mm/month (the Discharge node in m³/s while it is shown alone).
 
-### Flow Diagram (Analyse ▸ Flow Diagram)
-The same water balance as a **Sankey** flow diagram. **Save CSV** stores one row per
-flow in mm/year (suggested name `flowdiagram.csv`). **Right-click a node or a flow** ▸
-**Timeseries** / **Add to timeseries** works as in Watercycle: the monthly series of
-that node or flow in mm/month (the Discharge node in m³/s while it is shown alone).
+#### Chord Analysis (Analyse ▸ Watercycle ▸ Chord Analysis)
+The flows of the Flow Diagram drawn as a **chord diagram**: every part of the water cycle
+is an arc on a circle, every flow a ribbon between two arcs, its width the amount.
+**Click an arc** to focus on it: the 1st click keeps only its flows in and out, the 2nd
+only the flows coming in, the 3rd only the flows going out, the 4th (or a click on a
+ribbon or the background) shows everything again. *(An experimental view.)*
 
-![Flow Diagram](figures/screenshot_flowdiagram.png)
+#### Mean Weekly Fluxes (Analyse ▸ Watercycle ▸ Mean Weekly Fluxes)
+The **mean seasonal cycle** of a **daily** WaterCycle or WaterBalance csv: for every week
+of the year the mean over all years of the slider period, one filled panel per component
+on a shared January–December axis — fluxes in mm/week, storages in mm. The **⚙ gear**
+(top right) picks the panels from ~50 components: precipitation, rain, snow, snow- and
+glacier melt, runoff and its parts, the evaporation terms, the storages, discharge,
+groundwater recharge, withdrawals, consumption and return flow. A component that is not
+in the csv is greyed out; the choice applies at once and is remembered (default:
+Precipitation, Rain, Snow, Snowmelt, Glacier melt, Runoff, Actual ET, Discharge).
+*(An experimental view.)*
+
+#### Annual bars (Analyse ▸ Watercycle ▸ Annual bars)
+The components of a **daily** WaterCycle or WaterBalance csv summed per **complete
+year** of the slider period: **one stacked column per year** in mm/year (a storage is
+stacked as its annual mean in mm). Same colours and the same **⚙ gear** as Mean Weekly
+Fluxes, with its own remembered choice (default: Surface Runoff, Interflow, Baseflow —
+how the runoff splits, year by year).
 
 ### Full Waterbalance (Analyse ▸ Full Waterbalance)
 The balance of **every part** of the water cycle, not just the overall one. It needs the
@@ -502,9 +565,16 @@ then the **sunbursts** of the parts: Total, interception and soil, the three soi
 soil per land cover, groundwater and runoff concentration, the MODFLOW layers,
 evapotranspiration, potential vs. actual ET, storage change, snow and glacier, lakes /
 channels / routing, water demand and use. Only the parts of the options that are on are
-drawn. **Backward / Forward** switch the station, **Save HTML** keeps the whole page,
-**Save CSV** the table. A WaterBalance csv of a long run can be large, so reading it may
-take a while.
+drawn. A **month slider** above the page sets the analysed period, **Backward / Forward**
+switch the station, **Save HTML** keeps the whole page, **Save CSV** the table. A
+WaterBalance csv of a long run can be large, so reading it may take a while.
+
+### Nearest city next to a station
+Wherever an Analyse window shows a station's lon/lat (Timeseries, NetCDF, the Watercycle
+views, Full Waterbalance) the nearest city and its distance follow it, e.g.
+*lon: 16.61, lat: 48.91 - 26 km from Břeclav (CZ)*. It works offline, from GeoNames'
+list of all places with more than 15,000 people, and the distance is measured from the
+station to the city's centre point. A station on a projected (x/y) grid gets no city.
 
 ### CWatM AI (CWatM AI button)
 Ask questions about CWatM in a chat window answered by Google **NotebookLM** (Gemini),
@@ -564,8 +634,9 @@ points earn **river badges** (Breg, Thames, Morava, …).
    area.
 8. **Stop if Needed**: Run CWATM (Ctrl+R) again to interrupt.
 9. **Check Data (Optional)**: **Tools ▸ Check Data** to validate before running.
-10. **Analyse Results (Optional)**: **Analyse ▸ Timeseries** to plot a result `.csv`
-    (opens in the PathOut folder).
+10. **Analyse Results (Optional)**: **Analyse ▸ Timeseries** to plot a result `.csv`,
+    **Analyse ▸ NetCDF** for a map, **Analyse ▸ Watercycle ▸ …** for the water balance
+    (all open in the PathOut folder).
 11. **Exit**: **File ▸ Exit** prompts to save if there are unsaved changes.
 
 ### Data Validation Workflow
@@ -584,16 +655,29 @@ points earn **river badges** (Breg, Thames, Morava, …).
 ### Top
 - **Banner**: CWatM icon + "CWatM GUI" title, centered "The Community Water Model User
   Interface", IIASA logo.
-- **Menu bar** (below the banner): File · Settings · Tools ·
-  RUN CWATM · Configure │ Analyse │ **CWatM AI** · Help · Info (see the Menu Bar
-  section in `CLAUDE.md`), and a **⋮** button in the bar's right corner. The Excel
-  workbook editor lives in **Tools ▸ Excel Crops/Reservoirs**; there is no Excel
-  menu. Recently
-  opened files (up to 6) are listed directly in the **File** menu — there is no
-  separate History menu.
+- **Menu bar** (below the banner), in three groups — running CWatM │ analysing results
+  │ help:
+  - **File** — Load, Reload, Save, Save As, Change Working Dir, the 6 recent files, Exit.
+  - **Settings** — View · Find & Replace · Edit · Bookmarks & Changes · Check & Compare.
+  - **Tools** — *Basin & Gauges* (Show Basin, Set max Gauge) · *Outputs* (Create PathOut
+    Folder, Add output Watercycle, Add output WaterBalance, Add output variables) ·
+    *Setup & Data* (Change Options, Excel Crops/Reservoirs, Check Data, Restore
+    settingsfile).
+  - **RUN CWATM** — Run CWATM, Run CWatM + error message, Journal of Runs, Windowed Run
+    CWatM, Batch Run…, Create batch.
+  - **Configure** — Preferences…
+  - **Analyse** — see *The Analyse menu* above.
+  - **CWatM Academy** and **CWatM AI** — buttons, not menus.
+  - **Help** — this documentation, the feature tour, FAQ, the account privacy notice, the
+    CWatM homepage.
+  - **Info** — About CWatM (with the GitHub branch and commit of the CWatM inside the
+    GUI), World Map, and — when logged in — the Leaderboard.
+
+  In the bar's right corner sit the **Shop** and **account** buttons and **⋮**
+  (Preferences).
 - **Preferences** (**Configure ▸ Preferences…**, **Ctrl+,**, or the **⋮** button on
-  the right of the menu bar): one window holding every GUI setting, on five pages you
-  pick from the list on the left:
+  the right of the menu bar): one window holding every GUI setting, on pages you pick
+  from the list on the left:
   - **Output** — the file the output box is written to, and whether it is written.
   - **Startup & Model** — reopen the last session's tabs at start.
   - **Display** — colour mode, header banner, the font and font size of the settings
@@ -604,15 +688,19 @@ points earn **river badges** (Breg, Thames, Morava, …).
     Run, Check Data, the Excel editor and the water-balance analyses), the
     date picker style, the date timeline, auto-bookmark on change, and **Use Tabs**
     (the settings-file tabs, Expert level only). Every level is free.
-  - **Account** — stay logged in, count my runs, record run locations.
+    The page also holds the notebook **CWatM AI** asks.
   - **Run History** — where the Journal of Runs is kept and for how long.
+  - **Account** — stay logged in, count my runs, reset the MODFLOW reward.
+  - **CWatM Academy** — open the Academy at every start, and link its progress to your
+    login (then it continues on any computer and each finished level earns points).
 
   Nothing changes while you are clicking around: **Apply** puts the current page's
   choices into effect and keeps the window open, **OK** applies them and closes, and
   **Cancel** throws away anything you have not applied yet. All settings are
   remembered for the next session (except *Write output box*, which always starts off).
-- **Language** (Preferences ▸ Display ▸ Language): **English** (default), Deutsch, Italiano,
-  Magyar, Română, Srpski, Hrvatski, Slovenčina, Български, Čeština or Українська.
+- **Language** (Preferences ▸ Display ▸ Language): **English** (default), Deutsch,
+  Français, Español, Italiano, Magyar, Română, Srpski, Hrvatski, Slovenčina, Български,
+  Čeština, Українська or 简体中文 (Simplified Chinese).
   Menus, menu items, buttons, labels and tooltips change at once, and the choice is
   remembered for the next start. Messages, window titles and the settings file itself
   stay in English.
@@ -625,9 +713,10 @@ points earn **river badges** (Breg, Thames, Morava, …).
   style); a window that is already open keeps its colours until it is reopened.
   Map/data content (OSM tiles, the basin canvas) stays in its natural colours.
 - **Select animal** (Preferences ▸ Display): pick the little animal that
-  occasionally appears on the live discharge sparkline. The list holds the animals you
-  bought in the **Shop** (Fish / Otter / Beaver / Sailboat / Octopus); without one, the
-  sparkline shows a plain dot.
+  occasionally appears on the live discharge sparkline, with a preview. The **Trout** and
+  the **Bottle** are free for everyone; Catfish, Clownfish, Salmon, Otter, Beaver and
+  Octopus are bought in the **Shop**, and the **Mole** is the reward for the first run
+  coupled with MODFLOW.
 - **Font of the settings file** (Preferences ▸ Display): **Font of settingsfile** picks
   the family the settings editor is displayed with (the list shows the monospaced fonts
   installed on your machine; Consolas by default on Windows), and **Font size of

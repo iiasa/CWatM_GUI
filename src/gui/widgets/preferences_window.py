@@ -334,6 +334,15 @@ class PreferencesWindow(QDialog):
             "can be open at once (right-click a tab for Delete Tab / Copy Tab / "
             "Run CWatM).\nShown in the Expert skill level only; open tabs keep "
             "their content while the bar is hidden.")
+        # Resolution of Save PNG in the Analyse windows
+        self.sp_png_dpi = QSpinBox()
+        self.sp_png_dpi.setRange(display_format.PNG_DPI_MIN, display_format.PNG_DPI_MAX)
+        self.sp_png_dpi.setSingleStep(50)
+        self.sp_png_dpi.setSuffix(" dpi")
+        self._row(lay, "PNG dpi:", self.sp_png_dpi,
+                  "Resolution of an image saved with Save PNG (Timeseries, NetCDF, "
+                  "Watercycle, Flow Diagram, ...). Default 150; e.g. 300 gives a "
+                  "sharper image with twice as many pixels in each direction")
         # CWatM AI notebook: pick one of the offered links or type your own
         from src.gui.utils.notebooklm_client import NOTEBOOK_CHOICES
         self.cmb_notebook = QComboBox()
@@ -576,6 +585,7 @@ class PreferencesWindow(QDialog):
             "date_timeline": s.value("display/date_timeline", True, type=bool),
             "bookmark_change": s.value("editor/bookmark_change", False, type=bool),
             "use_tabs": s.value("editor/use_tabs", True, type=bool),
+            "png_dpi": display_format.get_png_dpi(),
             "notebook": _saved_notebook(s),
             "history_folder": run_ledger.history_dir(),
             "history_retention": run_ledger.retention_days(),
@@ -608,6 +618,7 @@ class PreferencesWindow(QDialog):
         self.cb_timeline.setChecked(st["date_timeline"])
         self.cb_bookmark_change.setChecked(st["bookmark_change"])
         self.cb_use_tabs.setChecked(st["use_tabs"])
+        self.sp_png_dpi.setValue(st["png_dpi"])
         self.cmb_notebook.setCurrentText(st["notebook"])
         self.ed_history_folder.setText(st["history_folder"])
         self.sp_retention.setValue(st["history_retention"])
@@ -638,6 +649,7 @@ class PreferencesWindow(QDialog):
             "date_timeline": self.cb_timeline.isChecked(),
             "bookmark_change": self.cb_bookmark_change.isChecked(),
             "use_tabs": self.cb_use_tabs.isChecked(),
+            "png_dpi": self.sp_png_dpi.value(),
             "notebook": self.cmb_notebook.currentText().strip(),
             "history_folder": self.ed_history_folder.text().strip(),
             "history_retention": self.sp_retention.value(),
@@ -727,6 +739,9 @@ class PreferencesWindow(QDialog):
         elif key == "decimals":
             display_format.set_decimals(value)
             mw._settings.setValue("display/decimals", display_format.get_decimals())
+        elif key == "png_dpi":
+            display_format.set_png_dpi(value)
+            mw._settings.setValue("display/png_dpi", display_format.get_png_dpi())
         elif key == "transparency":
             display_format.set_transparency(value)
             mw._settings.setValue("display/transparency",

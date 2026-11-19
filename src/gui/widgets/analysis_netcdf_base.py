@@ -114,6 +114,18 @@ _MONTH_YEAR_UNITS_RE = re.compile(
     r"^\s*(months?|years?)\s+since\s+(\d{1,4})-(\d{1,2})(?:-(\d{1,2}))?", re.IGNORECASE)
 
 
+def _global_attr(ds, name):
+    """A global attribute of the dataset by name, case-insensitive, as a stripped
+    string ('' when absent)."""
+    try:
+        for key, value in ds.attrs.items():
+            if str(key).lower() == name.lower():
+                return str(value if value is not None else "").strip()
+    except Exception:
+        log.debug("_global_attr: ignored", exc_info=True)
+    return ""
+
+
 def _decode_month_year_time(vals, units):
     """Raw ``months/years since <date>`` values -> ``datetime64[ns]`` array, or
     ``None`` if ``units`` is not such a unit. Whole steps are calendar months
@@ -300,7 +312,14 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
                 path=path, varname=varname, lat_name=lat_name, lon_name=lon_name,
                 time_name=time_name, extra_sel=extra_sel,
                 lat_ascending=lat_ascending, full_time_labels=point_time_labels,
-                time_indices=time_indices)
+                time_indices=time_indices,
+                # the variable's own attributes - what CWatM wrote into the file
+                units=str(ds[varname].attrs.get("units", "") or "").strip(),
+                long_name=str(ds[varname].attrs.get("long_name", "") or "").strip(),
+                # the run's gauges as CWatM writes them into the file ("G1_name lat
+                # lon ups; ..."); '' for an older file - the viewer then uses the
+                # settings
+                gauges=_global_attr(ds, "Gauges"))
 
             settings_title = self._read_settings_title(ds)
             return (varname, lon_vals, lats_plot, frames, time_labels,
@@ -383,6 +402,19 @@ class NetcdfDataBase(GeometryMemoryMixin, QDialog):
         window open). Missing values come back as empty strings."""
         from src.gui.utils.meta_netcdf import get_meta
         return get_meta(varname) or ("", "", "")
+
+    def _var_meta(self, varname):
+        """(unit, long_name, description) of the loaded variable: the file's own
+        ``units`` / ``long_name`` attributes first, ``cwatm/metaNetcdf.xml`` for what
+        the file does not say. metaNetcdf alone missed every variable it does not list
+        under that exact name - ``discharge_monthavg``, ``discharge_mean`` - which left
+        the colour bar and the Timeseries y-axis without a unit."""
+        unit, long_name, description = self._lookup_meta(varname)
+        src = getattr(self, "_point_source", None) or {}
+        if src.get("varname") == varname:
+            unit = src.get("units") or unit
+            long_name = src.get("long_name") or long_name
+        return unit or "", long_name or "", description or long_name or ""
 
     def _title_from_settings_content(self, content):
         """Extract the 'Title' value from settings-file content, or '' if absent."""

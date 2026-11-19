@@ -197,10 +197,12 @@ class TimeseriesWindow(PlotlyWindowBase):
 
     @classmethod
     def from_point(cls, dates, values, name, varname, settings_title,
-                   lon, lat, parent=None):
+                   lon, lat, parent=None, unit=None, long_name=None):
         """Build a Timeseries window from an in-memory series (e.g. a NetCDF grid point)
         instead of a CSV, rendered exactly like a CSV time series but with a **legend**
-        labelled with the point location ``name``."""
+        labelled with the point location ``name``. ``unit`` / ``long_name``: what the
+        caller knows (the NetCDF variable's own attributes); empty or None = the
+        metaNetcdf lookup by ``varname``."""
         preloaded = dict(
             label=f"{varname} @ {name}",
             dates=list(dates),
@@ -210,6 +212,9 @@ class TimeseriesWindow(PlotlyWindowBase):
             settings_title=settings_title or "",
             legend_name=name,
         )
+        if unit:
+            preloaded["unit"] = unit
+            preloaded["long_name"] = long_name or ""
         return cls(None, parent=parent, preloaded=preloaded)
 
     # ------------------------------------------------------------------ parsing
@@ -447,6 +452,9 @@ class TimeseriesWindow(PlotlyWindowBase):
         act = file_menu.addAction("Save HTML", self._save_html)
         act.setToolTip(
             "Save the plot as a self-contained HTML file (opens in any browser)")
+        act = file_menu.addAction("Save PNG", self._save_png)
+        act.setToolTip("Save the plot as a PNG image (resolution: Preferences ▸ "
+                       "Editor & Dates ▸ PNG dpi, default 150)")
 
         action_menu = mbar.addMenu("Action")
         act = action_menu.addAction("Compare", self._compare)

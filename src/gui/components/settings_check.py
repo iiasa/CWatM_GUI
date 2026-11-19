@@ -680,6 +680,16 @@ class SettingsCheckMixin:
             key = s[:eq].strip()
             if section == "OPTIONS" or key.lower()[:4] != "out_":
                 continue
+            if key.lower() == "out_suffix":
+                # a suffix for every output file name, not a variable list
+                # (configuration.py, Error 184): only characters a file name can hold.
+                # $(...) placeholders are expanded by CWatM first - not judged here.
+                val = re.sub(r"\$\([^)]*\)", "", s[eq + 1:].strip())
+                bad = sorted({c for c in val if c in '<>:"/\\|?*'})
+                if bad:
+                    problems.append((i, f"{key}: '{''.join(bad)}' is not possible in a "
+                                        "file name - CWatM stops with Error 184."))
+                continue
             msg = _out_key_problem(key)
             if msg:
                 problems.append((i, f"{key}: {msg}"))

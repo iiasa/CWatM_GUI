@@ -76,6 +76,10 @@ sudo dnf install -y xcb-util-cursor xcb-util-wm xcb-util-keysyms libxkbcommon-x1
      mesa-libEGL mesa-libGL fontconfig dejavu-sans-fonts xdg-utils dbus-libs
 ```
 
+Only for the **Chinese** GUI language (Preferences ▸ Display ▸ Language ▸ 简体中文):
+a CJK font, otherwise the characters show as boxes — `sudo apt install -y
+fonts-noto-cjk` / `sudo dnf install -y google-noto-sans-cjk-fonts`.
+
 `libxcb-cursor0` (`xcb-util-cursor` on RPM) is the one Qt 6.5+ refuses to start without,
 and the one most systems are missing. Note that this is a library on the **Linux
 machine** — changing or upgrading the X server on your Windows PC (Xming → VcXsrv) makes

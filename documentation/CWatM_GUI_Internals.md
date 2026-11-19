@@ -525,6 +525,37 @@ journal's `kind="hidden"` (renaming the stored kind would orphan the existing
   in-flight run when the window is closed (no orphan model process). The main window
   keeps the windows in `self._hidden_run_windows` so they are not GC'd; the list entry
   is dropped on `destroyed`.
+- **Which model (⚙ gear, right of Load)** — `_choose_model`, the same gear look as
+  Annual bars' panels window, but **buffered**: only **Apply** stores the choice
+  (enabled only when it differs from the applied one and a user-defined command parses),
+  Close discards the rest. The main run uses it **only with the red Expert tick**
+  (*"WARNING: Expert only. Use this model for the main RUN CWATM too"*, enabled only with
+  User defined, `hidden_run/use_for_main_run`, default off): `run_controller.run_cwatm`
+  asks `_main_run_command` (→ `model_launcher.main_run_user_command`, refused with a
+  message when the command does not parse or the separate-process run is off), passes
+  `command=` with `USER_FLAGS` (+ `-e` for Run CWatM + error message), writes a
+  `Model (user defined): …` line, puts `CWatM: <full command>   Settings file: <ini> -
+  Starting run` in the status bar (a bare program like `python` is resolved to its full
+  path by `parse_command` via `shutil.which`, so the shown path is the one started), and `output_box.append_to_cwatminfo` drives the
+  progress clock from the `\r` line's date (`model_launcher.progress_from_line`,
+  `self._user_model_window`). The red `model_indicator_label` right of the RUN button
+  (+ the button's tooltip) shows it, refreshed on Apply, at start and on a theme switch
+  (`refresh_model_indicator`). Batch Run and Create batch never pass `command=`. Two exclusive tick boxes: **Use predefined** (the default, no text field: the CWatM
+  included in the GUI via `model_command` — frozen `CWatM_model.exe` or source
+  `cwatm_model.py`, with its usual `-lg`) and **User defined** + a line edit + Browse…, persisted as
+  `hidden_run/use_predefined` / `hidden_run/user_command` (`src/gui/utils/model_launcher.py`,
+  pure `parse_command(text, python)` → `(program, prefix_args)`: one existing path —
+  spaces allowed unquoted — an `.exe`, a `.py` (run with the GUI's console python), a
+  folder (`CWatM_model.exe` / `_internal\CWatM_model.exe` / `run_cwatm.py` /
+  `cwatm\run_cwatm.py`), else a `shlex` command line whose program must exist or be on
+  the PATH; `ValueError` names the problem, shown live in the dialog and in the output box
+  at Run). `CWatMProcessWorker(command=…)` starts `program + prefix + [ini] + flags
+  (USER_FLAGS = -l, no -g: no GUI hook)`, always as an argument list. Such a model may not speak the marker protocol
+  (CWatM's `run_cwatm.py` exits 0/1 via `run_from_command_line`), so **without a RESULT
+  marker the exit code decides** (only for a `command`); and while no PROGRESS marker
+  has come, `_on_run_output` derives the bar from the `\r` line's date
+  (`discharge_sparkline.parse_progress`) against StepStart/StepEnd (`_run_window`; an
+  integer StepEnd = day count). The gear is disabled during a run.
 - **Progress bar + times**: the worker's `progress` signal (which this window simply did
   not connect) drives a themed `QProgressBar`, and a 1 s `QTimer` writes
   `elapsed m:ss · remaining ~m:ss` beside it — the same linear estimate the main

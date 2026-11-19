@@ -205,6 +205,7 @@ class FlowDurationWindow(PlotlyWindowBase):
         btn_row.addWidget(self.bands_button)
         btn_row.addStretch()
         btn_row.addWidget(self.save_csv_button)
+        btn_row.addWidget(self._make_save_png_button(btn_style))
         btn_row.addWidget(self.save_html_button)
         layout.addLayout(btn_row)
 

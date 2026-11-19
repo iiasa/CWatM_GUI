@@ -1,14 +1,16 @@
 # CWatM GUI — Documentation and User Manual
 
-## Version 1.11
+## Version 1.14
 
 A graphical user interface for the **Community Water Model (CWatM)** developed by
 IIASA. The application lets you load, edit, validate and run CWatM settings files,
 inspect the model set-up on a map, edit the reservoir/crop Excel workbook, and
-visualise the model results — all without leaving the GUI.
+visualise the model results — all without leaving the GUI. A guided course, the
+**CWatM Academy**, introduces new users step by step.
 
 > The screenshots in this manual were produced with the example set-up
-> `Danube_1min/Morava` (`settings_morava_1min.ini`) and its output folder.
+> `Danube_1min/Morava` (`settings_morava_1min.ini`) and its output folder, plus a
+> scenario of it with deeper soil (`soildepth_factor = 1.5`) for the comparison views.
 
 ---
 
@@ -29,9 +31,11 @@ visualise the model results — all without leaving the GUI.
 13. [Result Analysis](#13-result-analysis)
 14. [CWatM AI (NotebookLM)](#14-cwatm-ai-notebooklm)
 15. [Configuration and Appearance](#15-configuration-and-appearance)
-16. [Building the Executable and Installer](#16-building-the-executable-and-installer)
-17. [Troubleshooting](#17-troubleshooting)
-18. [Versioning](#18-versioning)
+16. [CWatM Academy](#16-cwatm-academy)
+17. [CWatM Account, Badges and the Shop](#17-cwatm-account-badges-and-the-shop)
+18. [Building the Executable and Installer](#18-building-the-executable-and-installer)
+19. [Troubleshooting](#19-troubleshooting)
+20. [Versioning](#20-versioning)
 
 ---
 
@@ -47,10 +51,19 @@ period, and switches processes on/off. This GUI wraps the whole workflow:
   into the settings automatically;
 - **validation** tools (gauge-in-mask, PathOut existence, missing-file checks,
   Check Data);
-- a one-click **Run** that streams the model output live with a progress clock;
+- a one-click **Run** that streams the model output live with a progress clock and a
+  discharge sparkline — plus **Windowed** runs in parallel, **Batch** runs of many
+  scenarios, and a **Journal** of every past run;
 - an **Excel editor** for the reservoir/crop workbook;
-- **map and plot** windows to inspect the basin and the results;
-- a **CWatM AI** chat that answers questions about CWatM from Google NotebookLM.
+- **map and plot** windows to inspect the basin and the results, including several
+  views of the **water balance** (sunburst, Sankey, chord, weekly and annual fluxes, the
+  full balance of every part of the water cycle);
+- a **CWatM AI** chat that answers questions about CWatM from Google NotebookLM;
+- the **CWatM Academy**, a guided ten-level introduction with a small map game;
+- an optional **CWatM account** with points, river badges, a leaderboard and a Shop.
+
+Everything works without an account: every skill level (Beginner / Advanced / Expert)
+and the whole Academy are free.
 
 ---
 
@@ -60,11 +73,13 @@ period, and switches processes on/off. This GUI wraps the whole workflow:
 pandas, xarray, rasterio, netCDF4, folium, plotly, openpyxl, requests, and the CWatM
 model package. The optional **CWatM AI** chat needs `notebooklm-py` (+
 `playwright` for the login); the optional **MODFLOW** coupling needs `flopy` + `xmipy` (and the
-MODFLOW 6 `libmf6` library). All pinned versions are in `requirements.txt`.
+MODFLOW 6 `libmf6` library); the optional **CWatM account** uses `supabase` + `keyring`.
+All pinned versions are in `requirements.txt`.
 
 ```bash
 pip install -r requirements.txt          # runtime (pinned)
 pip install -r requirements_build.txt    # + PyInstaller, only to build the exe
+pip install -r requirements_dev.txt      # + pytest, only to run the tests
 python cwatm_gui.py                       # run from source
 ```
 
@@ -72,7 +87,12 @@ Do **not** install a separate GDAL wheel — rasterio ships its own GDAL.
 
 A pre-built **`CWatM_GUI.exe`** (one-folder build) or the per-user **installer**
 (`CWatM_GUI_Setup.exe`) can be run with no Python installation. See
-[Building the Executable and Installer](#16-building-the-executable-and-installer).
+[Building the Executable and Installer](#18-building-the-executable-and-installer).
+
+**Linux**: the GUI runs from source (the exe and installer are Windows-only). Start it
+with `./gui.sh`; `./gui.sh --check` diagnoses a missing library. The full guide —
+system packages, the virtual environment, remote X displays (X2Go, VNC, Xming, WSLg) and
+troubleshooting — is in `cwatm_gui_linux.md` in the GUI folder.
 
 ---
 
@@ -86,6 +106,12 @@ A pre-built **`CWatM_GUI.exe`** (one-folder build) or the per-user **installer**
    Gauges fields on the left are filled in from the file.
 4. Edit as needed, then **RUN CWATM ▸ Run CWATM** (Ctrl+R).
 
+New to CWatM? Click **CWatM Academy** in the menu bar — it walks you through loading,
+checking, running and analysing a model in ten short levels ([§16](#16-cwatm-academy)).
+The **skill level** button next to the editor (Beginner / Advanced / Expert) decides how
+much of the settings file and of the menus you see; start with Beginner and switch up
+when you need more.
+
 ![Main window with a settings file loaded](figures/screenshot_loaded.png)
 
 ---
@@ -96,7 +122,9 @@ A pre-built **`CWatM_GUI.exe`** (one-folder build) or the per-user **installer**
   Interface"*, and the IIASA logo. It can be hidden with **Preferences ▸ Display ▸ Show Header**
   to give the panels more room.
 - **Menu bar** (directly below the banner): the whole application is menu-driven — see
-  [Menus](#5-menus-and-keyboard-shortcuts).
+  [Menus](#5-menus-and-keyboard-shortcuts). Its right corner holds the **Shop** button
+  (once you own the Breg badge), the **account** button (*Log in* or *your name · points*)
+  and **⋮** (Preferences).
 - **Left panel**: the Start/Spin/End dates (with an optional 📅 calendar picker and a
   draggable timeline), PathOut, MaskMap and Gauges fields, the **RUN CWATM** button
   with a live *changed-fields* hint and warning label, the circular **progress clock**
@@ -104,7 +132,9 @@ A pre-built **`CWatM_GUI.exe`** (one-folder build) or the per-user **installer**
 - **Right panel**: the **settings editor** (plain-text with syntax highlighting, a
   line-number gutter with fold markers, and bookmarks), with the **tab bar** above it —
   one tab per open settings file, so several can be open at once
-  ([§6](#6-editing-settings)).
+  ([§6](#6-editing-settings)). Above the editor sit the navigation buttons (Fold/Unfold,
+  Top/Down), **Font+ / Font-**, and the colour-coded **skill-level** button (green
+  Beginner, blue Advanced, gray Expert — click to cycle).
 - **Output box** (below): a read-only, copyable log of the model run, with the
   progress clock and sparkline beneath it.
 
@@ -113,9 +143,13 @@ A pre-built **`CWatM_GUI.exe`** (one-folder build) or the per-user **installer**
 ## 5. Menus and Keyboard Shortcuts
 
 Menu bar (left → right): **File · Settings · Tools · RUN CWATM ·
-Configure │ Analyse │ CWatM AI · Help · Info**. Recently opened files are listed
-directly in the **File** menu (there is no separate History menu), and **CWatM AI**
-is a clickable button, not a dropdown.
+Configure │ Analyse │ CWatM Academy · CWatM AI · Help · Info**. Recently opened files
+are listed directly in the **File** menu, and **CWatM Academy** and **CWatM AI** are
+clickable buttons, not dropdowns.
+
+Some entries depend on the **skill level**: *Beginner* hides the advanced ones (marked
+*Adv.* below), and a few are shown to *Expert* only. Nothing is removed — switch the
+level and they come back.
 
 Inside the longer menus the items are grouped under **bold section headers** (for
 example Settings has *View · Find & Replace · Edit · Bookmarks & Changes · Check &
@@ -124,12 +158,15 @@ Compare*; Tools has *Basin & Gauges · Outputs · Setup & Data*).
 described in [§15](#15-configuration-and-appearance); the **⋮** button on the far
 right of the menu bar opens the same window.
 
+![The Tools menu with its section headers](figures/screenshot_menubar.png)
+
 | Menu | Item | Shortcut | Action |
 |------|------|----------|--------|
 | File | Load .ini | **Ctrl+O** | Load a settings file |
 | File | Reload | **Ctrl+L** | Reload the current file from disk |
 | File | Save .ini | **Ctrl+S** | Save to the current file |
 | File | Save As | **Ctrl+Alt+S** | Save to a new file |
+| File | Change Working Dir | — | Pick the folder that relative paths in the settings resolve against |
 | File | (recent files) | — | Up to **6** recently opened settings files, listed directly in the File menu between Save As and Exit |
 | File | Exit | — | Quit (prompts if there are unsaved changes) |
 | Settings | Fold All / Unfold All | **Alt+0 / Alt+Shift+0** | Collapse / expand all sections |
@@ -143,32 +180,44 @@ right of the menu bar opens the same window.
 | Settings | Clear all Bookmarks | **Ctrl+Shift+F2** | Remove every bookmark |
 | Settings | Goto last change | **F5** | Jump to the most recently changed line |
 | Settings | **Check settingsfile** | **F4** | **Toggle:** flag missing files/paths (relabels to *Clear checking*); press F4 again to clear — see [§8](#8-check-settingsfile) |
-| Settings | Compare settings | — | Side-by-side diff of two settings files (differing lines orange, synced scrolling, Next/Previous Diff). With several tabs open, the **active** tab and the tab next to it are preloaded |
+| Settings | Compare settings | — | Side-by-side diff of two settings files (differing lines orange, synced scrolling, Next/Previous Diff); both sides stay aligned while you edit. With several tabs open, the **active** tab and the tab next to it are preloaded |
 | Settings | **Compare Tab** | **F8** | *(Expert only)* **Toggle:** colour every line that differs from the neighbouring tab light green, **in both tabs**, right in the editor; F8 again clears it — see [§6](#6-editing-settings) |
-| Tools | **Excel Crops/Reservoirs** | — | (directly below *Change Options*) Open the settings Excel workbook — all its sheets (*Crops*, *Reservoirs*, *Reservoirs_downstream*, …) on tabs below the table |
-| Tools | Change Options | — | Boolean `[OPTIONS]` window |
-| Tools | Show Basin | — | Basin viewer on an OSM map |
-| Tools | Set max Gauge | — | Set Gauges to the largest-upstream point in the mask |
-| Tools | Add output Watercycle | — | Add the WaterCycle output block |
-| Tools | Add output variables | — | Insert an output variable that fits the current `[OPTIONS]` on an `OUT_…` line — grouped by topic, searchable by name/unit/description, **✓** on what the file already writes, and array variables ask which index (e.g. *1 - grassland*) |
-| Tools | Check Data | — | Validate the settings by running CWatM's data checks (in the background, with its output and a sortable/filterable result table) |
-| Tools | Create PathOut Folder | — | (first item under *Outputs*) Create the resolved PathOut directory |
-| Tools | Restore settingsfile | — | Open a CWatM output `dis*.nc`: summary card + all its metadata, **preview** the settings file stored inside, **compare** it with the loaded one, restore it to a new file, list **and check** its input files, or jump to that run in the Journal |
+| Tools ▸ *Basin & Gauges* | Show Basin | — | Basin viewer on an OSM map — see [§10](#10-show-basin) |
+| Tools ▸ *Basin & Gauges* | Set max Gauge | — | Set Gauges to the largest-upstream point in the mask |
+| Tools ▸ *Outputs* | Create PathOut Folder | — | Create the resolved PathOut directory (CWatM does not create it) |
+| Tools ▸ *Outputs* | Add output Watercycle | — | *(Adv.)* Add `OUT_TSS_AreaSum_Daily = WaterCycle` — the input of the Watercycle views |
+| Tools ▸ *Outputs* | Add output WaterBalance | — | *(Adv.)* Add `OUT_TSS_AreaSum_Daily = WaterBalance` — the input of Full Waterbalance |
+| Tools ▸ *Outputs* | Add output variables | — | Insert an output variable that fits the current `[OPTIONS]` on an `OUT_…` line — grouped by topic, searchable by name/unit/description, **✓** on what the file already writes, and array variables ask which index (e.g. *1 - grassland*) |
+| Tools ▸ *Setup & Data* | Change Options | — | *(Adv.)* Boolean `[OPTIONS]` window |
+| Tools ▸ *Setup & Data* | **Excel Crops/Reservoirs** | — | *(Adv.)* Open the settings Excel workbook — all its sheets (*Crops*, *Reservoirs*, *Reservoirs_downstream*, …) on tabs below the table — see [§12](#12-excel-editor-crops--reservoirs) |
+| Tools ▸ *Setup & Data* | Check Data | — | *(Adv.)* Validate the settings by running CWatM's data checks (in the background, with its output and a sortable/filterable result table) |
+| Tools ▸ *Setup & Data* | Restore settingsfile | — | *(Adv.)* Open a CWatM output `dis*.nc`: summary card + all its metadata, **preview** the settings file stored inside, **compare** it with the loaded one, restore it to a new file, list **and check** its input files |
 | RUN CWATM | Run CWATM | **Ctrl+R** | Run / stop the model |
-| RUN CWATM | **Journal of Runs** | — | Table of past runs; reopen results, reload settings, or Compare settings of two runs — see [§9](#9-running-the-model) |
-| RUN CWATM | Windowed Run CWatM | — | *Run CWatM in a separate window* — its own process, several in parallel (was called *Hidden Run CWatM*) — see [§9](#9-running-the-model) |
-| RUN CWATM | **Batch Run…** | — | Run many scenarios from the loaded file (base .ini + per-row overrides, N in parallel) — see [§9](#9-running-the-model) |
-| Configure | **Preferences…** | **Ctrl+,** | The window holding **every** GUI setting, on five pages — see [§15](#15-configuration-and-appearance) |
+| RUN CWATM | Run CWatM + error message | — | The same run with CWatM's `-e` flag: an error message names the code line where the error happened |
+| RUN CWATM | **Journal of Runs** | — | *(Adv.)* Table of past runs; open results, show the log, reload settings, re-run, compare settings or results — see [§9](#9-running-the-model) |
+| RUN CWATM | Windowed Run CWatM | — | *(Adv.)* *Run CWatM in a separate window* — its own process, several in parallel — see [§9](#9-running-the-model) |
+| RUN CWATM | **Batch Run…** | — | *(Adv.)* Run many scenarios from the loaded file (base .ini + per-row overrides, N in parallel) — see [§9](#9-running-the-model) |
+| RUN CWATM | Create batch | — | *(Expert only)* Write a Windows `.bat` that runs the current settings file without the GUI |
+| Configure | **Preferences…** | **Ctrl+,** | The window holding **every** GUI setting, on seven pages — see [§15](#15-configuration-and-appearance) |
 | _(menu bar)_ | **⋮** | — | The button on the far right of the menu bar — opens the same Preferences window |
 | Analyse | Open PathOut Folder | — | Open the resolved PathOut directory |
 | Analyse | **Output Explorer** | — | Browse PathOut; double-click a result to open the right viewer |
-| Analyse | Timeseries | — | Plot a result `.csv` (+ Load observed / metrics, range slider) |
-| Analyse | NetCDF | — | Show a result `.nc` on a map (+ Fast/Total timeserie, Compare A−B) |
-| Analyse | Watercycle | — | Water-balance sunburst |
-| Analyse | Flow Diagram | — | Water-balance Sankey |
+| Analyse | Timeseries | — | Plot a result `.csv` (+ Load observed / metrics, range slider, Flow duration / regime) |
+| Analyse | NetCDF | — | Show a result `.nc` on a map (+ Fast/Total timeserie, Compare A−B, mean/percentile, Save as .tif) |
+| Analyse ▸ Watercycle | Watercycle | — | Water-balance **sunburst** (visible at every level) |
+| Analyse ▸ Watercycle | Flow Diagram | — | *(Adv.)* Water-balance **Sankey** |
+| Analyse ▸ Watercycle | Chord Analysis | — | *(Adv.)* The same flows as a **chord diagram** (experimental) |
+| Analyse ▸ Watercycle | Mean Weekly Fluxes | — | *(Adv.)* Mean seasonal cycle, week by week, one panel per component (experimental) |
+| Analyse ▸ Watercycle | Annual bars | — | *(Adv.)* One stacked column per complete year |
+| Analyse | Full Waterbalance | — | *(Adv.)* Balance table + sunbursts of **every** part of the water cycle (needs the WaterBalance csv) |
+| CWatM Academy | (button) | — | The guided introduction — see [§16](#16-cwatm-academy) |
 | CWatM AI | (button) | — | Chat about CWatM, answered by Google NotebookLM — see [§14](#14-cwatm-ai-notebooklm) |
-| Help | Documentation / Features / **FAQ** | — | This manual / the feature tour / common questions & troubleshooting |
-| Info | About CWatM | — | About dialog |
+| Help | CWatM GUI Documentation / Features / **FAQ** | — | This manual / the feature tour / common questions & troubleshooting |
+| Help | CWatM account privacy | — | The privacy notice of the optional CWatM account |
+| Help | CWatM Homepage | — | Open the CWatM website in your browser |
+| Info | About CWatM | — | Versions of the GUI and of the bundled CWatM model (GitHub branch + commit) |
+| Info | World Map | — | Where CWatM has been run (anonymous counts), and the users who chose to show their location — see [§17](#17-cwatm-account-badges-and-the-shop) |
+| Info | Leaderboard | — | *(only while logged in)* Ranking of the users who opted in |
 
 While CWatM is running the GUI stays fully usable (you can analyse results, browse the
 ledger, chat with CWatM AI, …) — only **Save** is disabled, because the run uses the
@@ -244,6 +293,10 @@ differs from the neighbouring tab light green **in both tabs** (F8 again clears 
 nothing is written), and **Settings ▸ Compare settings** opens with the active tab left
 and the neighbouring tab right.
 
+![Two tabs — the Morava set-up and a scenario — with Compare Tab (F8) colouring the lines that differ](figures/screenshot_tabs.png)
+
+![Compare settings: the active tab left, its neighbour right](figures/screenshot_compare_settings.png)
+
 Tabs belong to the **Expert** skill level and can be switched off in **Preferences ▸
 Editor & Dates ▸ Use Tabs** (on by default) — that hides only the bar, never the open
 files. With **Load previous settings at start** (Preferences ▸ Startup & Model) ticked,
@@ -275,6 +328,8 @@ are about to add to are then on screen, and so is the cursor a click inserts at.
   Variable** shows all ~580. What your file already uses is listed either way, and the
   list re-reads the file whenever you come back to the window — there is no Refresh
   button.
+
+![Add output variables](figures/screenshot_add_output.png)
 
 ---
 
@@ -336,6 +391,8 @@ common *"StepEnd is past my forcing data"* crash **before** you waste a run.
 A concise summary — **only the problem lines**, with each category explained — is
 written to the output box.
 
+![Check settingsfile: a missing workbook marked red and bookmarked, the summary in the output box](figures/screenshot_check_settings.png)
+
 ---
 
 ## 9. Running the Model
@@ -356,8 +413,25 @@ while it runs.
   (Preferences ▸ Display ▸ **Select animal**) swims along the trace.
 - **Output-box log file** (Preferences ▸ Output): the run log can be appended to a file
   (`<PathOut>/cwatm_out.txt` by default, or a custom path).
+- **Run CWatM + error message** runs the same model with CWatM's `-e` flag: when it
+  fails, the error message also shows the code lines where the error happened — useful
+  when reporting a problem.
+- **Output entries are checked before the run starts**: an `OUT_…` entry CWatM would
+  refuse (anything but a variable name with numeric indices) stops the run at once,
+  with the lines named, instead of failing after the model has been set up.
 
 Every finished run — main, Windowed or Batch — is recorded in the **Journal of Runs** (below).
+
+![A run in progress: progress clock with elapsed / remaining time, the live discharge sparkline, and the output box](figures/screenshot_run.png)
+
+### Create batch *(Expert)*
+
+**RUN CWATM ▸ Create batch** writes a Windows `.bat` file that runs the **current
+settings file** exactly the way Run CWATM does — the same model, from the same working
+directory — but without the GUI, e.g. to start it on another machine or from a
+scheduler. You choose where to save it (suggested name `Run_<settings>.bat`), and the
+folder opens afterwards. The batch runs the file **on disk**, so unsaved edits are
+pointed out first.
 
 ### Windowed Run CWatM
 
@@ -366,9 +440,6 @@ a settings file in its **own process**, independent of the main window — so th
 GUI stays fully usable and **several Windowed Run windows can run at once** (e.g. to run
 different settings files in parallel).
 
-*(This is the feature that was called **Hidden Run CWatM** in earlier versions — same
-window, clearer name.)*
-
 Each window opens **pre-loaded** with the settings file currently open in the main
 window (shown in **bold green**); a **Load** button picks a different `.ini`, **Use
 current** takes whatever the main window has loaded now, and an `.ini` can be dropped
@@ -376,9 +447,32 @@ onto the window. Press **Run CWatM** (it toggles to **Stop CWatM** while running
 run streams into that window's own output box, with a progress bar and elapsed/remaining
 time; the run is recorded in the Journal of Runs like any other.
 
+The **⚙ gear button** (right of Load) chooses **which CWatM** the window runs:
+- **Use predefined** (default) — the model installed with the GUI, e.g.
+  `C:\Apps\CWatM_GUI\_internal\CWatM_model.exe`;
+- **User defined** — type (or **Browse…** for) another model: a `CWatM_model.exe`
+  (`P:\watmodel\CWatM_model.exe`), a CWatM folder, a `run_cwatm.py`, or a whole command
+  line such as `python P:\watmodel\cwatmpublic\develop\run_cwatm.py`. The settings file
+  and the flag `-l` are added at the end; the green line below the field shows the command
+  that will run, or why it cannot.
+
+Nothing changes until you press **Apply** (enabled only for a real change and a
+command that can run); **Close** discards what was not applied. The applied choice is
+remembered, and it applies **only to Windowed Run CWatM** — unless you also tick the red
+**"WARNING: Expert only. Use this model for the main RUN CWATM too"** (only possible with
+User defined): then the main **RUN CWATM** button and **Run CWatM + error message** run
+that model as well (with `-l`, resp. `-l -e`). The main window then shows
+**⚠ User-defined CWatM: …** in red right of the RUN button, and the output box names the
+model at the start of every run. Untick the box to get the standard CWatM back. Batch
+Run always uses the predefined model. A user-defined model that is not the GUI's own
+`CWatM_model.exe` reports success by its exit code, and its progress bar follows the
+date of the per-timestep output line.
+
 Two other places open the same window on a file of their own: a **right-click on a
 settings tab ▸ Run CWatM** ([§6](#6-editing-settings)) runs that tab's file, and the
 Journal of Runs' **Re-run** starts a past run again.
+
+![Windowed Run CWatM running a scenario](figures/screenshot_windowed_run.png)
 
 ### Batch Run
 
@@ -406,14 +500,21 @@ combination) are filled in for you.
 
 ### Journal of Runs
 
-**RUN CWATM ▸ Journal of Runs** (the 2nd item in that menu) is a table of your **past runs** (main, Windowed and Batch) — time,
-Title, PathOut, duration, success and last discharge. Select a run and:
+**RUN CWATM ▸ Journal of Runs** is a sortable, filterable table of your **past runs**
+(main, Windowed and Batch) — time, Title, PathOut, duration, success and last discharge.
+Runs **still in progress** appear live at the top, the scenarios of one Batch Run fold
+into **one row**, and the last column is a **Note** you can type into. Select a run and
+use the **File / Action / Clean** menus or the right-click menu:
 
-- **Open results** — its PathOut in the Output Explorer;
+- **Open results** — its PathOut in the Output Explorer (or the folder itself);
+- **Show log** — the run's output log;
 - **Load settings** — reopen its settings file in the main window;
+- **Re-run** — start it again in a Windowed Run window;
 - **Compare settings** — mark **two** runs (Ctrl/Shift+click) and diff the settings each
   one actually used (a snapshot is kept per run, so the diff is correct even if you edit
-  the file later).
+  the file later); **Compare results** overlays the same result `.csv` of
+  the marked runs in one Timeseries plot;
+- **Delete entry** / **Clear Journal**, and **Export CSV** of the table.
 
 Where the ledger is stored and how long runs are kept are set in **Preferences ▸ Run
 History** (default: keep 60 days under
@@ -433,12 +534,15 @@ UTM33) are shown on the raw x/y without an OSM basemap.
 ![Show Basin](figures/screenshot_basin.png)
 
 - **Markers**: red pins = the gauges (numbered `1..N`, taken from the Gauges box),
-  a blue **M** = the mask-start, black = the last clicked cell.
+  a blue **M** = the mask-start, black = the last clicked cell. Hovering a gauge shows
+  its **name** (from `GaugesNames` in the settings, matched to `Gauges` in order),
+  coordinates and upstream area.
 - **Click** anywhere to read the coordinates, basin area and mask state in the strip
   under the map.
-- **Buttons**: Hide/Show Mask, Create new Mask, **Copy Mask**, Zoom to Mask, Create
-  gauge / **Copy Gauge** (accumulate several gauges, then commit them all to the
-  Gauges box), **Load JSON** (overlay a GeoJSON), Exit. **Clicking a gauge pin removes
+- **Buttons** (also in the **Mask** and **Gauge** menus): Hide/Show Mask, Create new
+  Mask, **Copy Mask**, Zoom to Mask, Create gauge / **Copy Gauge** (accumulate several
+  gauges, then commit them all to the Gauges box). The **File** menu loads a **GeoJSON**
+  or **Shapefile** overlay (e.g. a basin outline). **Clicking a gauge pin removes
   it** from the working list. **Copy Mask** also removes from Gauges every station
   that lies outside the new mask (typically left over from the previous basin); if none
   is left, the mask outlet becomes the gauge.
@@ -455,7 +559,7 @@ resolutions, extents) and lists any trouble in a table. It works only with a
 **file-based MaskMap** (not coordinates) — with a coordinate MaskMap the **Run Check**
 button is disabled and says why. It can also compare against an existing discharge
 NetCDF, and **Restore settings from discharge map** opens that file in
-[Restore settingsfile](#136-restore-settingsfile--what-a-result-file-remembers).
+[Restore settingsfile](#137-restore-settingsfile--what-a-result-file-remembers).
 
 The check **runs in the background**: the window (and the rest of the GUI) stays usable
 while it reads every input file, with an elapsed-time counter, and **CWatM's output
@@ -530,8 +634,28 @@ colours** (fill and font).
 
 ## 13. Result Analysis
 
-The **Analyse** menu visualises CWatM results. Each window has a **Save HTML** button
-that exports the current, self-contained plot.
+The **Analyse** menu visualises CWatM results. Each plot window can **Save HTML** — the
+current plot as a self-contained page — and **Save PNG** — the plot as an image, at
+the resolution set in **Preferences ▸ Editor & Dates ▸ PNG dpi** (default 150; 300
+gives twice as many pixels in each direction). Save PNG is a button left of Save HTML,
+or **File ▸ Save PNG** in Timeseries and NetCDF (a NetCDF map is saved as it is shown
+on screen); Full Waterbalance has no PNG. Every file dialog opens in the output
+folder (PathOut).
+
+| Analyse ▸ … | Opens | Needs |
+|-------------|-------|-------|
+| Output Explorer | a browser of the output folder | – |
+| Timeseries | a line chart of a result `.csv` | any CWatM `.csv` result |
+| NetCDF | a map of a result `.nc`, animated over time | any CWatM `.nc` result |
+| Watercycle ▸ Watercycle / Flow Diagram / Chord Analysis | the water balance as sunburst / Sankey / chord diagram | WaterCycle csv |
+| Watercycle ▸ Mean Weekly Fluxes / Annual bars | the seasonal cycle / one column per year | **daily** WaterCycle or WaterBalance csv |
+| Full Waterbalance | the balance of every part of the water cycle | WaterBalance csv |
+
+The **WaterCycle csv** comes from `OUT_TSS_AreaSum_Daily = WaterCycle`, which **Tools ▸
+Add output Watercycle** writes into your settings; the **WaterBalance csv** from **Tools ▸
+Add output WaterBalance**. Wherever a window shows a station's lon/lat, the **nearest
+city** and its distance follow it (e.g. *lon: 16.61, lat: 48.91 - 26 km from Břeclav
+(CZ)*) — offline, from GeoNames' list of places with more than 15,000 people.
 
 ### 13.1 Output Explorer
 
@@ -545,9 +669,10 @@ one click instead of a file dialog.
 ### 13.2 Timeseries
 
 **Analyse ▸ Timeseries** plots a result `.csv` (e.g. `discharge_daily.csv`) as a line
-chart. Multiple columns are shown one at a time (Forward/Backward); **Compare**
-overlays another result file; **Save as csv** exports the shown series in the CWatM
-result-CSV format.
+chart. Multiple columns are shown one at a time (Forward/Backward); **Action ▸ Compare**
+overlays another result file; **File ▸ Save as csv** exports the shown series in the
+CWatM result-CSV format. **Action ▸ Flow duration / Flow regime** open the column on
+screen in its own window ([§13.4](#134-flow-duration-and-flow-regime)).
 
 - A **range slider** below the plot shrinks the displayed period from either end.
 - **Load observed** overlays an observed series (a CWatM `.csv` or a simple
@@ -562,8 +687,11 @@ result-CSV format.
 **Analyse ▸ NetCDF** shows a result `.nc` (e.g. `discharge_daily.nc`) as a raster
 overlay on an OSM map (EPSG:4326). A **timestep slider + Play** scrubs through time; a
 **colour-scale** selector (menu **Display**), **Log scale** toggle and the **OSM
-transparency** slider (directly below Play) tune the display. Click a cell to read its value. The left-window gauges appear as small
-numbered red pins. Clicking a shape loaded with **File ▸ Load JSON / Load shape** shows
+transparency** slider (directly below Play) tune the display. Click a cell to read its value. The gauges appear as small
+numbered red pins: the ones stored in the file itself (global attribute `Gauges`,
+written by the run with each gauge's name and upstream area), or - for an older file
+without it - the Gauges of the settings file. Hovering a pin shows the gauge's
+**name** and its **upstream area**. Clicking a shape loaded with **File ▸ Load JSON / Load shape** shows
 its attributes; for a **point** the popup also offers **Make this point a gauge** and
 **Make all points to gauges** (every point of that file). They become selected points
 just like clicked cells: numbered pins that the Timeseries, Flow duration and Flow
@@ -573,10 +701,13 @@ regime actions use, and a left click on a pin removes it again.
   cells to add stations, and click a selected cell or its pin again to remove it.
 - Plot the selected cells' series with **Fast Display Timeserie** (quick — the map's
   timesteps only, with gaps) or **Total Timeseries** (every timestep — can take a while,
-  so a progress bar shows next to the buttons).
+  so a progress bar with a **Cancel** button shows while it reads). **Right-click the
+  map** for the same Action menu; **Remove gauges** clears every selected point.
 - **Compare A−B** loads a second `.nc` on the same grid and shows the **difference**
   (this − other) per timestep on a red/blue diverging scale — ideal for comparing two
-  scenarios you just ran. **Clear compare** returns to the single-file view.
+  scenarios you just ran. **Log scale** on a difference map is symmetric around zero:
+  no change stays white, the sign decides red or blue, and small differences become
+  visible next to the large ones. **Clear compare** returns to the single-file view.
 - **File ▸ Load netcdf** opens another `.nc` - starting in the current file's folder - in
   the same window.
 - **Calculate mean** / **Calculate percentile** (Action menu) turn the whole time axis
@@ -584,30 +715,111 @@ regime actions use, and a left click on a pin removes it again.
   a new NetCDF in the original's folder (suggested `discharge_mean.nc` /
   `discharge_50_percentile.nc`). It keeps all metadata of the original and records its
   name, folder and creation time; the map then shows the new file.
+- **Save as a .tif** writes the map of the shown timestep as a GeoTIFF
+  (`<name>_<ddmmyyyy>.tif`).
+- **File ▸ Load JSON / Load Shapefile** draw an outline (e.g. a basin border) on the map.
+- A grid in projected x/y coordinates (e.g. UTM) is shown on its own x/y, without the
+  OSM map.
 
-![NetCDF](figures/screenshot_netcdf.png)
+![NetCDF with three selected points](figures/screenshot_netcdf.png)
 
-### 13.4 Watercycle
+![Compare A−B with Log scale: Morava minus a scenario with deeper soil, January 2011](figures/screenshot_netcdf_compare.png)
 
-**Analyse ▸ Watercycle** reads a `WaterCycle_areasum_monthtot.csv` and shows the
-overall water balance as a **sunburst** (Inputs / Outputs / Storage /
-Evapotranspiration / Transpiration). A month **range slider** selects the period.
-**Save CSV** (lower left) saves the numbers behind the plot - every part's volume
-(km³), mm/year and percent - for the shown station and period; the suggested name is
-`watercycle.csv` and can be changed. **Save HTML** saves the plot itself.
+### 13.4 Flow duration and Flow regime
+
+Both plot **one series** — the column on screen in Timeseries, or the **last point you
+clicked** on the NetCDF map. **Flow duration** ranks each year's values into an
+exceedance-probability curve; **Flow regime** shows the seasonal cycle (day-of-year or
+month-of-year). Every year is a thin line plus a black cross-year **average**, with
+buttons to hide the single years, show light-gray 0–100 % / 40–60 % **percentile
+bands**, save the per-year table as csv, or save the plot as HTML. Opened from
+Timeseries, the window follows the range slider's period.
+
+![Flow duration](figures/screenshot_flowduration.png)
+
+### 13.5 The Watercycle views
+
+**Analyse ▸ Watercycle ▸ …** holds five views of the same water balance of the basin.
+They share **Backward / Forward** buttons when the csv holds several stations (title =
+the settings `Title`, subtitle = the station's lon/lat and nearest city), a **month range
+slider** that sets the analysed period, **Save HTML** and **Save CSV** (the numbers
+behind the plot). When the run did not limit abstraction (`limitAbstraction = False`),
+the demand the model could not meet counts as an input *Fossil groundwater* (Sankey:
+*Other source*) and what of it is lost as an output *Unmet demand lost*.
+
+#### Watercycle
+
+The overall water balance as a **sunburst** (Inputs / Outputs / Storage /
+Evapotranspiration / Transpiration) in mm/year, river discharge in m³/s. **Save CSV**
+saves every part's volume (km³), mm/year and percent for the shown station and period
+(suggested `watercycle.csv`).
+
+**Right-click a sector ▸ Timeseries** plots that sector month by month over the whole
+file — fluxes in mm/month, storage in mm, discharge in m³/s. **Add to timeseries**
+draws another sector into the last opened one (discharge is converted to mm/month once
+it is not alone).
 
 ![Watercycle](figures/screenshot_watercycle.png)
 
-### 13.5 Flow Diagram
+#### Flow Diagram
 
-**Analyse ▸ Flow Diagram** shows the same water balance as a **Sankey** flow diagram
-(Precipitation → Rain/Snow → Soil/Groundwater/Runoff → Waterbodies → Discharge, plus
-withdrawal/consumption), over the slider-selected months. **Save CSV** saves one row per
-flow (from, to, mm/year) as `flowdiagram.csv` (name changeable).
+The same water balance as a **Sankey** flow diagram (Precipitation → Rain/Snow →
+Soil/Groundwater/Runoff → Waterbodies → Discharge, plus withdrawal, consumption,
+glacier and channel evaporation). Click a node to highlight its branch; **right-click a
+node or flow ▸ Timeseries / Add to timeseries** works as in Watercycle. **Save CSV**
+saves one row per flow (from, to, mm/year) as `flowdiagram.csv`.
 
 ![Flow Diagram](figures/screenshot_flowdiagram.png)
 
-### 13.6 Restore settingsfile — what a result file remembers
+#### Chord Analysis *(experimental)*
+
+The flows of the Flow Diagram as a **chord diagram**: every part of the water cycle is an
+arc, every flow a ribbon whose width is the amount. **Click an arc**: the 1st click keeps
+only its flows, the 2nd only the inflows, the 3rd only the outflows, the 4th (or a click
+on the background) shows everything again.
+
+![Chord Analysis](figures/screenshot_chord.png)
+
+#### Mean Weekly Fluxes *(experimental)*
+
+The **mean seasonal cycle** of a **daily** WaterCycle or WaterBalance csv: for every week
+of the year the mean over all years of the slider period, one filled panel per component
+on a shared January–December axis (fluxes in mm/week, storages in mm). The **⚙ gear**
+picks the panels from ~50 components; the choice is remembered.
+
+![Mean Weekly Fluxes](figures/screenshot_weeklyfluxes.png)
+
+#### Annual bars
+
+The components of a **daily** WaterCycle or WaterBalance csv summed per **complete
+year**: one **stacked column per year** in mm/year (a storage as its annual mean in mm).
+Same colours and **⚙ gear** as Mean Weekly Fluxes, with its own remembered choice
+(default: Surface Runoff, Interflow, Baseflow — how the runoff splits, year by year).
+
+![Annual bars](figures/screenshot_annualbars.png)
+
+### 13.6 Full Waterbalance
+
+**Analyse ▸ Full Waterbalance** checks the balance of **every part** of the water
+cycle, not just the overall one. It reads `WaterBalance_areasum_daily.csv` (add the
+output with **Tools ▸ Add output WaterBalance** and run CWatM) and shows in one
+scrolling page:
+
+- a **table** of all water-cycle parts — In, Out, storage change and balance error in
+  mm/year; an error above 1e-3 of the inputs is **red** — plus the parts that are not a
+  balance or are not drawn;
+- the **sunbursts** of the parts: total, interception and soil, the three soil layers,
+  soil per land cover, groundwater and runoff concentration, the MODFLOW layers,
+  evapotranspiration, potential vs. actual ET, storage change, snow and glacier,
+  lakes / channels / routing, water demand and use — only for the options that are on.
+
+A **month slider** fixed above the page sets the period, **Backward / Forward** switch
+the station, **Save HTML** keeps the whole page and **Save CSV** the table. A long run's
+WaterBalance csv is large, so reading it may take a moment.
+
+![Full Waterbalance: the summary table of every part of the water cycle](figures/screenshot_full_waterbalance.png)
+
+### 13.7 Restore settingsfile — what a result file remembers
 
 Every CWatM discharge/ET output file carries the **complete settings file** and the
 **list of input files** the run used. **Tools ▸ Restore settingsfile** opens such a
@@ -628,9 +840,14 @@ which CWatM version, which settings file) above the full attribute table:
   (**changed since the run**, orange), or is everything as it was? A line above counts
   them, **Re-check files** repeats it, and a **double-click opens the file** — a NetCDF
   in the map viewer, anything else in your desktop's program for it.
-- **Show in Journal** — jump to the run that wrote this file in the Journal of Runs.
-- **Ctrl+C**, a right-click menu and **Export as CSV** work on both tables. Buttons a
-  file cannot serve (an output without stored settings) are greyed out with the reason.
+- The commands sit in the **File** (Export as CSV), **Action** (Preview, Compare, Show
+  Inputfiles) and **Restore** menus. **Ctrl+C**, a right-click menu and **Export as
+  CSV** work on both tables. Items a file cannot serve (an output without stored
+  settings) are greyed out with the reason.
+
+![Restore settingsfile: the summary card and the stored metadata](figures/screenshot_restore.png)
+
+![Show Inputfiles: each recorded input file checked against the disk](figures/screenshot_restore_inputfiles.png)
 
 ---
 
@@ -641,21 +858,22 @@ CWatM are answered by Google **NotebookLM** (Gemini). NotebookLM is a *grounded*
 answers only from the **sources in a notebook** — for CWatM that is the CWatM
 documentation — which makes answers verifiable and greatly reduces made-up replies.
 
-Because it talks to **your own** NotebookLM account, CWatM AI needs (a) a **notebook
-that contains the CWatM sources** and (b) a **one-time Google sign-in**. The two steps
-below get you there.
+CWatM AI needs a **one-time Google sign-in** ([§14.2](#142-sign-in-from-cwatm)). By
+default it asks the **openly available CWatM notebook** maintained for the GUI, so no
+preparation is needed. To use a notebook of your own instead, paste its link or id into
+**Preferences ▸ Editor & Dates ▸ NotebookLM** (or the **Notebook…** button of the chat
+window); emptying the field goes back to the default.
 
-### 14.1 Prepare a NotebookLM notebook with CWatM sources *(one-time)*
+### 14.1 Your own NotebookLM notebook *(optional)*
 
-Do this once in your browser at **notebooklm.google.com**:
+Only if you want answers from your own sources — do this once in your browser at
+**notebooklm.google.com**:
 
 1. **Sign in** to NotebookLM with a personal Google account (or a Workspace/school
    account — those may need administrator approval). If it is your first visit, complete
    any **age verification** Google asks for (Google Account → *"Access age-restricted
    content and features"*). *If NotebookLM works in the browser, CWatM AI can use it.*
-2. **Create a new notebook** and give it a title that contains the word **"CWatM"**
-   (e.g. `CWatM`). CWatM AI auto-selects the notebook whose title contains *cwat*, so
-   this name lets the GUI find it with no further configuration.
+2. **Create a new notebook** and give it a clear title (e.g. `CWatM`).
 3. **Add the CWatM sources.** Upload the CWatM documentation PDFs as sources. The GUI
    ships one ready to use — **`documentation/CWATM_shorter.pdf`** — and you can add
    more for deeper coverage:
@@ -665,10 +883,8 @@ Do this once in your browser at **notebooklm.google.com**:
    The more focused and CWatM-specific the sources, the better the answers.
 4. Wait until NotebookLM shows every source as **ready** (green), then ask it a test
    question in the browser to confirm the notebook works.
-
-> You can keep several notebooks. If you prefer a specific one, copy its **id or URL**
-> from the browser and paste it into **Notebook…** in the CWatM AI window (or leave it
-> on *auto* and rely on the "CWatM" title match).
+5. Copy the notebook's **URL** from the browser and paste it into **Preferences ▸ Editor
+   & Dates ▸ NotebookLM**. An open CWatM AI window uses it from the next question on.
 
 ### 14.2 Sign in from CWatM
 
@@ -691,6 +907,7 @@ installed, CWatM says so and lets you choose another.
   account, so treat it like a password. **Delete the file (or the `.notebooklm`
   folder) to remove the session.** It is used only to ask NotebookLM and is never sent
   to the CWatM account server.
+
 ### 14.3 Using the chat
 
 - **Ask a question:** type in the input box and press **Enter** (**Shift+Enter** for a
@@ -732,12 +949,15 @@ to it).
 All GUI settings live in one **Preferences** window, opened with
 **Configure ▸ Preferences…**, **Ctrl+,**, or the **⋮** button on the far right of the
 menu bar. Pick a category in the list on the left — *Output · Startup & Model ·
-Display · Editor & Dates · Run History* — and set it on the page that appears.
+Display · Editor & Dates · Run History · Account · CWatM Academy* — and set it on the
+page that appears.
 
 Your edits are **buffered**: **Apply** puts them into effect and leaves the window
 open, **OK** applies them and closes, and **Cancel** discards anything not yet
 applied. All settings are persisted across sessions (except *Write output box*, which
 always starts off).
+
+![Preferences, Display page](figures/screenshot_preferences.png)
 
 **Output**
 
@@ -760,8 +980,14 @@ the settings — the GUI does not ship the DLL.)*
 
 **Display**
 
+- **Language** — the language of menus, menu items, buttons, labels and tooltips:
+  **English** (default), Deutsch, Français, Español, Italiano, Magyar, Română, Srpski,
+  Hrvatski, Slovenčina, Български, Čeština, Українська. Switches live and is remembered;
+  messages, window titles and the settings file itself stay in English.
 - **Mode** — colour theme of the whole GUI: **Normal** (light), **Dark**, **Mikhail**
   (black + amber). Switches live and is remembered.
+
+  ![Dark Mode](figures/screenshot_dark_mode.png)
 - **Show Header** — show or hide the top banner (CWatM icon + title + IIASA logo).
   Turning it off moves the menu, panels and editor up to reclaim the space.
 - **Font of settingsfile** / **Font size of settingsfile** — the (monospaced) family and
@@ -771,26 +997,32 @@ the settings — the GUI does not ship the DLL.)*
 - **Initial map transparency** — the transparency (0–100 %) that Show Basin and NetCDF
   open with.
 - **Default openstreet map** — the default basemap for the map windows.
-- **Select animal** — the little animal that occasionally appears on the live discharge
-  sparkline during a run. Only the animals you bought in the **Shop** are listed (Fish /
-  Otter / Beaver / Sailboat / Octopus); with none bought the box reads *None – buy one
-  in the Shop* and the sparkline shows a plain dot.
+- **Select animal** — the little animal on the live discharge sparkline during a run,
+  with a preview. The **Trout** and the **Bottle** are free for everyone; Catfish,
+  Clownfish, Salmon, Otter, Beaver and Octopus are bought in the **Shop**
+  ([§17](#17-cwatm-account-badges-and-the-shop)), and the **Mole** is the reward for
+  the first run coupled with MODFLOW. Only the animals you own are listed.
+- **Tooltip reverse** — show tooltips light-on-dark instead of the usual dark-on-light,
+  in every window at once.
 
 **Editor & Dates**
 
 - **Skill of user** — **Beginner / Advanced / Expert**: how much of the settings file is
-  shown (the sections above your level are hidden). Same setting as the coloured level
-  button next to the editor.
-  **Beginner also simplifies the menus** — the entries you do not need for a first run
-  are hidden: *Tools ▸ Add output Watercycle · Change Options · Excel Crops/Reservoirs ·
-  Check Data · Restore settingsfile*, *RUN CWATM ▸ Journal of Runs · Windowed Run CWatM ·
-  Batch Run…*, and *Analyse ▸ Watercycle · Flow Diagram*. Switch to **Advanced** or
-  **Expert** to get them back; nothing is removed, only hidden.
-  **Advanced and Expert are bought in the Shop** with the points of your (free) CWatM
-  account — or opened for the session with the **Cheat** tick on the Account page.
-  Without either, the GUI runs in Beginner and this choice is greyed out. Your chosen
-  level is remembered: if you own only Advanced, an Expert choice runs as Advanced, and
-  it comes back as soon as you own Expert.
+  shown. Same setting as the coloured level button next to the editor. **Every level is
+  free**, logged in or not.
+  - **Beginner** shows `[FILE_PATHS]`, `[MASK_OUTLET]`, `[TIME-RELATED_CONSTANTS]` and
+    `[OUTPUT]`; **Advanced** adds `[OPTIONS]`, `[INITITIAL CONDITIONS]`, `[METEO]` and
+    `[EVAPORATION]`; **Expert** shows everything. Hidden sections are still saved and
+    searched — just not displayed.
+
+    ![The same settings file, all sections folded, at Beginner and at Expert level](figures/screenshot_levels.png)
+  - **Beginner also simplifies the menus** — the entries marked *Adv.* in
+    [§5](#5-menus-and-keyboard-shortcuts) are hidden (e.g. Change Options, the Excel
+    editor, Check Data, Journal of Runs, Windowed and Batch Run, Flow Diagram, Full
+    Waterbalance). *Analyse ▸ Watercycle ▸ Watercycle* stays, because the CWatM Academy
+    uses it.
+  - **Expert only**: the settings-file **tabs**, *Settings ▸ Compare Tab* (F8) and
+    *RUN CWATM ▸ Create batch*.
 - **Web-style date picker** — the Start/Spin/End fields use a 📅 button + calendar
   popup (on) or the classic drop-down calendar (off).
 - **Date timeline** — show the three-handle Start/Spin/End timeline below the date
@@ -800,6 +1032,9 @@ the settings — the GUI does not ship the DLL.)*
 - **Use Tabs** — show the tab bar above the editor, so several settings files can be open
   at once (**Expert** level only; see [§6](#6-editing-settings)). Unticking hides only the
   bar — the open tabs keep their content and the active file stays in the editor.
+- **PNG dpi** — the resolution of **Save PNG** in the Analyse windows (default 150).
+- **NotebookLM** — the notebook CWatM AI asks: the openly available CWatM notebook
+  (default) or the link of your own ([§14](#14-cwatm-ai-notebooklm)).
 
 **Run History**
 
@@ -810,51 +1045,142 @@ the settings — the GUI does not ship the DLL.)*
 
 **Account**
 
-- **Stay logged in on this computer**, **Count my full CWatM runs (earn points)** and
-  **Record the location of my runs anonymously** — see the account window.
-- **Cheat - and get the Expert level without buying it** — every skill level is open,
-  without buying it in the Shop. Works without a login, too. It is **for this session
-  only**: it is never saved, so it is off again the next time CWatM GUI starts.
+- **Stay logged in on this computer** — keep the CWatM account login (stored in the
+  Windows credential store) and restore it in the background at start. Unticking drops
+  the stored login at once.
+- **Count my full CWatM runs (earn points)** — report every successful run (main,
+  Windowed, Batch) to your account.
+- **Reset MODFLOW reward (the mole)** — a button: the next successful coupled-MODFLOW
+  run earns the mole again, with its popup. No points change.
+
+**CWatM Academy**
+
+- **Enable CWatM Academy** — open the Academy now and at every start until you untick it.
+- **Link CWatM Academy to your login** — while logged in, your Academy progress is kept
+  in your account (continues on any computer) and every finished level earns points.
+  Logged out, progress is kept on this computer; the two are never merged.
+
+---
+
+## 16. CWatM Academy
+
+**CWatM Academy** (the button in the menu bar, left of *CWatM AI*) is a guided
+introduction to CWatM in **ten levels**. Each level explains one step, then points at
+the real menu items and buttons in the GUI with speech-bubble guides, so you learn by
+doing it on an actual model:
+
+| Level | Topic |
+|-------|-------|
+| 1 | Welcome to CWatM — load a settings file and find a basin's outlet on the map |
+| 2 | Running CWatM and visualising the water cycle |
+| 3 | Running CWatM |
+| 4 | Checking before you run |
+| 5 | Choosing what CWatM writes |
+| 6 | Looking at results |
+| 7 | Turning physics on and off |
+| 8 | Forcing and initial conditions |
+| 9 | Many runs at once |
+| 10 | Going Expert |
+
+![CWatM Academy — welcome page](figures/screenshot_academy.png)
+
+![CWatM Academy — the level list](figures/screenshot_academy_levels.png)
+
+- **Free and without a login** — every level. Opening the Academy switches the skill
+  level to **Beginner** (switch back whenever you like).
+- **Progress** is kept: logged in (and *Link CWatM Academy to your login* ticked) in
+  your account, otherwise on this computer. A finished level shows **Completed ✓ - do it
+  again**; **Start Over** clears the progress.
+- **Points**: logged in, each level you finish earns **5 points** — once per level.
+
+### The Field Test (Level 1)
+
+Level 1 ends with a small map game: a random one of the world's **100 largest river
+basins** is named, and you click its **outlet** on the map.
+
+- **+1000** points for finding a basin; every wrong click costs its distance in **km**
+  (at most 1000, then 500, then 250 per basin); **Another basin** costs 500 while the
+  shown one is not found yet. A found basin is drawn on the map.
+- From **5000** points the whole world map is shown instead of a zoomed-in frame.
+- From **10000** points you reach **Level 2**: only the basin's **shape** is shown,
+  without its name — click anywhere inside it. From 15000 points on the whole world map,
+  from 20000 points all 100 basins.
+- Top right: your **Points**, the **Highscore** of all users (with the holder's
+  initials) and **Your best**. Beat the record while logged in and you can enter your
+  initials.
+- **End test** shows your statistics and closes; one basin found passes Level 1. The
+  **Field Test badge** (bronze / silver / gold) is shown in your account's *Addition*
+  window.
+
+![The Field Test: find the outlet of the named basin](figures/screenshot_fieldtest.png)
+
+---
+
+## 17. CWatM Account, Badges and the Shop
+
+The CWatM account is **optional** — CWatM, the GUI, every skill level and the Academy
+work fully without it. Click **Log in** in the menu bar's right corner to log in or
+**register** (an e-mailed code confirms the address; *Forgot password* works the same
+way).
+
+- **Points**: logged in, every successful full CWatM run with a **new model setup**
+  earns **1 point** (the same setup counts once; a daily cap applies), and every
+  finished Academy level earns 5. A run that does not count says why in the output box.
+  Runs made while logged out are sent at your next login.
+- **River badges** (Breg, Thames, Morava, Danube, …) come with the points you earn.
+  The account window shows your badges and the progress to the next one.
+- **Additional badges** (*Addition* button in the account window): the **feature
+  badges** **MoleFlow** (coupled MODFLOW), **pySnowClim** and **Glacier OGGM** — bronze
+  with the first successful run with that option on, silver at 20 runs, gold at 50 —
+  and the **Field Test badge** with your Field Test best and the record of all users.
+- **What is sent**: no paths and no settings content — only a fingerprint of the
+  settings (to recognise a new setup) and the number of timesteps. Run locations,
+  appearing on the leaderboard and showing your location on the world map are each
+  **optional and off** unless you tick them. Details: **Help ▸ CWatM account privacy**.
+- The account window also offers **Export my data** and **Delete account**.
+
+### Leaderboard and World Map
+
+- **Info ▸ Leaderboard** (while logged in) ranks the users who opted in by their current
+  points, with country and highest badge; your own row is highlighted.
+- **Info ▸ World Map** (for everyone) shows **CWatM runs** — anonymous counts of where
+  CWatM was run — or **User locations** — only users who ticked *Show my location on the
+  world map*, no names, rounded to 0.5°. A circle's area grows with its count.
+
+![World Map — where CWatM has been run](figures/screenshot_worldmap.png)
 
 ### The Shop
 
-Logged in to your CWatM account, full CWatM runs with a new model setup and finished
-CWatM Academy levels earn points, and points earn river badges. Once you hold the
-**Breg** badge, a **Shop** button appears in the menu bar, left of your name.
-
-| Item | Price | Note |
-|------|-------|------|
-| Advanced skill level | 20 points | |
-| Expert skill level | 40 points | needs Advanced first - greyed out until then |
-| Fish · Otter · Beaver · Sailboat · Octopus | 5 · 10 · 20 · 30 · 50 points | animals for the live discharge plot; only the ones you can afford are offered |
+Once you hold the **Breg** badge, a **Shop** button appears in the menu bar, left of
+your name. It sells **animals** for the live discharge sparkline (Catfish, Clownfish,
+Salmon, Otter, Beaver, Octopus); the **Trout** and the **Bottle** are free for everyone,
+and the **Mole** is the reward for your first coupled-MODFLOW run, never sold.
 
 - **Two numbers.** *Your points* are what you can spend (shown on the account button
   and the leaderboard). *Earned in total* never goes down and decides your badges.
 - **Buying** asks for confirmation, takes the price from your points and is final.
-  Your badges stay, and the next badge still needs its full earned points - e.g. 20
-  earned with Breg and Thames, buy something for 18: 2 points left, both badges kept.
-- A bought **animal** appears on the discharge plot at once; after buying a **level**
-  you are asked whether to switch to it now.
-- If you cannot afford anything yet, the Shop says how many points the cheapest item
+  Your badges stay, and the next badge still needs its full earned points. A bought
+  animal appears on the discharge plot at once.
+- If you cannot afford anything yet, the Shop says how many points the cheapest animal
   still needs.
-- Accounts that existed when the Shop opened got Advanced and Expert for free.
 - **Points shrink when you do not use CWatM GUI.** If you do not log in for a week,
-  your points drop by 3 %; every further week by another 5 % of what is left - never
-  below 5 points. With 100 points: 97 after one week, 92 after two, 88 after three.
-  Logging in (also the automatic login at start) stops it; you are told in the output
-  box when points were lost. Earned points and badges never shrink.
-- What you bought is stored in your account (see Help ▸ CWatM account privacy) and
-  works on any computer; a copy kept on your computer covers a missing connection.
+  your points drop by 3 %; every further week by another 5 % of what is left — never
+  below 5 points. Logging in (also the automatic login at start) stops it; you are told
+  in the output box when points were lost. Earned points and badges never shrink.
+- What you bought is stored in your account and works on any computer; a copy kept on
+  your computer covers a missing connection.
 
 ---
 
-## 16. Building the Executable and Installer
+## 18. Building the Executable and Installer
 
-The one-folder build is produced with PyInstaller from `cwatm_gui_dir.spec`:
+A release is built with the script **`build_release.ps1`**, which copies the source to a
+local build folder (never build on a network drive), runs PyInstaller with
+`cwatm_gui_dir.spec`, compiles the installer and copies the results back:
 
-```bash
-pip install -r requirements.txt -r requirements_build.txt
-python -m PyInstaller cwatm_gui_dir.spec --noconfirm
+```powershell
+pwsh -NoProfile -Command "& '.\build_release.ps1'"                    # full release
+pwsh -NoProfile -Command "& '.\build_release.ps1' -Steps sync,build"  # exe only
 ```
 
 The result is `dist/CWatM_GUI/CWatM_GUI.exe` (plus an `_internal/` folder that also
@@ -863,20 +1189,14 @@ spec collects rasterio + GDAL data, xarray backends, folium/plotly, **openpyxl**
 requests, QtWebEngine, the **MODFLOW** stack (flopy + matplotlib + xmipy), the CWatM AI
 libraries (`notebooklm` + `playwright`), the `cwatm`/`src` code and the documentation.
 
-To wrap that folder into a **per-user installer** (no administrator rights), compile the
-Inno Setup script:
-
-```bash
-ISCC installer\CWatM_GUI.iss        # -> installer\Output\CWatM_GUI_Setup.exe
-```
-
-The installer copies `dist\CWatM_GUI\` verbatim (keeping `_internal\` intact), offers a
+The **per-user installer** (no administrator rights) is compiled from the Inno Setup
+script `installer/CWatM_GUI.iss` (the script's `installer` step). It copies `dist\CWatM_GUI\` verbatim (keeping `_internal\` intact), offers a
 desktop shortcut and an optional `.ini` "Open with" association, and installs into the
-current user's locations. Reference: `installer/CWatM_GUI.iss`.
+current user's locations. Packaging details are in `documentation/CWatM_GUI_Build.md`.
 
 ---
 
-## 17. Troubleshooting
+## 19. Troubleshooting
 
 - **A map or plot is blank** — the map/plot windows need QtWebEngine; behind a
   corporate proxy the tiles are fetched with Python (proxy-proof). If the OSM basemap
@@ -893,10 +1213,16 @@ current user's locations. Reference: `installer/CWatM_GUI.iss`.
   forcing data; run **Check settingsfile** (F4), which warns when `StepEnd` is after the
   meteo forcing ends.
 - **CWatM AI says "Login"** — the Google session expired, or none was found.
-  Click **Login**, choose Edge or Chrome and sign in. Make sure your NotebookLM notebook (title contains "CWatM") has its
-  CWatM sources uploaded — see [§14.1](#141-prepare-a-notebooklm-notebook-with-cwatm-sources-one-time).
+  Click **Login**, choose Edge or Chrome and sign in. With your own notebook, check its
+  link in Preferences ▸ Editor & Dates ▸ NotebookLM — see [§14.1](#141-your-own-notebooklm-notebook-optional).
 - **A MODFLOW run fails** — it needs `xmipy` + `flopy` installed and the `libmf6`
   library path set in the settings.
+- **A run fails and the message is not clear** — run it again with **RUN CWATM ▸ Run
+  CWatM + error message**, which names the code line where it failed.
+- **A menu entry described here is missing** — it is hidden at your skill level; switch
+  to Advanced or Expert with the level button next to the editor.
+- **Linux: the window or a map does not appear** — run `./gui.sh --check`; see
+  `cwatm_gui_linux.md`.
 - **Diagnostic log** — swallowed errors are written to
   `%LOCALAPPDATA%/CWatM_GUI/gui.log`.
 
@@ -905,14 +1231,15 @@ current user's locations. Reference: `installer/CWatM_GUI.iss`.
 
 ---
 
-## 18. Versioning
+## 20. Versioning
 
 The **CWatM GUI** carries its own version number, independent of the CWatM model
-version it drives. The current release is **Version 1.11**.
+version it drives. The current release is **Version 1.14**. A build made with
+`/creategui` adds a build letter (`1.14.a`, `1.14.b`, …).
 
-You can see it in-app under **Info ▸ About CWatM**, where **CWatM GUI version 1.11**
-is shown above the **CWatM Version** block (the latter reports the model's Git
-branch, hash and build time).
+You can see it in-app under **Info ▸ About CWatM**, where the **CWatM GUI version** is
+shown above the **CWatM Version** block — the GitHub repository, branch and commit of
+the CWatM model bundled with the GUI.
 
 **Bumping the version** is a single edit: `__version__` in **`src/gui/__init__.py`**
 is the only place the number is written down in the code. The About dialog reads it,
@@ -922,6 +1249,9 @@ disagree. Only this manual — the header above and the table below — needs it
 
 | Version | Date | Notes |
 |---------|------|-------|
+| 1.14 | 02/11/2026 | **Everything open without a login**: Advanced and Expert are free for everyone (the Cheat tick is gone), and the whole **CWatM Academy** runs logged out. **Trout** and **Bottle** are free animals; the Shop sells animals only. **Nearest city** shown next to a station's lon/lat in the Analyse windows — see [CHANGELOG.md](CHANGELOG.md). |
+| 1.13 | 20/10/2026 | **Analyse ▸ Full Waterbalance** (balance table + sunbursts of every part of the water cycle) with **Tools ▸ Add output WaterBalance**; **Chord Analysis** and **Mean Weekly Fluxes** (experimental); Flow Diagram shows channel evaporation; *Add output Watercycle* writes the daily output and appends to an existing line; **Salmon** in the Shop; corrected monthly/yearly WaterCycle output in the bundled CWatM — see [CHANGELOG.md](CHANGELOG.md). |
+| 1.12 | 16/10/2026 | Updated **CWatM model** (new `WaterBalance` output, a more complete WaterCycle, reworked MODFLOW coupling, many bug fixes); Watercycle / Flow Diagram **right-click ▸ Timeseries**; an easier CWatM AI login — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.11 | 07/10/2026 | **Shop**: spend points on the **Advanced** / **Expert** levels and on picture **animals** for the live discharge plot; earned points (badges) never go down, the shown **actual** points are earned minus spent and fade after a week without login (never below 5); the **mole** reward for the first coupled-MODFLOW run; session-only **Cheat** ticks. Less data stored per run, unticked sign-up choices, a **run guard** for output entries CWatM would refuse. **Compare settings** keeps both sides aligned while editing and keeps undo/view after Save. **NetCDF**: *Save as a .tif*, JSON/shapefile points as selected gauges. **Flow Diagram**: click to highlight a branch. **Run CWatM + error message** (`-e`). MODFLOW needs no GUI setting any more (*Use Modflow* removed). Updated CWatM model — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.10 | 30/09/2026 | **CWatM Academy**: a guided ten-level introduction to CWatM (menu-bar button left of CWatM AI, or *Preferences ▸ CWatM Academy ▸ Enable CWatM Academy*); Level 1 is a small game — find the outlet of one of the world's 100 largest basins on the map — progress follows your login to any computer, every finished level earns 5 points, and from Level 4 on a login is needed. **CWatM account** (optional): log in / register from the menu bar, 1 point per successful full run of a distinct setup, river **badges**, a **Leaderboard**, *Export my data* / *Delete account*, and a privacy notice under *Help ▸ CWatM account privacy*. **Advanced / Expert** skill levels now need a login. **Info ▸ World Map**: where CWatM was run (anonymous counts) and where users are (opt-in). **Analyse ▸ NetCDF**: *Load netcdf* in the same window, *Calculate mean* and *Calculate percentile* saved as a new `.nc`. Two more GUI languages — **Français** and **Español** (13 in all). A Gemini notebook choice for CWatM AI, dark/Mikhail-mode colour corrections (incl. Watercycle), a fixed taskbar icon and a refined logo. **SciPy is no longer needed** (CWatM replaced it with its own methods) — see [CHANGELOG.md](CHANGELOG.md). |
 | 1.07 | 18/09/2026 | **GUI language**: *Preferences ▸ Display ▸ Language* switches menus, menu items, buttons, labels and tooltips live between English, Deutsch, Italiano, Magyar, Română, Srpski, Hrvatski, Slovenčina, Български, Čeština and Українська (remembered for the next start; messages, window titles and the settings file stay English). New **RUN CWATM ▸ Create batch** (Expert) writes a Windows `.bat` that runs the current settings file without the GUI. "Run Ledger" is now called **Journal of Runs** throughout. The build bundles CWatM's new **t6** routing libraries (replacing t5), and a Watercycle sunburst calculation was corrected — see [CHANGELOG.md](CHANGELOG.md). |

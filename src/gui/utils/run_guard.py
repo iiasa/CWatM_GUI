@@ -13,7 +13,8 @@ What stays is this check: it gives **the same verdict as CWatM's Error 135**, be
 every run (main run, Windowed Run, Batch Run, Create batch), naming the line - so a
 bad entry is fixed in the editor instead of a model start failing. It mirrors
 CWatM's parsing exactly (configparser, case-sensitive keys, ``OUT_`` keys in every
-section except ``[OPTIONS]``, ``*_Dir`` keys excluded, values split on commas and
+section except ``[OPTIONS]``, ``*_Dir`` keys and ``OUT_suffix`` (a file-name suffix,
+not a variable list - configuration.py) excluded, values split on commas and
 stripped, an empty FIRST entry means "no output" (``splitout``), every entry except
 ``None`` parsed). It looks at the raw value, so a ``$(...)`` placeholder in an
 output entry is refused too - CWatM would see whatever it expands to.
@@ -26,6 +27,18 @@ import re
 
 # = cwatm/management_modules/data_handling.py _OUTVARNAME (used with fullmatch)
 OUTVARNAME = re.compile(r"([A-Za-z_]\w*)((?:\[-?\d+\])*)")
+
+# OUT_ keys whose value is not a list of output variables (configuration.py, compared
+# lower-case): OUT_suffix = a suffix for every output file name.
+NOT_OUTPUT_LISTS = ("out_suffix",)
+
+
+def is_output_list_key(key):
+    """Does ``key`` hold a list of output variables? (OUT_ key, not *_Dir, not
+    OUT_suffix.) Shared with Check settingsfile."""
+    low = key.lower()
+    return (low.startswith("out_") and not low.endswith("_dir")
+            and low not in NOT_OUTPUT_LISTS)
 
 
 def _parse(content):
@@ -72,8 +85,7 @@ def output_problems(content):
         if sec == "OPTIONS":
             continue
         for key in cfg.options(sec):
-            low = key.lower()
-            if not low.startswith("out_") or low.endswith("_dir"):
+            if not is_output_list_key(key):
                 continue
             for entry in _entries(cfg.get(sec, key, raw=True)):
                 if entry == "None" or OUTVARNAME.fullmatch(entry):

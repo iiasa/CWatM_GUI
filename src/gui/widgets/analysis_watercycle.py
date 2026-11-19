@@ -607,11 +607,12 @@ class WatercycleWindow(PlotlyWindowBase):
         btn_row.addWidget(self.prev_button)
         btn_row.addWidget(self.next_button)
         btn_row.addStretch()
+        btn_row.addWidget(self._make_save_png_button(btn_style))
         btn_row.addWidget(self.save_html_button)
         layout.addLayout(btn_row)
         self._update_station_nav()
 
-    # _save_html / _save_csv are inherited from PlotlyWindowBase.
+    # _save_html / _save_png / _save_csv are inherited from PlotlyWindowBase.
 
     def _on_range_changed(self, low, high):
         """Slider moved: update the selected window + labels live, debounce a rebuild."""
