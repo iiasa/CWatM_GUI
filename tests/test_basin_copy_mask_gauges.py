@@ -5,6 +5,8 @@ the gauge."""
 import numpy as np
 import pytest
 
+pytestmark = pytest.mark.qt
+
 pytest.importorskip("PySide6.QtWebEngineWidgets")
 
 from src.gui.widgets.basin_viewer2 import BasinWindow2  # noqa: E402

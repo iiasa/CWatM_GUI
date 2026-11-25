@@ -8,7 +8,7 @@ from PySide6.QtCore import QSettings
 
 from src.gui.widgets import analysis_mean_fluxes as mf
 
-pytestmark = pytest.mark.skipif(not mf._FD_AVAILABLE, reason="plotly stack not available")
+pytestmark = [pytest.mark.qt, pytest.mark.skipif(not mf._FD_AVAILABLE, reason="plotly stack not available")]
 
 ALL_COLUMNS = sorted({c.lstrip("-") for p in mf.PANELS for c in p[2]})
 

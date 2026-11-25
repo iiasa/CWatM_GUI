@@ -3,7 +3,11 @@ Timeseries y-axis). The file's own ``units`` / ``long_name`` come first and
 metaNetcdf.xml fills in what the file does not say - a variable metaNetcdf does not
 list under that exact name (``discharge_monthavg``) used to lose its unit."""
 
-from src.gui.widgets.analysis_netcdf_base import NetcdfDataBase
+import pytest
+
+pytestmark = pytest.mark.qt
+
+from src.gui.widgets.analysis_netcdf_base import NetcdfDataBase  # noqa: E402
 
 
 def _bare(source=None):
