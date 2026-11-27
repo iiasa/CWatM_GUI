@@ -4,11 +4,8 @@ shifted log of ordinary maps put a zero difference at ~0.8 and painted the whole
 basin red)."""
 
 import numpy as np
-import pytest
 
-pytestmark = pytest.mark.qt
-
-from src.gui.widgets.analysis_netcdf import color_norm  # noqa: E402
+from src.gui.widgets.analysis_netcdf import color_norm
 
 
 def test_linear_maps_ends_and_middle():

@@ -1,12 +1,9 @@
 """Nearest-city label next to a station's lon/lat (src/gui/utils/nearest_city.py)."""
 
-import pytest
-
 from src.gui.utils import nearest_city as nc
 
 
 def test_city_in_its_own_centre():
-    pytest.importorskip("numpy")   # nearest_city() needs it to read the city list
     name, country, dist = nc.nearest_city(16.37208, 48.20849)
     assert (name, country) == ("Vienna", "AT")
     assert dist < 0.01
@@ -14,7 +11,6 @@ def test_city_in_its_own_centre():
 
 
 def test_distance_in_km_and_string_input():
-    pytest.importorskip("numpy")   # nearest_city() needs it to read the city list
     # CWatM writes xloc/yloc as text; ~26 km from Breclav
     label = nc.city_label("16.6084", "48.9083")
     assert label.endswith("km from Břeclav (CZ)")

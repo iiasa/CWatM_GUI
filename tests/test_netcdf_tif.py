@@ -1,9 +1,7 @@
 import numpy as np
 import pytest
 
-pytestmark = pytest.mark.qt
-
-from src.gui.utils import netcdf_tif  # noqa: E402
+from src.gui.utils import netcdf_tif
 
 
 def test_date_suffix():

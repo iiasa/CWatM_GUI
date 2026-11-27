@@ -1,7 +1,5 @@
 """CWatM AI login script (src/gui/utils/notebooklm_browser_login.py) - pure parts."""
 
-import pytest
-
 from src.gui.utils import notebooklm_browser_login as L
 
 
@@ -14,7 +12,6 @@ def test_signed_in_needs_googles_session_cookie():
     assert L.signed_in([{"name": "__Secure-1PSID", "domain": ".google.co.uk"}])
 
 
-@pytest.mark.qt          # imports a Qt module
 def test_browser_keys_match_the_window():
     from src.gui.widgets.notebooklm_window import NotebookLMWindow
     assert set(NotebookLMWindow.LOGIN_BROWSERS) == set(L.BROWSERS)

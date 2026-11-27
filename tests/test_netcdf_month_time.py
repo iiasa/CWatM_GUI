@@ -3,8 +3,6 @@ xarray refuses outside a 360_day calendar - decoded by analysis_netcdf_base."""
 import numpy as np
 import pytest
 
-pytestmark = pytest.mark.qt
-
 xr = pytest.importorskip("xarray")
 
 from src.gui.widgets.analysis_netcdf_base import (
