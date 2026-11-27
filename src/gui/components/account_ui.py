@@ -5,8 +5,10 @@
 - the **account button** in the menu bar's right corner, left of the ⋮ button:
   "Log in" when logged out, "<username> · <points> pt" when logged in; a click opens
   the login dialog or the account window (``src/gui/widgets/account_dialogs.py``);
-- the one ``AccountWorker`` (created lazily - the first request imports supabase on
-  the worker thread, never at startup) and the login state every window reads;
+- the one ``AccountWorker`` (created lazily, so nothing network-related loads at
+  startup) and the login state every window reads. Its client is the Accelerator
+  login (``accelerator_account_client``); the operations that need the points ledger
+  answer ``not_available`` until it is built;
 - the automatic re-login at startup: only when the last session stored a login
   (``account/remembered``), started ``_RESTORE_DELAY_MS`` after construction so it
   never competes with the window coming up.
@@ -40,10 +42,10 @@ _STATUS_OPS = {"restore", "login", "confirm_signup", "reset_password", "get_stat
                "update_profile", "register", "buy", "touch_activity"}
 # ...of those, the ones that start a session: the offline queue is sent after them.
 _LOGIN_OPS = {"restore", "login", "confirm_signup", "reset_password", "register"}
-# Interactive logins: the one-time run-location question is asked after these (not
-# after the silent re-login at startup - a question out of nowhere - and not after
-# confirm_signup: a new account has just answered it on the Register form).
-_ASK_LOCATION_OPS = {"login", "reset_password"}
+# Interactive logins after which the one-time run-location question is asked. None
+# while the Accelerator login has no run-location counterpart (accelerator_backend/):
+# asking for a consent nothing records would mislead.
+_ASK_LOCATION_OPS = set()
 # award_run answers that settle a run for good (anything else = try again later).
 _AWARD_FINAL = {"awarded", "duplicate", "too_short", "daily_limit", "invalid_run_uid",
                 "same_settings", "no_settings_hash"}
@@ -561,10 +563,13 @@ class AccountMixin:
                               self._show_feature_badge(f, t, n))
 
     def _on_feature_run_failed(self, code):
-        # not counted: kept on this computer, sent again at the next login
+        # not counted: kept on this computer, sent again at the next login - unless
+        # the account cannot count it at all (not built for the Accelerator login yet)
         in_flight = getattr(self, "_feature_in_flight", None)
         if in_flight:
-            self._queue_feature_runs([in_flight.pop(0)])
+            run = in_flight.pop(0)
+            if code != "not_available":
+                self._queue_feature_runs([run])
         log.info("feature run not recorded: %s", code)
 
     def _show_feature_badge(self, feature, tier, runs):

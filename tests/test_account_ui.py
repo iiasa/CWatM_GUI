@@ -868,6 +868,9 @@ class TestRunLocations:
         assert h.fake.sent == []
 
     def test_only_interactive_logins_ask(self, host, monkeypatch):
+        # the question is switched off with the Accelerator login (nothing records the
+        # consent yet); with the interactive ops listed again it asks only after those
+        monkeypatch.setattr(account_ui, "_ASK_LOCATION_OPS", {"login", "reset_password"})
         scheduled = []
         monkeypatch.setattr(account_ui.QTimer, "singleShot",
                             lambda ms, fn: scheduled.append(fn.__name__))
@@ -876,6 +879,15 @@ class TestRunLocations:
         assert "_ask_location_consent" not in scheduled
         host._on_account_succeeded("login", STATUS)
         assert "_ask_location_consent" in scheduled
+
+    def test_no_location_question_while_accelerator_has_no_ledger(self, host,
+                                                                  monkeypatch):
+        scheduled = []
+        monkeypatch.setattr(account_ui.QTimer, "singleShot",
+                            lambda ms, fn: scheduled.append(fn.__name__))
+        host._init_account()
+        host._on_account_succeeded("login", STATUS)
+        assert "_ask_location_consent" not in scheduled
 
     def test_the_location_tick_is_not_a_condition_of_the_account(self, mw):
         # consent must be freely given (GDPR Art. 7(4)) - security.md finding 4
@@ -1142,3 +1154,66 @@ def test_every_submitted_op_is_a_real_worker_op():
     assert submitted, "no submit calls found - the pattern is stale"
     assert submitted <= OPS, sorted(submitted - OPS)
     assert all(callable(getattr(AccountClient, op, None)) for op in OPS)
+
+
+class TestAcceleratorDialogs:
+    """The Accelerator login dialog and account window (no network: fake worker)."""
+
+    def test_every_worker_operation_is_callable_on_the_client(self):
+        from src.gui.utils import accelerator_account_client as AAC
+        from src.gui.utils.account_worker import OPS
+        client = AAC.AcceleratorAccountClient()
+        for op in OPS:
+            assert callable(getattr(client, op)), op
+
+    def test_login_needs_a_code(self, mw):
+        from src.gui.widgets.account_dialogs import AcceleratorLoginDialog
+        d = AcceleratorLoginDialog(mw)
+        d._do_login()
+        assert mw.worker.sent == []
+        assert "Please enter the code" in d.status.text()
+
+    def test_login_sends_the_code_and_closes_on_the_answer(self, mw):
+        from src.gui.widgets.account_dialogs import AcceleratorLoginDialog
+        d = AcceleratorLoginDialog(mw)
+        d.show()
+        d.ed_code.setText(" abc123 ")
+        d._do_login()
+        assert mw.worker.sent == [("login", ("abc123",), {})]
+        mw.worker.succeeded.emit("get_status", {"profile": {}})   # another op: ignored
+        assert d.isVisible()
+        mw.worker.succeeded.emit("login", {"profile": {"username": "M"}})
+        assert not d.isVisible()
+
+    def test_a_wrong_code_keeps_the_dialog_and_says_why(self, mw):
+        from src.gui.widgets.account_dialogs import AcceleratorLoginDialog
+        d = AcceleratorLoginDialog(mw)
+        d.show()
+        d.ed_code.setText("nope")
+        d._do_login()
+        mw.worker.failed.emit("login", "invalid_code", "Invalid or expired code.")
+        assert d.isVisible() and "Invalid or expired" in d.status.text()
+
+    def test_stay_logged_in_tick_is_applied(self, mw):
+        from src.gui.widgets.account_dialogs import AcceleratorLoginDialog
+        d = AcceleratorLoginDialog(mw)
+        d.ed_code.setText("abc")
+        d.cb_remember.setChecked(False)
+        d._do_login()
+        assert mw.remember_set == [False]
+
+    def test_the_entry_points_open_the_accelerator_windows(self, mw_logged_in):
+        from src.gui.widgets import account_dialogs as AD
+        login = AD.open_login_dialog(mw_logged_in)
+        account = AD.open_account_window(mw_logged_in)
+        assert isinstance(login, AD.AcceleratorLoginDialog)
+        assert isinstance(account, AD.AcceleratorAccountWindow)
+
+    def test_account_window_logs_out(self, mw_logged_in):
+        from src.gui.widgets.account_dialogs import AcceleratorAccountWindow
+        d = AcceleratorAccountWindow(mw_logged_in)
+        d.show()
+        d._run("logout")
+        assert mw_logged_in.worker.sent == [("logout", (), {})]
+        mw_logged_in.worker.succeeded.emit("logout", None)
+        assert not d.isVisible()

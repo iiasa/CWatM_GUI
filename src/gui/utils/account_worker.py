@@ -4,13 +4,13 @@ Login, registration, points etc. are network calls of up to a few seconds, so th
 never run on the GUI thread (same pattern as ``NotebookLMWorker``). The UI calls
 ``submit(op, *args)`` and gets the answer through queued signals:
 
-    succeeded(op, result)       result = the AccountClient method's return value
+    succeeded(op, result)       result = the client method's return value
     failed(op, code, message)   code = AccountError.code, message = for the user
     busy(bool)                  a request is in flight
 
-``op`` is the name of an ``AccountClient`` method (``OPS``). The client - and with
-it the supabase import - is created lazily on the first request, on this thread,
-so creating the worker costs nothing at startup. Requests run one at a time in the
+``op`` is the name of an ``AcceleratorAccountClient`` method (``OPS``). The client is
+created lazily on the first request, on this thread, so creating the worker costs
+nothing at startup. Requests run one at a time in the
 order submitted. Arguments are never logged (they hold passwords).
 """
 
@@ -69,13 +69,14 @@ class AccountWorker(QThread):
             self.busy.emit(True)
             try:
                 if self._client is None:
-                    from src.gui.utils.account_client import AccountClient
-                    self._client = AccountClient(remember=self._remember)
+                    from src.gui.utils.accelerator_account_client import (
+                        AcceleratorAccountClient)
+                    self._client = AcceleratorAccountClient(remember=self._remember)
                 result = getattr(self._client, op)(*args, **kwargs)
                 self.succeeded.emit(op, result)
             except Exception as e:  # noqa: BLE001 - surfaced to the UI, never crash
-                # account_client imports only light modules at its top (supabase is
-                # imported inside AccountClient), so this import cannot fail.
+                # account_client imports only light modules at its top, so this
+                # import cannot fail.
                 from src.gui.utils.account_client import translate_error
                 err = translate_error(e)
                 if err.code in ("offline", "server_error"):

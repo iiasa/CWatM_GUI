@@ -29,7 +29,9 @@ from PySide6.QtWidgets import (QDialog, QWidget, QVBoxLayout, QHBoxLayout, QForm
                                QTableWidgetItem, QHeaderView, QAbstractItemView,
                                QGridLayout, QScrollArea)
 
-from src.gui.utils import theme, account_config, i18n, account_validation as V
+from src.gui.utils import (theme, account_config, accelerator_config, i18n,
+                           account_validation as V)
+from src.gui.utils.open_path import open_link
 from src.gui.utils.gui_log import get_logger
 from src.gui.utils.window_geometry import scaled_default_size
 
@@ -1246,6 +1248,112 @@ class LeaderboardWindow(_AccountDialogBase):
             self._say("Nobody is listed yet.", "text_gray")
 
 
+class AcceleratorLoginDialog(_AccountDialogBase):
+    """Log in with the Accelerator account: open its login page in the browser, copy the
+    short code it shows, type it here. Registration and password reset are Accelerator's
+    own - this GUI never sees a password."""
+
+    def __init__(self, mw):
+        super().__init__(mw, "CWatM account")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 14, 16, 12)
+        head = QLabel("CWatM account")
+        head.setObjectName("accHead")
+        outer.addWidget(head)
+        outer.addWidget(self._note(
+            "Optional: log in with your IIASA Accelerator account. CWatM GUI never sees "
+            "your password - it only keeps a login token on this computer."))
+
+        outer.addWidget(self._line())
+        outer.addWidget(QLabel("1. Open the Accelerator login page and log in there."))
+        row = QHBoxLayout()
+        row.addWidget(self._button("Open the Accelerator login page", self._open_login_page))
+        row.addWidget(self._button("No account yet? Register", self._open_register_page))
+        row.addStretch(1)
+        outer.addLayout(row)
+
+        outer.addWidget(QLabel("2. Copy the code it shows and enter it here."))
+        self.ed_code = QLineEdit()
+        self.ed_code.setPlaceholderText("code from the Accelerator login page")
+        self.ed_code.returnPressed.connect(self._do_login)
+        outer.addWidget(self.ed_code)
+
+        self.cb_remember = QCheckBox("Stay logged in on this computer")
+        self.cb_remember.setChecked(self.mw.account_remember())
+        self.cb_remember.setToolTip(
+            "Log in automatically when CWatM GUI starts (the login is kept in the "
+            "Windows Credential Manager). Also in Preferences ▸ Account.")
+        outer.addWidget(self.cb_remember)
+
+        outer.addWidget(self.status)
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_row.addWidget(self._button("Log in", self._do_login))
+        close = QPushButton("Close")
+        close.setAutoDefault(False)
+        close.clicked.connect(self.reject)
+        close_row.addWidget(close)
+        outer.addLayout(close_row)
+        self._apply_style()
+        self._fit(480, 320)
+        self.ed_code.setFocus()
+
+    def _open_login_page(self):
+        open_link(accelerator_config.AUTH_CODE_URL)
+
+    def _open_register_page(self):
+        open_link(accelerator_config.SERVER_URL)
+
+    def _do_login(self):
+        code = self.ed_code.text().strip()
+        if not code:
+            return self._problem("Please enter the code from the Accelerator login page.")
+        if self.cb_remember.isChecked() != self.mw.account_remember():
+            self.mw._set_account_remember(self.cb_remember.isChecked())
+        self._run("login", code)
+
+    def handle_result(self, op, result):
+        if "profile" in (result or {}):
+            self._logged_in_message(result)
+            self.accept()
+
+
+class AcceleratorAccountWindow(_AccountDialogBase):
+    """The logged-in Accelerator user. Points and badges come with the ledger."""
+
+    def __init__(self, mw):
+        super().__init__(mw, "CWatM account")
+        status = mw.account_status() or {}
+        profile = status.get("profile") or {}
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(16, 14, 16, 12)
+        head = QLabel("CWatM account")
+        head.setObjectName("accHead")
+        outer.addWidget(head)
+        outer.addWidget(QLabel(f"Logged in as {profile.get('username', '')}"))
+        if status.get("email"):
+            outer.addWidget(self._note(status["email"]))
+        outer.addWidget(self._line())
+        outer.addWidget(self._note(
+            "Points and river badges for full CWatM runs will follow with the Accelerator "
+            "ledger - they are not counted yet."))
+        outer.addWidget(self.status)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(self._button("Log out", lambda: self._run("logout")))
+        close = QPushButton("Close")
+        close.setAutoDefault(False)
+        close.clicked.connect(self.reject)
+        row.addWidget(close)
+        outer.addLayout(row)
+        self._apply_style()
+        self._fit(420, 220)
+
+    def handle_result(self, op, result):
+        if op == "logout":
+            self.accept()
+
+
 def _open_single(mw, attr, cls):
     """Open ``cls`` once - a second click raises the window already open."""
     win = getattr(mw, attr, None)
@@ -1263,11 +1371,11 @@ def _open_single(mw, attr, cls):
 
 
 def open_login_dialog(mw):
-    return _open_single(mw, "_account_login_dialog", LoginDialog)
+    return _open_single(mw, "_account_login_dialog", AcceleratorLoginDialog)
 
 
 def open_account_window(mw):
-    return _open_single(mw, "_account_window", AccountWindow)
+    return _open_single(mw, "_account_window", AcceleratorAccountWindow)
 
 
 def open_leaderboard(mw):
