@@ -1,0 +1,48 @@
+name: Ledger - validate run claim
+
+# Manual trigger for now (accelerator_backend's first version - see its
+# README): the fuller design, the desktop GUI writing a claim file into a
+# staging area that this workflow picks up automatically, is not built
+# yet. Run this from the Actions tab, filling in the inputs below.
+on:
+  workflow_dispatch:
+    inputs:
+      uid:
+        description: "Accelerator uid of the user claiming the run"
+        required: true
+      run_uid:
+        description: "The run's own uid (32 lowercase hex chars)"
+        required: true
+      timesteps:
+        description: "Timesteps the run completed (leave empty if unknown)"
+        required: false
+      kind:
+        description: "run | hidden | batch (leave empty if unknown)"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate claim and award a point
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run the validator
+        working-directory: accelerator_backend
+        env:
+          ACCELERATOR_VALIDATOR_REFRESH_TOKEN: ${{ secrets.ACCELERATOR_VALIDATOR_REFRESH_TOKEN }}
+          CLAIM_UID: ${{ inputs.uid }}
+          CLAIM_RUN_UID: ${{ inputs.run_uid }}
+          CLAIM_TIMESTEPS: ${{ inputs.timesteps }}
+          CLAIM_KIND: ${{ inputs.kind }}
+        run: python validate_claim.py
