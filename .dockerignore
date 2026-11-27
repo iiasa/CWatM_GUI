@@ -1,0 +1,25 @@
+# Keeps the build context small/fast. The Dockerfile only COPYs cwatm/,
+# src/, cwatm_model.py and requirements_docker.txt, so nothing else needs
+# to reach the daemon - but this is written as a denylist of the known-big
+# irrelevant stuff, NOT an "exclude everything, then negate" allowlist.
+# The allowlist form (`*` + `!cwatm/` + ...) built cleanly with local
+# BuildKit but failed on the Accelerator's buildah-based build server with
+# "no items matching glob .../requirements_docker.txt" - a top-level file
+# right next to the Dockerfile, so the repo clone was fine and this was a
+# buildah .dockerignore negation bug, not a missing file. A denylist has
+# nothing to negate, so it can't hit that class of bug; the whole repo
+# (tauri-app aside, which doesn't exist on this branch) is only ~50MB
+# anyway, so being generous here costs nothing.
+.git/
+tauri-app/
+documentation/
+assets/
+supabase/
+tests/
+gamification/
+installer/
+translations/
+tools/
+.github/
+**/__pycache__/
+**/*.pyc
